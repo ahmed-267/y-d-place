@@ -1,0 +1,5 @@
+{
+  "name": "Keok's Place POS",
+  "description": "A premium Belgian food truck POS system for waffles, crêpes, and hot chocolate.",
+  "requestFramePermissions": ["camera"]
+}
