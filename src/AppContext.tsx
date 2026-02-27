@@ -36,8 +36,8 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider = ({ children }: { children: ReactNode }) => {
-  const [lang, setLang] = useState<Language>((localStorage.getItem('keoks_lang') as Language) || 'en');
-  const [user, setUser] = useState<User | null>(JSON.parse(localStorage.getItem('keoks_user') || 'null'));
+  const [lang, setLang] = useState<Language>((localStorage.getItem('ydplace_lang') as Language) || 'en');
+  const [user, setUser] = useState<User | null>(JSON.parse(localStorage.getItem('ydplace_user') || 'null'));
   const [products, setProducts] = useState<Product[]>([]);
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
@@ -56,40 +56,40 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   useEffect(() => {
     const loadData = () => {
-      const storedProducts = localStorage.getItem('keoks_products');
-      const storedIngredients = localStorage.getItem('keoks_ingredients');
-      const storedUsers = localStorage.getItem('keoks_users');
-      const storedCategories = localStorage.getItem('keoks_categories');
-      const storedSales = localStorage.getItem('keoks_sales');
-      const storedShiftLogs = localStorage.getItem('keoks_shiftlogs');
-      const storedExpenses = localStorage.getItem('keoks_expenses');
-      const storedWorkShifts = localStorage.getItem('keoks_workshifts');
-      const storedTaxSettings = localStorage.getItem('keoks_tax_settings');
+      const storedProducts = localStorage.getItem('ydplace_products');
+      const storedIngredients = localStorage.getItem('ydplace_ingredients');
+      const storedUsers = localStorage.getItem('ydplace_users');
+      const storedCategories = localStorage.getItem('ydplace_categories');
+      const storedSales = localStorage.getItem('ydplace_sales');
+      const storedShiftLogs = localStorage.getItem('ydplace_shiftlogs');
+      const storedExpenses = localStorage.getItem('ydplace_expenses');
+      const storedWorkShifts = localStorage.getItem('ydplace_workshifts');
+      const storedTaxSettings = localStorage.getItem('ydplace_tax_settings');
 
       if (!storedProducts || JSON.parse(storedProducts).length === 0) {
         setProducts(DEFAULT_PRODUCTS);
-        localStorage.setItem('keoks_products', JSON.stringify(DEFAULT_PRODUCTS));
+        localStorage.setItem('ydplace_products', JSON.stringify(DEFAULT_PRODUCTS));
       } else {
         setProducts(JSON.parse(storedProducts));
       }
 
       if (!storedIngredients || JSON.parse(storedIngredients).length === 0) {
         setIngredients(DEFAULT_INGREDIENTS);
-        localStorage.setItem('keoks_ingredients', JSON.stringify(DEFAULT_INGREDIENTS));
+        localStorage.setItem('ydplace_ingredients', JSON.stringify(DEFAULT_INGREDIENTS));
       } else {
         setIngredients(JSON.parse(storedIngredients));
       }
 
       if (!storedUsers || JSON.parse(storedUsers).length === 0) {
         setUsers(DEFAULT_USERS);
-        localStorage.setItem('keoks_users', JSON.stringify(DEFAULT_USERS));
+        localStorage.setItem('ydplace_users', JSON.stringify(DEFAULT_USERS));
       } else {
         setUsers(JSON.parse(storedUsers));
       }
 
       if (!storedCategories || JSON.parse(storedCategories).length === 0) {
         setCategories(DEFAULT_CATEGORIES);
-        localStorage.setItem('keoks_categories', JSON.stringify(DEFAULT_CATEGORIES));
+        localStorage.setItem('ydplace_categories', JSON.stringify(DEFAULT_CATEGORIES));
       } else {
         setCategories(JSON.parse(storedCategories));
       }
@@ -100,23 +100,23 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       setWorkShifts(storedWorkShifts ? JSON.parse(storedWorkShifts) : []);
       setTaxSettings(storedTaxSettings ? JSON.parse(storedTaxSettings) : { municipalTaxRate: 7, vatRegime: 'SmallBusiness' });
       
-      localStorage.setItem('keoks_seeded', 'true');
+      localStorage.setItem('ydplace_seeded', 'true');
     };
 
     loadData();
   }, []);
 
-  useEffect(() => { localStorage.setItem('keoks_products', JSON.stringify(products)); }, [products]);
-  useEffect(() => { localStorage.setItem('keoks_ingredients', JSON.stringify(ingredients)); }, [ingredients]);
-  useEffect(() => { localStorage.setItem('keoks_users', JSON.stringify(users)); }, [users]);
-  useEffect(() => { localStorage.setItem('keoks_categories', JSON.stringify(categories)); }, [categories]);
-  useEffect(() => { localStorage.setItem('keoks_sales', JSON.stringify(sales)); }, [sales]);
-  useEffect(() => { localStorage.setItem('keoks_shiftlogs', JSON.stringify(shiftLogs)); }, [shiftLogs]);
-  useEffect(() => { localStorage.setItem('keoks_expenses', JSON.stringify(expenses)); }, [expenses]);
-  useEffect(() => { localStorage.setItem('keoks_workshifts', JSON.stringify(workShifts)); }, [workShifts]);
-  useEffect(() => { localStorage.setItem('keoks_tax_settings', JSON.stringify(taxSettings)); }, [taxSettings]);
-  useEffect(() => { localStorage.setItem('keoks_lang', lang); }, [lang]);
-  useEffect(() => { localStorage.setItem('keoks_user', JSON.stringify(user)); }, [user]);
+  useEffect(() => { localStorage.setItem('ydplace_products', JSON.stringify(products)); }, [products]);
+  useEffect(() => { localStorage.setItem('ydplace_ingredients', JSON.stringify(ingredients)); }, [ingredients]);
+  useEffect(() => { localStorage.setItem('ydplace_users', JSON.stringify(users)); }, [users]);
+  useEffect(() => { localStorage.setItem('ydplace_categories', JSON.stringify(categories)); }, [categories]);
+  useEffect(() => { localStorage.setItem('ydplace_sales', JSON.stringify(sales)); }, [sales]);
+  useEffect(() => { localStorage.setItem('ydplace_shiftlogs', JSON.stringify(shiftLogs)); }, [shiftLogs]);
+  useEffect(() => { localStorage.setItem('ydplace_expenses', JSON.stringify(expenses)); }, [expenses]);
+  useEffect(() => { localStorage.setItem('ydplace_workshifts', JSON.stringify(workShifts)); }, [workShifts]);
+  useEffect(() => { localStorage.setItem('ydplace_tax_settings', JSON.stringify(taxSettings)); }, [taxSettings]);
+  useEffect(() => { localStorage.setItem('ydplace_lang', lang); }, [lang]);
+  useEffect(() => { localStorage.setItem('ydplace_user', JSON.stringify(user)); }, [user]);
 
   const addToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
     const id = Date.now();

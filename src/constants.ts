@@ -67,7 +67,7 @@ export const TRANSLATIONS = {
     search: "Search...",
     noSales: "No sales found.",
     brusselsLocation: "Brussels, Belgium",
-    welcome: "Welcome to Keok's Place",
+    welcome: "Welcome to Y&D Place",
     intro: "Handcrafted Brussels waffles, delicate crêpes, and rich Belgian hot chocolate.",
     whatsSelling: "What's Selling",
     paymentBreakdown: "Payment Breakdown",
@@ -225,7 +225,7 @@ export const TRANSLATIONS = {
     search: "Rechercher...",
     noSales: "Aucune vente trouvée.",
     brusselsLocation: "Bruxelles, Belgique",
-    welcome: "Bienvenue chez Keok's Place",
+    welcome: "Bienvenue chez Y&D Place",
     intro: "Gaufres de Bruxelles artisanales, crêpes délicates et chocolat chaud belge onctueux.",
     whatsSelling: "Ce qui se vend",
     paymentBreakdown: "Répartition des paiements",
@@ -383,7 +383,7 @@ export const TRANSLATIONS = {
     search: "Zoeken...",
     noSales: "Geen verkopen gevonden.",
     brusselsLocation: "Brussel, België",
-    welcome: "Welkom bij Keok's Place",
+    welcome: "Welkom bij Y&D Place",
     intro: "Ambachtelijke Brusselse wafels, fijne crêpes en rijke Belgische warme chocolademelk.",
     whatsSelling: "Wat verkoopt er",
     paymentBreakdown: "Betalingsoverzicht",
@@ -541,7 +541,7 @@ export const TRANSLATIONS = {
     search: "Zoeke...",
     noSales: "Niks verkocht nog.",
     brusselsLocation: "Brussel, België",
-    welcome: "Welkom bij Keok's Place",
+    welcome: "Welkom bij Y&D Place",
     intro: "Echte Brusselse wafels, lekkere crêpes en warme choco.",
     whatsSelling: "Wat loopt er goe",
     paymentBreakdown: "Betalinge",
@@ -706,8 +706,8 @@ export const DEFAULT_INGREDIENTS: any[] = [
 ];
 
 export const DEFAULT_USERS: any[] = [
-  { id: 1, username: "owner", fullName: "Keok Owner", password: "keoks2024", role: "owner" },
-  { id: 2, username: "manager", fullName: "Keok Manager", password: "manager123", role: "manager" },
+  { id: 1, username: "owner", fullName: "Y&D Owner", password: "ydplace2024", role: "owner" },
+  { id: 2, username: "manager", fullName: "Y&D Manager", password: "manager123", role: "manager" },
   { id: 3, username: "staff1", fullName: "Staff Member One", password: "staff123", role: "staff" }
 ];
 

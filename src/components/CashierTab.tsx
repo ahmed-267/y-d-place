@@ -151,24 +151,24 @@ export const CashierTab = () => {
           ))}
         </div>
         <div className="flex-1 overflow-y-auto pr-2 scrollbar-hide">
-          <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-4">
+          <div className="grid grid-cols-3 sm:grid-cols-4 xl:grid-cols-4 gap-2 md:gap-4">
             {filteredProducts.map(p => (
               <button 
                 key={p.id} 
                 onClick={() => handleProductClick(p)}
                 disabled={p.stock <= 0}
-                className={`card-bakery p-6 flex flex-col items-center text-center transition-all hover:scale-[1.02] active:scale-90 min-h-[160px] justify-center ${
+                className={`card-bakery p-3 md:p-6 flex flex-col items-center text-center transition-all hover:scale-[1.02] active:scale-90 min-h-[120px] md:min-h-[160px] justify-center ${
                   p.stock <= 0 ? 'opacity-50 grayscale cursor-not-allowed' : 'hover:shadow-md'
                 }`}
               >
-                <span className="text-5xl mb-3">{p.emoji}</span>
-                <p className="font-bold text-base mb-1 leading-tight h-12 flex items-center justify-center">{t(p.transKey || '')}</p>
-                <p className="text-bakery-caramel font-black text-lg mb-2">€{p.price.toFixed(2)}</p>
+                <span className="text-3xl md:text-5xl mb-2 md:mb-3">{p.emoji}</span>
+                <p className="font-bold text-[10px] md:text-base mb-1 leading-tight h-8 md:h-12 flex items-center justify-center">{t(p.transKey || '')}</p>
+                <p className="text-bakery-caramel font-black text-sm md:text-lg mb-1 md:mb-2">€{p.price.toFixed(2)}</p>
                 <div className="flex items-center gap-2">
-                  <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${
+                  <span className={`text-[8px] md:text-[10px] font-bold px-1.5 md:px-2 py-0.5 md:py-1 rounded-full ${
                     p.stock <= p.lowThreshold ? 'bg-rose-100 text-rose-600' : 'bg-bakery-beige text-bakery-brown/60'
                   }`}>
-                    {p.stock} in stock
+                    {p.stock} {p.stock === 1 ? 'unit' : 'units'}
                   </span>
                 </div>
               </button>
