@@ -59,7 +59,7 @@ export const Dashboard = () => {
           <div className="flex items-center gap-8">
             <div className="flex items-center gap-2">
               <span className="text-2xl">🧇</span>
-              <h1 className="text-xl font-black font-serif hidden md:block">Keok's Place</h1>
+              <h1 className="text-xl font-black font-serif hidden md:block">Y&D Place</h1>
             </div>
             <div className="hidden md:flex gap-1">
               {tabs.map(tab => (

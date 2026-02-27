@@ -11,7 +11,7 @@ export const LandingPage = ({ onLoginClick }: { onLoginClick: () => void }) => {
       <nav className="p-6 flex justify-between items-center max-w-7xl mx-auto w-full">
         <div className="flex items-center gap-2">
           <span className="text-3xl">🧇</span>
-          <h1 className="text-2xl font-black font-serif tracking-tight">Keok's Place</h1>
+          <h1 className="text-2xl font-black font-serif tracking-tight">Y&D Place</h1>
         </div>
         <div className="flex items-center gap-4">
           <div className="flex bg-bakery-beige rounded-full p-1">

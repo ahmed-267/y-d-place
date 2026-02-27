@@ -9,10 +9,36 @@ import { User, Role, WorkShift } from '../types';
 export const StaffTab = () => {
   const { users, setUsers, shiftLogs, workShifts, setWorkShifts, t, addToast, resetAllData } = useApp();
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showAddShiftModal, setShowAddShiftModal] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<User | null>(null);
   const [shiftDeleteConfirm, setShiftDeleteConfirm] = useState<WorkShift | null>(null);
   const [shiftFilter, setShiftFilter] = useState({ staff: 'All', from: '', to: '' });
+
+  // Shift Form State
+  const [shiftFormData, setShiftFormData] = useState({
+    userId: '',
+    date: new Date().toISOString().split('T')[0],
+    startTime: '09:00',
+    endTime: '17:00',
+    breakMinutes: '30',
+    notes: ''
+  });
+
+  const calculatedHours = useMemo(() => {
+    const { date, startTime, endTime, breakMinutes } = shiftFormData;
+    if (!date || !startTime || !endTime) return 0;
+
+    const start = new Date(`${date}T${startTime}`);
+    const end = new Date(`${date}T${endTime}`);
+    const brk = parseInt(breakMinutes) || 0;
+
+    let diff = (end.getTime() - start.getTime()) / (1000 * 60 * 60);
+    if (diff < 0) diff += 24; // Handle overnight shifts
+    
+    const actualHours = Math.max(0, diff - (brk / 60));
+    return parseFloat(actualHours.toFixed(2));
+  }, [shiftFormData]);
 
   const handleAddStaff = (e: React.FormEvent) => {
     e.preventDefault();
@@ -44,6 +70,40 @@ export const StaffTab = () => {
     setWorkShifts(workShifts.filter(s => s.id !== shiftDeleteConfirm.id));
     setShiftDeleteConfirm(null);
     addToast("Shift deleted", "info");
+  };
+
+  const handleAddShift = (e: React.FormEvent) => {
+    e.preventDefault();
+    const targetUser = users.find(u => u.id === parseInt(shiftFormData.userId));
+    if (!targetUser) {
+      addToast("Please select a staff member", "error");
+      return;
+    }
+
+    const newShift: WorkShift = {
+      id: `SHIFT-${Date.now()}`,
+      userId: targetUser.id,
+      username: targetUser.username,
+      fullName: targetUser.fullName,
+      date: shiftFormData.date,
+      startTime: shiftFormData.startTime,
+      endTime: shiftFormData.endTime,
+      breakMinutes: parseInt(shiftFormData.breakMinutes) || 0,
+      totalHours: calculatedHours,
+      notes: shiftFormData.notes
+    };
+
+    setWorkShifts([...workShifts, newShift]);
+    setShowAddShiftModal(false);
+    setShiftFormData({
+      userId: '',
+      date: new Date().toISOString().split('T')[0],
+      startTime: '09:00',
+      endTime: '17:00',
+      breakMinutes: '30',
+      notes: ''
+    });
+    addToast("Shift logged successfully!");
   };
 
   const filteredShifts = workShifts.filter(s => {
@@ -165,10 +225,19 @@ export const StaffTab = () => {
 
       <section>
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
-          <h3 className="text-xl font-bold font-serif flex items-center gap-2">
-            <Clock size={20} className="text-bakery-brown" />
-            Work Shifts
-          </h3>
+          <div className="flex items-center gap-4">
+            <h3 className="text-xl font-bold font-serif flex items-center gap-2">
+              <Clock size={20} className="text-bakery-brown" />
+              Work Shifts
+            </h3>
+            <button 
+              onClick={() => setShowAddShiftModal(true)}
+              className="btn-primary flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold active:scale-95"
+            >
+              <Plus size={16} />
+              Log Shift
+            </button>
+          </div>
           <div className="flex flex-wrap gap-2">
             <select 
               value={shiftFilter.staff}
@@ -311,6 +380,92 @@ export const StaffTab = () => {
               </select>
             </div>
             <button type="submit" className="btn-primary w-full p-4 rounded-2xl font-bold text-lg">
+              {t('save')}
+            </button>
+          </form>
+        </Modal>
+      )}
+
+      {showAddShiftModal && (
+        <Modal title="Log Work Shift" onClose={() => setShowAddShiftModal(false)}>
+          <form onSubmit={handleAddShift} className="space-y-6">
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">Staff Member</label>
+                <select 
+                  className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel font-bold"
+                  value={shiftFormData.userId}
+                  onChange={e => setShiftFormData({ ...shiftFormData, userId: e.target.value })}
+                  required
+                >
+                  <option value="">Select Staff...</option>
+                  {users.map(u => <option key={u.id} value={u.id}>{u.fullName} (@{u.username})</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('date')}</label>
+                <input 
+                  type="date" 
+                  className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel font-bold"
+                  value={shiftFormData.date}
+                  onChange={e => setShiftFormData({ ...shiftFormData, date: e.target.value })}
+                  required 
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('startTime')}</label>
+                  <input 
+                    type="time" 
+                    className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel font-bold"
+                    value={shiftFormData.startTime}
+                    onChange={e => setShiftFormData({ ...shiftFormData, startTime: e.target.value })}
+                    required 
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('endTime')}</label>
+                  <input 
+                    type="time" 
+                    className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel font-bold"
+                    value={shiftFormData.endTime}
+                    onChange={e => setShiftFormData({ ...shiftFormData, endTime: e.target.value })}
+                    required 
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 items-end">
+                <div>
+                  <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('break')} (min)</label>
+                  <input 
+                    type="number" 
+                    className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel font-bold"
+                    value={shiftFormData.breakMinutes}
+                    onChange={e => setShiftFormData({ ...shiftFormData, breakMinutes: e.target.value })}
+                    required 
+                  />
+                </div>
+                <div className="bg-bakery-accent/20 p-4 rounded-2xl border border-bakery-accent/30 text-center">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-1">Calculated Hours</p>
+                  <p className="text-2xl font-black text-bakery-brown">{calculatedHours}h</p>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('notes')}</label>
+                <textarea 
+                  className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel min-h-[100px] font-medium"
+                  placeholder="Optional notes about the shift..."
+                  value={shiftFormData.notes}
+                  onChange={e => setShiftFormData({ ...shiftFormData, notes: e.target.value })}
+                ></textarea>
+              </div>
+            </div>
+
+            <button type="submit" className="btn-primary w-full p-5 rounded-2xl font-bold text-lg shadow-lg active:scale-95">
               {t('save')}
             </button>
           </form>

@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useApp } from '../AppContext';
 import { Clock, Plus, Trash2, Calendar } from 'lucide-react';
 import { Modal } from './Modal';
@@ -11,47 +11,62 @@ export const MyShiftsTab = () => {
   const [showAddModal, setShowAddModal] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<WorkShift | null>(null);
 
+  // Form state
+  const [formData, setFormData] = useState({
+    date: new Date().toISOString().split('T')[0],
+    startTime: '09:00',
+    endTime: '17:00',
+    breakMinutes: '30',
+    notes: ''
+  });
+
+  const calculatedHours = useMemo(() => {
+    const { date, startTime, endTime, breakMinutes } = formData;
+    if (!date || !startTime || !endTime) return 0;
+
+    const start = new Date(`${date}T${startTime}`);
+    const end = new Date(`${date}T${endTime}`);
+    const brk = parseInt(breakMinutes) || 0;
+
+    let diff = (end.getTime() - start.getTime()) / (1000 * 60 * 60);
+    if (diff < 0) diff += 24; // Handle overnight shifts
+    
+    const actualHours = Math.max(0, diff - (brk / 60));
+    return parseFloat(actualHours.toFixed(2));
+  }, [formData]);
+
   const myShifts = workShifts
     .filter(s => s.userId === user?.id)
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
   const totalHours = myShifts.reduce((acc, s) => acc + s.totalHours, 0);
 
-  const handleAddShift = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleAddShift = (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
-
-    const fd = new FormData(e.currentTarget);
-    const date = fd.get('date') as string;
-    const startTime = fd.get('startTime') as string;
-    const endTime = fd.get('endTime') as string;
-    const breakMinutes = parseInt(fd.get('breakMinutes') as string) || 0;
-    const notes = fd.get('notes') as string;
-
-    // Calculate hours
-    const start = new Date(`${date}T${startTime}`);
-    const end = new Date(`${date}T${endTime}`);
-    
-    let diff = (end.getTime() - start.getTime()) / (1000 * 60 * 60);
-    if (diff < 0) diff += 24; // Handle overnight shifts
-    
-    const actualHours = Math.max(0, diff - (breakMinutes / 60));
 
     const newShift: WorkShift = {
       id: `SHIFT-${Date.now()}`,
       userId: user.id,
       username: user.username,
       fullName: user.fullName,
-      date,
-      startTime,
-      endTime,
-      breakMinutes,
-      totalHours: parseFloat(actualHours.toFixed(2)),
-      notes
+      date: formData.date,
+      startTime: formData.startTime,
+      endTime: formData.endTime,
+      breakMinutes: parseInt(formData.breakMinutes) || 0,
+      totalHours: calculatedHours,
+      notes: formData.notes
     };
 
     setWorkShifts([...workShifts, newShift]);
     setShowAddModal(false);
+    setFormData({
+      date: new Date().toISOString().split('T')[0],
+      startTime: '09:00',
+      endTime: '17:00',
+      breakMinutes: '30',
+      notes: ''
+    });
     addToast("Shift logged successfully!");
   };
 
@@ -143,32 +158,71 @@ export const MyShiftsTab = () => {
 
       {showAddModal && (
         <Modal title={t('addShift')} onClose={() => setShowAddModal(false)}>
-          <form onSubmit={handleAddShift} className="space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <form onSubmit={handleAddShift} className="space-y-6">
+            <div className="space-y-4">
               <div>
-                <label className="block text-sm font-bold mb-2">{t('date')}</label>
-                <input name="date" type="date" className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel" defaultValue={new Date().toISOString().split('T')[0]} required />
+                <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('date')}</label>
+                <input 
+                  type="date" 
+                  className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel font-bold"
+                  value={formData.date}
+                  onChange={e => setFormData({ ...formData, date: e.target.value })}
+                  required 
+                />
               </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('startTime')}</label>
+                  <input 
+                    type="time" 
+                    className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel font-bold"
+                    value={formData.startTime}
+                    onChange={e => setFormData({ ...formData, startTime: e.target.value })}
+                    required 
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('endTime')}</label>
+                  <input 
+                    type="time" 
+                    className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel font-bold"
+                    value={formData.endTime}
+                    onChange={e => setFormData({ ...formData, endTime: e.target.value })}
+                    required 
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 items-end">
+                <div>
+                  <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('break')} (min)</label>
+                  <input 
+                    type="number" 
+                    className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel font-bold"
+                    value={formData.breakMinutes}
+                    onChange={e => setFormData({ ...formData, breakMinutes: e.target.value })}
+                    required 
+                  />
+                </div>
+                <div className="bg-bakery-accent/20 p-4 rounded-2xl border border-bakery-accent/30 text-center">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-1">Calculated Hours</p>
+                  <p className="text-2xl font-black text-bakery-brown">{calculatedHours}h</p>
+                </div>
+              </div>
+
               <div>
-                <label className="block text-sm font-bold mb-2">{t('break')}</label>
-                <input name="breakMinutes" type="number" className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel" defaultValue="30" required />
+                <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('notes')}</label>
+                <textarea 
+                  className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel min-h-[100px] font-medium"
+                  placeholder="Optional notes about your shift..."
+                  value={formData.notes}
+                  onChange={e => setFormData({ ...formData, notes: e.target.value })}
+                ></textarea>
               </div>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-bold mb-2">{t('startTime')}</label>
-                <input name="startTime" type="time" className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel" defaultValue="09:00" required />
-              </div>
-              <div>
-                <label className="block text-sm font-bold mb-2">{t('endTime')}</label>
-                <input name="endTime" type="time" className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel" defaultValue="17:00" required />
-              </div>
-            </div>
-            <div>
-              <label className="block text-sm font-bold mb-2">{t('notes')}</label>
-              <textarea name="notes" className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel min-h-[100px]" placeholder="Optional notes..."></textarea>
-            </div>
-            <button type="submit" className="btn-primary w-full p-4 rounded-2xl font-bold text-lg shadow-lg">
+
+            <button type="submit" className="btn-primary w-full p-5 rounded-2xl font-bold text-lg shadow-lg active:scale-95">
               {t('save')}
             </button>
           </form>

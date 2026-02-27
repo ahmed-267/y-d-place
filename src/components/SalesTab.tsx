@@ -62,19 +62,19 @@ export const SalesTab = () => {
   const totalRevenue = filteredSales.reduce((acc, s) => acc + s.subtotal, 0);
 
   const exportCSV = () => {
-    const headers = "Order ID,Date,Time,Items,Total,Payment,Cashier\n";
+    const headers = "Date,Time,Items,Total,Payment,Cashier\n";
     const rows = filteredSales.map(s => {
       const date = new Date(s.timestamp).toLocaleDateString();
       const time = new Date(s.timestamp).toLocaleTimeString();
       const items = s.items.map(i => `${i.qty}x ${i.nameEN}`).join('; ');
-      return `${s.id},${date},${time},"${items}",${s.subtotal},${s.paymentMethod},${s.cashierFullName}`;
+      return `${date},${time},"${items}",${s.subtotal},${s.paymentMethod},${s.cashierFullName}`;
     }).join('\n');
 
     const blob = new Blob([headers + rows], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `keoks_sales_${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `ydplace_sales_${new Date().toISOString().split('T')[0]}.csv`;
     a.click();
   };
 
@@ -162,7 +162,6 @@ export const SalesTab = () => {
           <table className="w-full text-left text-sm">
             <thead className="bg-bakery-beige/30 text-bakery-brown/40 uppercase text-[10px] font-black tracking-widest">
               <tr>
-                <th className="p-4">#</th>
                 <th className="p-4">Date & Time</th>
                 <th className="p-4">Items Summary</th>
                 <th className="p-4">Total</th>
@@ -178,7 +177,6 @@ export const SalesTab = () => {
                     className="hover:bg-bakery-cream/50 cursor-pointer transition-colors"
                     onClick={() => setExpandedRow(expandedRow === sale.id ? null : sale.id)}
                   >
-                    <td className="p-4 font-mono text-[10px] text-bakery-brown/50">{sale.id}</td>
                     <td className="p-4 font-medium">{new Date(sale.timestamp).toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</td>
                     <td className="p-4 text-bakery-brown/70 truncate max-w-[200px]">
                       {sale.items.map(i => `${i.qty}x ${i.nameEN}`).join(', ')}
@@ -201,7 +199,7 @@ export const SalesTab = () => {
                   </tr>
                   {expandedRow === sale.id && (
                     <tr className="bg-bakery-cream/30 animate-fade-in">
-                      <td colSpan={7} className="p-6">
+                      <td colSpan={6} className="p-6">
                         <div className="space-y-3">
                           <p className="font-black text-xs uppercase tracking-widest text-bakery-brown/40">Order Details</p>
                           {sale.items.map((item, idx) => (
