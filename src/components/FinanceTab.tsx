@@ -5,7 +5,12 @@ import { Plus, Trash2, Edit2, Calculator, TrendingUp, Receipt, Info, Check, X, A
 import { Expense, ExpenseCategory, TaxSettings } from '../types';
 import { Modal } from './Modal';
 import { ConfirmDialog } from './ConfirmDialog';
-import { GoogleGenAI, Type } from "@google/genai";
+type ReceiptExtraction = {
+  name: string;
+  amount: number;
+  date: string;
+  category: string;
+};
 
 const EXPENSE_CATEGORIES: ExpenseCategory[] = [
   'Utilities', 'Rent', 'Supplies', 'Staff', 'Transport', 'Marketing', 'Insurance', 'Equipment', 'Other'
@@ -243,35 +248,77 @@ export const FinanceTab = () => {
       setScannedImage(base64Data);
       
       try {
-        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-        const model = "gemini-3-flash-preview";
-        
-        const response = await ai.models.generateContent({
-          model,
-          contents: [
-            {
-              parts: [
-                { inlineData: { data: base64Data.split(',')[1], mimeType: file.type } },
-                { text: "Extract expense details from this receipt. Return JSON with fields: name (store/vendor name), amount (number), date (YYYY-MM-DD), and category (one of: Utilities, Rent, Supplies, Staff, Transport, Marketing, Insurance, Equipment, Other)." }
-              ]
-            }
-          ],
-          config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                name: { type: Type.STRING },
-                amount: { type: Type.NUMBER },
-                date: { type: Type.STRING },
-                category: { type: Type.STRING }
+        const apiKey = import.meta.env.VITE_OPENROUTER_API_KEY as string | undefined;
+        if (!apiKey) {
+          addToast("Missing API key. Set VITE_OPENROUTER_API_KEY in your environment.", "error");
+          setIsScanning(false);
+          return;
+        }
+
+        const model =
+          (import.meta.env.VITE_OPENROUTER_MODEL as string | undefined) ||
+          "openai/gpt-4o-mini";
+        const siteUrl = import.meta.env.VITE_OPENROUTER_SITE_URL as string | undefined;
+        const appName = import.meta.env.VITE_OPENROUTER_APP_NAME as string | undefined;
+
+        const headers: Record<string, string> = {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        };
+        if (siteUrl) headers["HTTP-Referer"] = siteUrl;
+        if (appName) headers["X-Title"] = appName;
+
+        const prompt =
+          "Extract expense details from this receipt. Return JSON with fields: name (store/vendor name), amount (number), date (YYYY-MM-DD), and category (one of: Utilities, Rent, Supplies, Staff, Transport, Marketing, Insurance, Equipment, Other).";
+
+        const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            model,
+            messages: [
+              {
+                role: "user",
+                content: [
+                  { type: "text", text: prompt },
+                  {
+                    type: "image_url",
+                    image_url: { url: base64Data },
+                  },
+                ],
               },
-              required: ["name", "amount", "date", "category"]
-            }
-          }
+            ],
+            response_format: {
+              type: "json_schema",
+              json_schema: {
+                name: "receipt_extraction",
+                strict: true,
+                schema: {
+                  type: "object",
+                  properties: {
+                    name: { type: "string" },
+                    amount: { type: "number" },
+                    date: { type: "string" },
+                    category: { type: "string" },
+                  },
+                  required: ["name", "amount", "date", "category"],
+                  additionalProperties: false,
+                },
+              },
+            },
+          }),
         });
 
-        const result = JSON.parse(response.text || '{}');
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(`OpenRouter request failed: ${res.status} ${errText}`);
+        }
+
+        const data = (await res.json()) as {
+          choices?: Array<{ message?: { content?: string } }>;
+        };
+        const content = data.choices?.[0]?.message?.content || "{}";
+        const result = JSON.parse(content) as Partial<ReceiptExtraction>;
         setExpenseForm(prev => ({
           ...prev,
           name: result.name || prev.name,
