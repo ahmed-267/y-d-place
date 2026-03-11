@@ -169,10 +169,13 @@ export const StaffTab = () => {
   const totalStaffPages = Math.ceil(filteredUsers.length / itemsPerPage);
 
   const filteredShifts = workShifts.filter(s => {
+    const isCurrentStaff = users.some(u => u.username === s.username);
     const matchesStaff = shiftFilter.staff === 'All' || 
                          (shiftFilter.staff === 'CurrentStaff' 
-                           ? users.some(u => u.username === s.username) 
-                           : s.username === shiftFilter.staff);
+                           ? isCurrentStaff
+                           : shiftFilter.staff === 'FormerStaff'
+                             ? !isCurrentStaff
+                             : s.username === shiftFilter.staff);
     const matchesFrom = !shiftFilter.from || s.date >= shiftFilter.from;
     const matchesTo = !shiftFilter.to || s.date <= shiftFilter.to;
     return matchesStaff && matchesFrom && matchesTo;
@@ -318,6 +321,7 @@ export const StaffTab = () => {
             >
               <option value="All">All Staff</option>
               <option value="CurrentStaff">Current Staff</option>
+              <option value="FormerStaff">Former Staff</option>
               {users.map(u => <option key={u.id} value={u.username}>{u.fullName}</option>)}
             </select>
             <input 

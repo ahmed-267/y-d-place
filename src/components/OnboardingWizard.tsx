@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../AppContext';
 import { 
   Layout, 
@@ -157,6 +157,13 @@ export const OnboardingWizard = () => {
   const abortControllerRef = React.useRef<AbortController | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
+  useEffect(() => {
+    if (scanStatus === 'success') {
+      const id = setTimeout(() => setIsScanning(false), 800);
+      return () => clearTimeout(id);
+    }
+  }, [scanStatus]);
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -206,9 +213,6 @@ export const OnboardingWizard = () => {
       }
     } finally {
       abortControllerRef.current = null;
-      if (scanStatus === 'success') {
-        setTimeout(() => setIsScanning(false), 1000);
-      }
     }
   };
 
