@@ -8,7 +8,7 @@ import ChartDataLabels from 'chartjs-plugin-datalabels';
 Chart.register(ChartDataLabels);
 
 export const OverviewTab = () => {
-  const { sales, shiftLogs, t, products, categories } = useApp();
+  const { sales, shiftLogs, t, products, categories, businessSettings, formatPrice, user, loadDemoData } = useApp();
   const barChartRef = useRef<HTMLCanvasElement>(null);
   const doughnutChartRef = useRef<HTMLCanvasElement>(null);
   const barChartInstance = useRef<Chart | null>(null);
@@ -79,12 +79,15 @@ export const OverviewTab = () => {
                     .reduce((acc, s) => acc + s.subtotal, 0);
       });
 
+      const currencySymbol = businessSettings?.currencySymbol || '€';
+      const currencyCode = businessSettings?.currencyCode || 'EUR';
+
       barChartInstance.current = new Chart(barChartRef.current, {
         type: 'bar',
         data: {
           labels: last7Days,
           datasets: [{ 
-            label: 'Revenue (€)', 
+            label: `Revenue (${currencySymbol})`, 
             data: revPerDay, 
             backgroundColor: '#d4a373', 
             borderRadius: 8
@@ -98,20 +101,20 @@ export const OverviewTab = () => {
             datalabels: {
               anchor: 'end',
               align: 'top',
-              formatter: (val: number) => `€${val.toFixed(0)}`,
+              formatter: (val: number) => `${currencySymbol}${val.toFixed(0)}`,
               font: { weight: 'bold' }
             },
             tooltip: {
               callbacks: {
-                label: (context) => `Revenue: €${context.parsed.y.toFixed(2)}`
+                label: (context) => `Revenue: ${currencySymbol}${context.parsed.y.toFixed(2)}`
               }
             }
           },
           scales: {
             x: { title: { display: true, text: 'Date', font: { weight: 'bold' } } },
             y: { 
-              title: { display: true, text: 'Revenue (€)', font: { weight: 'bold' } },
-              ticks: { callback: (val) => `€${val}` }
+              title: { display: true, text: `Revenue (${currencySymbol})`, font: { weight: 'bold' } },
+              ticks: { callback: (val) => `${currencySymbol}${val}` }
             }
           }
         }
@@ -141,7 +144,8 @@ export const OverviewTab = () => {
               callbacks: {
                 label: (context) => {
                   const cat = categoryStats[context.dataIndex];
-                  return `${cat.name}: €${cat.revenue.toFixed(2)} (${cat.units} units)`;
+                  const symbol = businessSettings?.currencySymbol || '€';
+                  return `${cat.name}: ${symbol}${cat.revenue.toFixed(2)} (${cat.units} units)`;
                 }
               }
             }
@@ -171,21 +175,33 @@ export const OverviewTab = () => {
   }, [sales, products]);
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6">
+    <div className="space-y-6 animate-fade-in max-w-full overflow-hidden">
+      <div className="flex justify-between items-center">
+        <h2 className="text-2xl font-black font-serif text-bakery-brown">Business Overview</h2>
+        {user?.role === 'owner' && sales.length < 10 && (
+          <button 
+            onClick={loadDemoData}
+            className="px-4 py-2 bg-bakery-accent text-bakery-brown rounded-xl font-bold text-xs hover:bg-bakery-brown hover:text-white transition-all active:scale-95 flex items-center gap-2"
+          >
+            <TrendingUp size={16} />
+            Load 3 Months Demo Data
+          </button>
+        )}
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 sm:gap-6">
         {[
-          { label: t('revenueToday'), val: `€${stats.todayRev.toFixed(2)}`, icon: Euro },
-          { label: t('revenueWeek'), val: `€${stats.weekRev.toFixed(2)}`, icon: Calendar },
-          { label: t('revenueMonth'), val: `€${stats.monthRev.toFixed(2)}`, icon: TrendingUp },
-          { label: t('revenueTotal'), val: `€${stats.totalRev.toFixed(2)}`, icon: Euro },
+          { label: t('revenueToday'), val: formatPrice(stats.todayRev), icon: Euro },
+          { label: t('revenueWeek'), val: formatPrice(stats.weekRev), icon: Calendar },
+          { label: t('revenueMonth'), val: formatPrice(stats.monthRev), icon: TrendingUp },
+          { label: t('revenueTotal'), val: formatPrice(stats.totalRev), icon: Euro },
           { label: t('ordersToday'), val: stats.ordersToday, icon: ShoppingBag }
         ].map(s => (
-          <div key={s.label} className="card-bakery p-6 flex justify-between items-center">
-            <div>
-              <p className="text-[10px] font-bold text-bakery-brown/50 uppercase tracking-wider mb-1">{s.label}</p>
-              <p className="text-xl font-black font-serif">{s.val}</p>
+          <div key={s.label} className="card-bakery p-4 sm:p-6 flex justify-between items-center">
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold text-bakery-brown/50 uppercase tracking-wider mb-1 truncate">{s.label}</p>
+              <p className="text-lg sm:text-xl font-black font-serif truncate">{s.val}</p>
             </div>
-            <div className="p-2 bg-bakery-beige rounded-xl text-bakery-brown">
+            <div className="p-2 bg-bakery-beige rounded-xl text-bakery-brown shrink-0 ml-2">
               <s.icon size={20} />
             </div>
           </div>
@@ -193,25 +209,25 @@ export const OverviewTab = () => {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="card-bakery p-6">
+        <div className="card-bakery p-4 sm:p-6">
           <h3 className="text-lg font-bold font-serif mb-6">Revenue Trends</h3>
-          <div className="h-72"><canvas ref={barChartRef}></canvas></div>
+          <div className="h-64 sm:h-72 w-full"><canvas ref={barChartRef}></canvas></div>
         </div>
-        <div className="card-bakery p-6">
-          <div className="h-72"><canvas ref={doughnutChartRef}></canvas></div>
+        <div className="card-bakery p-4 sm:p-6">
+          <div className="h-64 sm:h-72 w-full"><canvas ref={doughnutChartRef}></canvas></div>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="card-bakery p-6 lg:col-span-1">
+        <div className="card-bakery p-4 sm:p-6 lg:col-span-1">
           <h3 className="text-lg font-bold font-serif mb-6">{t('paymentBreakdown')}</h3>
           <div className="space-y-6">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="w-3 h-3 rounded-full bg-emerald-500"></div>
+                <div className="w-3 h-3 rounded-full bg-emerald-500 shrink-0"></div>
                 <span className="font-bold text-sm">{t('cash')}</span>
               </div>
-              <span className="font-black">{stats.cashOrders} ({stats.cashPercent}%)</span>
+              <span className="font-black text-sm sm:text-base">{stats.cashOrders} ({stats.cashPercent}%)</span>
             </div>
             <div className="w-full bg-bakery-beige rounded-full h-2 overflow-hidden flex">
               <div className="bg-emerald-500 h-full" style={{ width: `${stats.cashPercent}%` }}></div>
@@ -219,25 +235,25 @@ export const OverviewTab = () => {
             </div>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="w-3 h-3 rounded-full bg-blue-500"></div>
+                <div className="w-3 h-3 rounded-full bg-blue-500 shrink-0"></div>
                 <span className="font-bold text-sm">{t('card')}</span>
               </div>
-              <span className="font-black">{stats.cardOrders} ({stats.cardPercent}%)</span>
+              <span className="font-black text-sm sm:text-base">{stats.cardOrders} ({stats.cardPercent}%)</span>
             </div>
           </div>
         </div>
 
-        <div className="card-bakery p-6 lg:col-span-2">
+        <div className="card-bakery p-4 sm:p-6 lg:col-span-2">
           <h3 className="text-lg font-bold font-serif mb-6">{t('whatsSelling')}</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
             {categoryStats.slice(0, 6).map(cat => {
               const maxRev = Math.max(...categoryStats.map(c => c.revenue));
               const percent = maxRev ? (cat.revenue / maxRev) * 100 : 0;
               return (
                 <div key={cat.name} className="space-y-2">
-                  <div className="flex justify-between text-sm">
-                    <span className="font-bold">{cat.name}</span>
-                    <span className="text-bakery-brown/60">{cat.units} units · €{cat.revenue.toFixed(2)}</span>
+                  <div className="flex justify-between text-xs sm:text-sm">
+                    <span className="font-bold truncate mr-2">{cat.name}</span>
+                    <span className="text-bakery-brown/60 shrink-0">{cat.units} units · {formatPrice(cat.revenue)}</span>
                   </div>
                   <div className="w-full bg-bakery-beige rounded-full h-1.5 overflow-hidden">
                     <div className="bg-bakery-caramel h-full" style={{ width: `${percent}%` }}></div>
@@ -250,62 +266,25 @@ export const OverviewTab = () => {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="card-bakery p-6">
+        <div className="card-bakery p-4 sm:p-6">
           <h3 className="text-lg font-bold font-serif mb-6">{t('bestSellers')}</h3>
           <div className="space-y-4">
             {bestSellers.map((p, i) => (
-              <div key={p.id} className="flex items-center justify-between p-3 bg-bakery-cream rounded-xl">
-                <div className="flex items-center gap-4">
-                  <span className="w-6 h-6 flex items-center justify-center bg-bakery-brown text-white text-[10px] font-bold rounded-full">{i+1}</span>
-                  <div>
-                    <p className="font-bold text-sm">{t(p.transKey || '')}</p>
-                    <p className="text-[10px] text-bakery-brown/50 uppercase font-bold">{p.category}</p>
+              <div key={p.id} className="flex items-center justify-between p-3 bg-bakery-cream rounded-xl gap-4">
+                <div className="flex items-center gap-3 sm:gap-4 min-w-0">
+                  <span className="w-6 h-6 flex items-center justify-center bg-bakery-brown text-white text-[10px] font-bold rounded-full shrink-0">{i+1}</span>
+                  <div className="min-w-0">
+                    <p className="font-bold text-sm truncate">{t(p.transKey || '')}</p>
+                    <p className="text-[10px] text-bakery-brown/50 uppercase font-bold truncate">{p.category}</p>
                   </div>
                 </div>
-                <div className="text-right">
+                <div className="text-right shrink-0">
                   <p className="font-bold text-sm">{p.qty} units</p>
-                  <p className="text-[10px] text-bakery-caramel font-bold">€{p.revenue.toFixed(2)}</p>
+                  <p className="text-[10px] text-bakery-caramel font-bold">{formatPrice(p.revenue)}</p>
                 </div>
               </div>
             ))}
             {bestSellers.length === 0 && <p className="text-center text-bakery-brown/40 py-8 italic">No sales data yet.</p>}
-          </div>
-        </div>
-        <div className="card-bakery p-6">
-          <h3 className="text-lg font-bold font-serif mb-6">{t('staffActivity')}</h3>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="text-bakery-brown/40 uppercase text-[10px] font-black tracking-widest">
-                  <th className="pb-4">{t('staff')}</th>
-                  <th className="pb-4">{t('loginTime')}</th>
-                  <th className="pb-4">Orders</th>
-                  <th className="pb-4">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-bakery-beige">
-                {shiftLogs.slice(-5).reverse().map(log => (
-                  <tr key={log.id}>
-                    <td className="py-3">
-                      <p className="font-bold leading-tight">{log.fullName}</p>
-                      <p className="text-[10px] text-bakery-brown/50">@{log.username}</p>
-                    </td>
-                    <td className="py-3 text-bakery-brown/60">{new Date(log.loginTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</td>
-                    <td className="py-3 font-bold">{log.ordersProcessed}</td>
-                    <td className="py-3">
-                      {log.logoutTime ? (
-                        <span className="text-bakery-brown/40">Ended</span>
-                      ) : (
-                        <span className="text-emerald-500 font-bold flex items-center gap-1">
-                          <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
-                          Active
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
           </div>
         </div>
       </div>

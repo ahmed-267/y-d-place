@@ -1,45 +1,62 @@
 
-import React, { useState } from 'react';
-import { useApp } from '../AppContext';
+import React from 'react';
 import { Modal } from './Modal';
+import { AlertTriangle } from 'lucide-react';
 
 interface ConfirmDialogProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
   title: string;
   message: string;
-  onConfirm: () => void;
-  onCancel: () => void;
-  requireReset?: boolean;
+  confirmText?: string;
+  cancelText?: string;
+  type?: 'danger' | 'warning' | 'info';
 }
 
-export const ConfirmDialog = ({ title, message, onConfirm, onCancel, requireReset = false }: ConfirmDialogProps) => {
-  const [input, setInput] = useState('');
-  const { t } = useApp();
-  
+export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
+  isOpen,
+  onClose,
+  onConfirm,
+  title,
+  message,
+  confirmText = 'Delete',
+  cancelText = 'Cancel',
+  type = 'danger'
+}) => {
+  if (!isOpen) return null;
+
   return (
-    <Modal title={title} onClose={onCancel}>
-      <p className="mb-6 text-bakery-brown/80">{message}</p>
-      {requireReset && (
-        <input 
-          type="text" 
-          placeholder={t('confirmReset')}
-          className="w-full p-3 border border-bakery-beige rounded-xl mb-6 focus:ring-2 focus:ring-bakery-caramel outline-none"
-          value={input}
-          onChange={e => setInput(e.target.value)}
-        />
-      )}
-      <div className="flex gap-3">
-        <button onClick={onCancel} className="flex-1 p-3 rounded-xl bg-bakery-beige text-bakery-brown font-bold transition-colors hover:bg-bakery-beige/80">
-          {t('cancel')}
-        </button>
-        <button 
-          disabled={requireReset && input !== 'RESET'}
-          onClick={onConfirm} 
-          className={`flex-1 p-3 rounded-xl text-white font-bold transition-all ${
-            requireReset ? 'bg-rose-500 hover:bg-rose-600' : 'bg-bakery-brown hover:bg-bakery-brown/90'
-          } disabled:opacity-50 disabled:cursor-not-allowed`}
-        >
-          {t('confirm')}
-        </button>
+    <Modal title={title} onClose={onClose}>
+      <div className="space-y-6">
+        <div className="flex items-start gap-4 p-4 bg-rose-50 rounded-2xl border border-rose-100">
+          <div className={`p-2 rounded-xl shrink-0 ${type === 'danger' ? 'bg-rose-100 text-rose-600' : 'bg-orange-100 text-orange-600'}`}>
+            <AlertTriangle size={24} />
+          </div>
+          <p className="text-bakery-brown/80 font-medium leading-relaxed">
+            {message}
+          </p>
+        </div>
+        
+        <div className="flex gap-3">
+          <button
+            onClick={onClose}
+            className="flex-1 px-4 py-3 bg-bakery-beige text-bakery-brown rounded-xl font-bold hover:bg-bakery-beige/80 transition-all active:scale-95"
+          >
+            {cancelText}
+          </button>
+          <button
+            onClick={() => {
+              onConfirm();
+              onClose();
+            }}
+            className={`flex-1 px-4 py-3 rounded-xl font-bold text-white transition-all active:scale-95 shadow-lg ${
+              type === 'danger' ? 'bg-rose-500 hover:bg-rose-600 shadow-rose-200' : 'bg-orange-500 hover:bg-orange-600 shadow-orange-200'
+            }`}
+          >
+            {confirmText}
+          </button>
+        </div>
       </div>
     </Modal>
   );

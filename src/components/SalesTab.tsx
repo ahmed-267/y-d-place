@@ -1,17 +1,25 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../AppContext';
-import { Search, Download, ChevronDown, ChevronUp, Calendar as CalendarIcon } from 'lucide-react';
-import { Sale } from '../types';
+import { Search, Download, ChevronDown, ChevronUp, Calendar as CalendarIcon, Edit2, Trash2, Plus } from 'lucide-react';
+import { Sale, SaleItem } from '../types';
+import { Pagination } from './Pagination';
+import { ConfirmDialog } from './ConfirmDialog';
+import { Modal } from './Modal';
 
 export const SalesTab = () => {
-  const { sales, t } = useApp();
+  const { sales, setSales, t, formatPrice, addToast } = useApp();
   const [filter, setFilter] = useState('All');
   const [search, setSearch] = useState('');
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const [dateRange, setDateRange] = useState({ from: '', to: '' });
   const [selectedWeek, setSelectedWeek] = useState('');
   const [selectedMonth, setSelectedMonth] = useState('');
+  
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
+  const [editSale, setEditSale] = useState<Sale | null>(null);
+  const [deleteSaleConfirm, setDeleteSaleConfirm] = useState<Sale | null>(null);
 
   const filteredSales = useMemo(() => {
     const now = new Date();
@@ -59,7 +67,33 @@ export const SalesTab = () => {
     return list.sort((a, b) => b.timestamp - a.timestamp);
   }, [sales, filter, search, dateRange, selectedWeek, selectedMonth]);
 
+  const paginatedSales = useMemo(() => {
+    const start = (currentPage - 1) * itemsPerPage;
+    return filteredSales.slice(start, start + itemsPerPage);
+  }, [filteredSales, currentPage]);
+
+  const totalPages = Math.ceil(filteredSales.length / itemsPerPage);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filter, search, dateRange, selectedWeek, selectedMonth]);
+
   const totalRevenue = filteredSales.reduce((acc, s) => acc + s.subtotal, 0);
+
+  const handleDeleteSale = () => {
+    if (!deleteSaleConfirm) return;
+    setSales(sales.filter(s => s.id !== deleteSaleConfirm.id));
+    addToast("Sale record deleted", "info");
+    setDeleteSaleConfirm(null);
+  };
+
+  const handleEditSave = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editSale) return;
+    setSales(sales.map(s => s.id === editSale.id ? editSale : s));
+    addToast("Sale record updated!");
+    setEditSale(null);
+  };
 
   const exportCSV = () => {
     const headers = "Date,Time,Items,Total,Payment,Cashier\n";
@@ -78,24 +112,38 @@ export const SalesTab = () => {
     a.click();
   };
 
+  const groupItems = (items: SaleItem[]) => {
+    const grouped: Record<string, SaleItem> = {};
+    items.forEach(item => {
+      const key = `${item.productId}-${JSON.stringify(item.extras?.map((e: any) => e.productId).sort() || [])}`;
+      if (grouped[key]) {
+        grouped[key].qty += item.qty;
+        grouped[key].lineTotal += item.lineTotal;
+      } else {
+        grouped[key] = { ...item };
+      }
+    });
+    return Object.values(grouped);
+  };
+
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-6 animate-fade-in max-w-full overflow-hidden">
       <div className="flex flex-col gap-6">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-          <div className="flex flex-wrap gap-2 bg-bakery-beige/30 p-1 rounded-2xl">
+        <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+          <div className="flex flex-wrap gap-1 sm:gap-2 bg-bakery-beige/30 p-1 rounded-2xl w-full lg:w-auto overflow-x-auto scrollbar-hide">
             {[
               { id: 'All', label: t('all') },
               { id: 'Today', label: t('today') },
               { id: 'WeekQuick', label: t('week') },
               { id: 'MonthQuick', label: t('month') },
               { id: 'Custom', label: t('dateRange') },
-              { id: 'WeekPicker', label: 'Week Picker' },
-              { id: 'MonthPicker', label: 'Month Picker' }
+              { id: 'WeekPicker', label: 'Week' },
+              { id: 'MonthPicker', label: 'Month' }
             ].map(f => (
               <button 
                 key={f.id} 
                 onClick={() => setFilter(f.id)}
-                className={`px-4 py-2 rounded-xl font-bold text-sm transition-all ${
+                className={`flex-1 lg:flex-none px-3 sm:px-4 py-2 rounded-xl font-bold text-[10px] sm:text-sm transition-all whitespace-nowrap ${
                   filter === f.id ? 'bg-bakery-brown text-white shadow-sm' : 'text-bakery-brown/60 hover:text-bakery-brown'
                 }`}
               >
@@ -103,63 +151,83 @@ export const SalesTab = () => {
               </button>
             ))}
           </div>
-          <div className="flex items-center gap-4 w-full md:w-auto">
-            <div className="relative flex-1 md:w-64">
+          <div className="flex items-center gap-3 w-full lg:w-auto">
+            <div className="relative flex-1 lg:w-64">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-bakery-brown/40" size={18} />
               <input 
                 type="text" 
                 placeholder={t('search')}
-                className="w-full pl-10 pr-4 py-2 border border-bakery-beige rounded-xl outline-none focus:ring-2 focus:ring-bakery-caramel"
+                className="w-full pl-10 pr-4 py-2 border border-bakery-beige rounded-xl outline-none focus:ring-2 focus:ring-bakery-caramel text-sm"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
               />
             </div>
-            <button onClick={exportCSV} className="p-2 bg-bakery-brown text-white rounded-xl hover:bg-bakery-brown/90 transition-colors">
+            <button onClick={exportCSV} className="p-2 bg-bakery-brown text-white rounded-xl hover:bg-bakery-brown/90 transition-colors shrink-0 active:scale-90">
               <Download size={20} />
             </button>
           </div>
         </div>
 
         {filter === 'Custom' && (
-          <div className="flex flex-wrap items-center gap-4 p-4 bg-bakery-beige/20 rounded-2xl animate-fade-in">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold uppercase text-bakery-brown/40">{t('from')}</span>
-              <input type="date" className="p-2 border rounded-xl" value={dateRange.from} onChange={e => setDateRange({ ...dateRange, from: e.target.value })} />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-4 bg-bakery-beige/20 rounded-2xl animate-fade-in">
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] font-black uppercase text-bakery-brown/40">{t('from')}</span>
+              <input 
+                type="date" 
+                className="w-full p-3 border border-bakery-beige rounded-xl outline-none focus:ring-2 focus:ring-bakery-caramel font-bold text-sm bg-white" 
+                value={dateRange.from} 
+                onChange={e => setDateRange({ ...dateRange, from: e.target.value })} 
+              />
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold uppercase text-bakery-brown/40">{t('to')}</span>
-              <input type="date" className="p-2 border rounded-xl" value={dateRange.to} onChange={e => setDateRange({ ...dateRange, to: e.target.value })} />
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] font-black uppercase text-bakery-brown/40">{t('to')}</span>
+              <input 
+                type="date" 
+                className="w-full p-3 border border-bakery-beige rounded-xl outline-none focus:ring-2 focus:ring-bakery-caramel font-bold text-sm bg-white" 
+                value={dateRange.to} 
+                onChange={e => setDateRange({ ...dateRange, to: e.target.value })} 
+              />
             </div>
           </div>
         )}
 
         {filter === 'WeekPicker' && (
-          <div className="flex items-center gap-4 p-4 bg-bakery-beige/20 rounded-2xl animate-fade-in">
-            <span className="text-xs font-bold uppercase text-bakery-brown/40">{t('week')}</span>
-            <input type="week" className="p-2 border rounded-xl" value={selectedWeek} onChange={e => setSelectedWeek(e.target.value)} />
+          <div className="flex flex-col gap-1 p-4 bg-bakery-beige/20 rounded-2xl animate-fade-in">
+            <span className="text-[10px] font-black uppercase text-bakery-brown/40">{t('week')}</span>
+            <input 
+              type="week" 
+              className="w-full p-3 border border-bakery-beige rounded-xl outline-none focus:ring-2 focus:ring-bakery-caramel font-bold text-sm bg-white" 
+              value={selectedWeek} 
+              onChange={e => setSelectedWeek(e.target.value)} 
+            />
           </div>
         )}
 
         {filter === 'MonthPicker' && (
-          <div className="flex items-center gap-4 p-4 bg-bakery-beige/20 rounded-2xl animate-fade-in">
-            <span className="text-xs font-bold uppercase text-bakery-brown/40">{t('month')}</span>
-            <input type="month" className="p-2 border rounded-xl" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} />
+          <div className="flex flex-col gap-1 p-4 bg-bakery-beige/20 rounded-2xl animate-fade-in">
+            <span className="text-[10px] font-black uppercase text-bakery-brown/40">{t('month')}</span>
+            <input 
+              type="month" 
+              className="w-full p-3 border border-bakery-beige rounded-xl outline-none focus:ring-2 focus:ring-bakery-caramel font-bold text-sm bg-white" 
+              value={selectedMonth} 
+              onChange={e => setSelectedMonth(e.target.value)} 
+            />
           </div>
         )}
       </div>
 
-      <div className="card-bakery p-6 flex justify-between items-center bg-bakery-accent/20">
-        <p className="font-bold text-bakery-brown/60 uppercase tracking-widest text-xs">
-          Showing {filteredSales.length} orders
+      <div className="card-bakery p-4 sm:p-6 flex justify-between items-center bg-bakery-accent/20">
+        <p className="font-bold text-bakery-brown/60 uppercase tracking-widest text-[10px] sm:text-xs">
+          {filteredSales.length} orders
         </p>
-        <p className="text-2xl font-black font-serif">
-          Total: €{totalRevenue.toFixed(2)}
+        <p className="text-lg sm:text-2xl font-black font-serif">
+          Total: {formatPrice(totalRevenue)}
         </p>
       </div>
 
       <div className="card-bakery overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
+        <div className="overflow-x-auto scrollbar-hide">
+          <table className="w-full text-left text-sm min-w-[700px]">
             <thead className="bg-bakery-beige/30 text-bakery-brown/40 uppercase text-[10px] font-black tracking-widest">
               <tr>
                 <th className="p-4">Date & Time</th>
@@ -171,38 +239,52 @@ export const SalesTab = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-bakery-beige">
-              {filteredSales.map(sale => (
+              {paginatedSales.map(sale => (
                 <React.Fragment key={sale.id}>
                   <tr 
                     className="hover:bg-bakery-cream/50 cursor-pointer transition-colors"
                     onClick={() => setExpandedRow(expandedRow === sale.id ? null : sale.id)}
                   >
-                    <td className="p-4 font-medium">{new Date(sale.timestamp).toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</td>
+                    <td className="p-4 font-medium whitespace-nowrap">{new Date(sale.timestamp).toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</td>
                     <td className="p-4 text-bakery-brown/70 truncate max-w-[200px]">
-                      {sale.items.map(i => `${i.qty}x ${i.nameEN}`).join(', ')}
+                      {groupItems(sale.items).map(i => `${i.qty}x ${i.nameEN}`).join(', ')}
                     </td>
-                    <td className="p-4 font-black">€{sale.subtotal.toFixed(2)}</td>
+                    <td className="p-4 font-black whitespace-nowrap">{formatPrice(sale.subtotal)}</td>
                     <td className="p-4">
-                      <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${
+                      <span className={`inline-block px-3 py-1 rounded-full text-[10px] font-bold uppercase whitespace-nowrap ${
                         sale.paymentMethod === 'Cash' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'
                       }`}>
-                        {t(sale.paymentMethod.toLowerCase())}
+                        {sale.paymentMethod === 'Cash' ? 'Cash' : 'Card'}
                       </span>
                     </td>
                     <td className="p-4">
-                      <p className="font-bold leading-tight">{sale.cashierFullName}</p>
+                      <p className="font-bold leading-tight whitespace-nowrap">{sale.cashierFullName}</p>
                       <p className="text-[10px] text-bakery-brown/50">@{sale.cashierUsername}</p>
                     </td>
                     <td className="p-4 text-bakery-brown/40">
-                      {expandedRow === sale.id ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                      <div className="flex items-center gap-2">
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); setEditSale(sale); }}
+                          className="p-2 hover:bg-bakery-beige rounded-lg transition-all"
+                        >
+                          <Edit2 size={16} />
+                        </button>
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); setDeleteSaleConfirm(sale); }}
+                          className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                        {expandedRow === sale.id ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                      </div>
                     </td>
                   </tr>
                   {expandedRow === sale.id && (
                     <tr className="bg-bakery-cream/30 animate-fade-in">
-                      <td colSpan={6} className="p-6">
+                      <td colSpan={6} className="p-4 sm:p-6">
                         <div className="space-y-3">
-                          <p className="font-black text-xs uppercase tracking-widest text-bakery-brown/40">Order Details</p>
-                          {sale.items.map((item, idx) => (
+                          <p className="font-black text-[10px] uppercase tracking-widest text-bakery-brown/40">Order Details</p>
+                          {groupItems(sale.items).map((item, idx) => (
                             <div key={idx} className="flex flex-col gap-1 border-b border-bakery-beige/50 pb-2">
                               <div className="flex justify-between items-center text-sm">
                                 <div className="flex items-center gap-4">
@@ -210,11 +292,11 @@ export const SalesTab = () => {
                                   <span className="font-bold">{item.nameEN}</span>
                                 </div>
                                 <div className="text-right">
-                                  <p className="font-bold">€{item.lineTotal.toFixed(2)}</p>
+                                  <p className="font-bold">{formatPrice(item.lineTotal)}</p>
                                 </div>
                               </div>
                               {item.extras?.map(e => (
-                                <p key={e.productId} className="text-[10px] text-bakery-caramel font-bold italic ml-10">+ {e.nameEN} (€{e.price.toFixed(2)})</p>
+                                <p key={e.productId} className="text-[10px] text-bakery-caramel font-bold italic ml-10">+ {e.nameEN} ({formatPrice(e.price)})</p>
                               ))}
                             </div>
                           ))}
@@ -233,6 +315,56 @@ export const SalesTab = () => {
           </div>
         )}
       </div>
+
+      {filteredSales.length > itemsPerPage && (
+        <Pagination 
+          currentPage={currentPage}
+          totalPages={totalPages}
+          onPageChange={setCurrentPage}
+          t={t}
+        />
+      )}
+
+      {editSale && (
+        <Modal title="Edit Sale Record" onClose={() => setEditSale(null)}>
+          <form onSubmit={handleEditSave} className="space-y-4">
+            <div>
+              <label className="block text-xs font-bold uppercase mb-1">Payment Method</label>
+              <select 
+                className="w-full p-3 border rounded-xl"
+                value={editSale.paymentMethod}
+                onChange={e => setEditSale({ ...editSale, paymentMethod: e.target.value as 'Cash' | 'Card' })}
+              >
+                <option value="Cash">Cash</option>
+                <option value="Card">Card</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-bold uppercase mb-1">Subtotal</label>
+              <input 
+                type="number"
+                step="0.01"
+                className="w-full p-3 border rounded-xl"
+                value={editSale.subtotal}
+                onChange={e => setEditSale({ ...editSale, subtotal: parseFloat(e.target.value) || 0 })}
+              />
+            </div>
+            <button type="submit" className="btn-primary w-full p-4 rounded-2xl font-bold">
+              {t('save')}
+            </button>
+          </form>
+        </Modal>
+      )}
+
+      {deleteSaleConfirm && (
+        <ConfirmDialog 
+          isOpen={!!deleteSaleConfirm}
+          title="Delete Sale Record"
+          message="Are you sure you want to delete this sale record? This action cannot be undone."
+          onConfirm={handleDeleteSale}
+          onClose={() => setDeleteSaleConfirm(null)}
+        />
+      )}
     </div>
   );
 };
