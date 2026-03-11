@@ -78,42 +78,42 @@ export const MyShiftsTab = () => {
   };
 
   return (
-    <div className="space-y-8 animate-fade-in pb-10">
-      <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-black font-serif text-bakery-brown">{t('myShifts')}</h2>
+    <div className="space-y-8 animate-fade-in pb-10 max-w-full overflow-hidden">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <h2 className="text-xl sm:text-2xl font-black font-serif text-bakery-brown">{t('myShifts')}</h2>
         <button 
           onClick={() => setShowAddModal(true)}
-          className="btn-primary flex items-center gap-2 px-6 py-4 rounded-xl font-bold active:scale-95"
+          className="btn-primary flex items-center justify-center gap-2 px-6 py-4 rounded-xl font-bold active:scale-95 w-full sm:w-auto text-sm"
         >
           <Plus size={20} />
           {t('addShift')}
         </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="card-bakery p-6 flex items-center gap-4">
-          <div className="w-12 h-12 rounded-2xl bg-bakery-beige flex items-center justify-center text-bakery-brown">
-            <Clock size={24} />
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+        <div className="card-bakery p-4 sm:p-6 flex items-center gap-4">
+          <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-bakery-beige flex items-center justify-center text-bakery-brown shrink-0">
+            <Clock size={20} className="sm:w-6 sm:h-6" />
           </div>
           <div>
             <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40">{t('totalHours')}</p>
-            <p className="text-2xl font-black text-bakery-brown">{totalHours.toFixed(2)}h</p>
+            <p className="text-xl sm:text-2xl font-black text-bakery-brown">{totalHours.toFixed(2)}h</p>
           </div>
         </div>
-        <div className="card-bakery p-6 flex items-center gap-4">
-          <div className="w-12 h-12 rounded-2xl bg-bakery-beige flex items-center justify-center text-bakery-brown">
-            <Calendar size={24} />
+        <div className="card-bakery p-4 sm:p-6 flex items-center gap-4">
+          <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-bakery-beige flex items-center justify-center text-bakery-brown shrink-0">
+            <Calendar size={20} className="sm:w-6 sm:h-6" />
           </div>
           <div>
             <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40">Shifts</p>
-            <p className="text-2xl font-black text-bakery-brown">{myShifts.length}</p>
+            <p className="text-xl sm:text-2xl font-black text-bakery-brown">{myShifts.length}</p>
           </div>
         </div>
       </div>
 
       <div className="card-bakery overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm min-w-[600px]">
+        <div className="overflow-x-auto scrollbar-hide">
+          <table className="w-full text-left text-sm min-w-[700px]">
             <thead className="bg-bakery-beige/30 text-bakery-brown/40 uppercase text-[10px] font-black tracking-widest">
               <tr>
                 <th className="p-4">{t('date')}</th>
@@ -128,11 +128,11 @@ export const MyShiftsTab = () => {
             <tbody className="divide-y divide-bakery-beige">
               {myShifts.map(s => (
                 <tr key={s.id} className="hover:bg-bakery-cream/30 transition-colors">
-                  <td className="p-4 font-bold">{s.date}</td>
-                  <td className="p-4">{s.startTime}</td>
-                  <td className="p-4">{s.endTime}</td>
-                  <td className="p-4 text-bakery-brown/40">{s.breakMinutes}m</td>
-                  <td className="p-4 font-black text-bakery-caramel">{s.totalHours}h</td>
+                  <td className="p-4 font-bold whitespace-nowrap">{s.date}</td>
+                  <td className="p-4 whitespace-nowrap">{s.startTime}</td>
+                  <td className="p-4 whitespace-nowrap">{s.endTime}</td>
+                  <td className="p-4 text-bakery-brown/40 whitespace-nowrap">{s.breakMinutes}m</td>
+                  <td className="p-4 font-black text-bakery-caramel whitespace-nowrap">{s.totalHours}h</td>
                   <td className="p-4 text-xs max-w-[200px] truncate" title={s.notes}>{s.notes || '-'}</td>
                   <td className="p-4 text-right">
                     <button 

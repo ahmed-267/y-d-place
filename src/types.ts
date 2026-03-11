@@ -1,24 +1,34 @@
 
 export type Role = 'owner' | 'manager' | 'staff';
 
+export interface IngredientLink {
+  ingredientId: number;
+  quantityUsed: number;
+  unit: string;
+}
+
+export interface PreparedStockLink {
+  preparedStockId: number;
+  portionsPerSale: number;
+}
+
 export interface Product {
   id: number;
   nameEN: string;
-  nameFR: string;
-  nameNL: string;
-  nameFL: string;
+  translations: Record<string, string>;
   category: string;
   price: number;
-  stock: number;
-  lowThreshold: number;
   emoji: string;
   active: boolean;
   transKey: string;
+  ingredientLinks?: IngredientLink[];
+  preparedStockLinks?: PreparedStockLink[];
 }
 
 export interface SaleItem {
   productId: number;
   nameEN: string;
+  translations?: Record<string, string>;
   qty: number;
   unitPrice: number;
   lineTotal: number;
@@ -33,6 +43,13 @@ export interface Sale {
   paymentMethod: 'Cash' | 'Card';
   cashierUsername: string;
   cashierFullName: string;
+}
+
+export interface PreparedStock {
+  id: number;
+  name: string;
+  portions: number;
+  lowThreshold: number;
 }
 
 export interface Ingredient {
@@ -56,12 +73,31 @@ export interface Expense {
   receiptImage?: string;
 }
 
+export interface BusinessSettings {
+  id: string;
+  name: string;
+  ownerName: string;
+  ownerEmail: string;
+  ownerPhone: string;
+  venueType: string;
+  country: string;
+  city: string;
+  currencyCode: string;
+  currencySymbol: string;
+  language: Language;
+}
+
 export interface TaxSettings {
   manualGrossRevenue?: number;
   manualExpenses?: number;
   socialSecurityPaid?: number;
   municipalTaxRate: number;
   vatRegime: 'SmallBusiness' | 'Standard';
+  // New fields for country-specific tax rules
+  countryCode?: string;
+  customIncomeTaxRate?: number;
+  customVatRate?: number;
+  customSocialSecurityRate?: number;
 }
 
 export interface User {
@@ -70,6 +106,7 @@ export interface User {
   fullName: string;
   password?: string;
   role: Role;
+  hourlyRate?: number;
 }
 
 export interface ShiftLog {
@@ -95,4 +132,4 @@ export interface WorkShift {
   notes?: string;
 }
 
-export type Language = 'en' | 'fr' | 'nl' | 'fl';
+export type Language = 'en' | 'fr' | 'nl' | 'fl' | 'es' | 'it' | 'de' | 'ar' | 'pt' | 'tr' | 'pl' | 'ro' | 'zh' | 'ja';

@@ -5,6 +5,9 @@ import { Plus, Trash2, Edit2, Calculator, TrendingUp, Receipt, Info, Check, X, A
 import { Expense, ExpenseCategory, TaxSettings } from '../types';
 import { Modal } from './Modal';
 import { ConfirmDialog } from './ConfirmDialog';
+import { Pagination } from './Pagination';
+import { ScanProgressModal } from './ScanProgressModal';
+import { compressImage } from '../utils/aiHelper';
 import { GoogleGenAI, Type } from "@google/genai";
 
 const EXPENSE_CATEGORIES: ExpenseCategory[] = [
@@ -19,7 +22,7 @@ const PLACEHOLDERS = [
 ];
 
 export const FinanceTab = () => {
-  const { t, expenses, setExpenses, taxSettings, setTaxSettings, sales, addToast } = useApp();
+  const { t, expenses, setExpenses, taxSettings, setTaxSettings, sales, addToast, businessSettings, formatPrice } = useApp();
   const [activeSection, setActiveSection] = useState<'expenses' | 'tax' | 'profit'>('expenses');
   
   // Expenses State
@@ -37,10 +40,17 @@ export const FinanceTab = () => {
   const [expenseFilter, setExpenseFilter] = useState<ExpenseCategory | 'All'>('All');
   const [expenseDateRange, setExpenseDateRange] = useState({ from: '', to: '' });
   
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
+
   // Receipt Scanner State
   const [isScanning, setIsScanning] = useState(false);
+  const [scanStatus, setScanStatus] = useState<'uploading' | 'analyzing' | 'extracting' | 'finishing' | 'error' | 'success' | 'timeout'>('uploading');
+  const [scanThumbnail, setScanThumbnail] = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [scannedImage, setScannedImage] = useState<string | null>(null);
   const [fullSizeImage, setFullSizeImage] = useState<string | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Tax Settings State (Local for editing, then synced)
@@ -72,6 +82,17 @@ export const FinanceTab = () => {
     return list.sort((a, b) => b.date.localeCompare(a.date));
   }, [expenses, expenseFilter, expenseDateRange]);
 
+  const paginatedExpenses = useMemo(() => {
+    const start = (currentPage - 1) * itemsPerPage;
+    return filteredExpenses.slice(start, start + itemsPerPage);
+  }, [filteredExpenses, currentPage]);
+
+  const totalPages = Math.ceil(filteredExpenses.length / itemsPerPage);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [expenseFilter, expenseDateRange]);
+
   const expenseSummaries = useMemo(() => {
     const now = new Date();
     const currentMonth = now.getMonth();
@@ -94,6 +115,8 @@ export const FinanceTab = () => {
     return { monthTotal, yearTotal, allTimeTotal };
   }, [expenses]);
 
+  const countryCode = businessSettings?.country || 'BE';
+
   // Tax Logic
   const taxResults = useMemo(() => {
     const gross = localTaxSettings.manualGrossRevenue ?? totalSalesRevenue;
@@ -103,52 +126,393 @@ export const FinanceTab = () => {
     // Step 1: Net taxable income
     const netTaxable = Math.max(0, gross - deductible - ssPaid);
     
-    // Step 2: Tax-free allowance
-    const allowance = 10910;
-    
-    // Step 3: Progressive brackets
+    // Default values
     let tax = 0;
-    const brackets = [
-      { limit: 15820, rate: 0.25 },
-      { limit: 27920, rate: 0.40 },
-      { limit: 48320, rate: 0.45 },
-      { limit: Infinity, rate: 0.50 }
-    ];
+    let allowance = 0;
+    let bracketDetails: { amount: number; tax: number; rate: number }[] = [];
+    let allowanceDiscount = 0;
+    let pit = 0;
+    let muniTax = 0;
+    let totalTax = 0;
+    let ssRef = 0;
+    let vatCollected = 0;
+    let vatRate = 0;
 
-    let remaining = netTaxable;
-    let prevLimit = 0;
-    const bracketDetails = brackets.map(b => {
-      const amountInBracket = Math.max(0, Math.min(remaining, b.limit - prevLimit));
-      const bracketTax = amountInBracket * b.rate;
-      tax += bracketTax;
-      const detail = { amount: amountInBracket, tax: bracketTax, rate: b.rate * 100 };
-      prevLimit = b.limit;
-      remaining -= amountInBracket;
-      return detail;
-    });
-
-    // Step 4: Tax-free allowance discount
-    const allowanceDiscount = 2727.50;
-    const pit = Math.max(0, tax - allowanceDiscount);
-
-    // Step 5: Municipal tax
-    const muniTax = pit * (localTaxSettings.municipalTaxRate / 100);
-
-    // Step 6: Total tax burden
-    const totalTax = pit + muniTax;
-
-    // Step 7: SS Reference
-    const ssRef = netTaxable * 0.205;
-
-    // Step 8: VAT
-    const vatCollected = localTaxSettings.vatRegime === 'Standard' ? gross * 0.12 : 0;
+    // Country Specific Rules
+    if (countryCode === 'BE') {
+      allowance = 10910;
+      const brackets = [
+        { limit: 15820, rate: 0.25 },
+        { limit: 27920, rate: 0.40 },
+        { limit: 48320, rate: 0.45 },
+        { limit: Infinity, rate: 0.50 }
+      ];
+      let remaining = netTaxable;
+      let prevLimit = 0;
+      bracketDetails = brackets.map(b => {
+        const amountInBracket = Math.max(0, Math.min(remaining, b.limit - prevLimit));
+        const bracketTax = amountInBracket * b.rate;
+        tax += bracketTax;
+        prevLimit = b.limit;
+        remaining -= amountInBracket;
+        return { amount: amountInBracket, tax: bracketTax, rate: b.rate * 100 };
+      });
+      allowanceDiscount = 2727.50;
+      pit = Math.max(0, tax - allowanceDiscount);
+      muniTax = pit * (localTaxSettings.municipalTaxRate / 100);
+      totalTax = pit + muniTax;
+      ssRef = netTaxable * 0.205;
+      vatRate = 0.12;
+      vatCollected = localTaxSettings.vatRegime === 'Standard' ? gross * vatRate : 0;
+    } else if (countryCode === 'FR') {
+      // France simplified
+      allowance = 11294;
+      const brackets = [
+        { limit: 11294, rate: 0 },
+        { limit: 28797, rate: 0.11 },
+        { limit: 82341, rate: 0.30 },
+        { limit: 177106, rate: 0.41 },
+        { limit: Infinity, rate: 0.45 }
+      ];
+      let remaining = netTaxable;
+      let prevLimit = 0;
+      bracketDetails = brackets.map(b => {
+        const amountInBracket = Math.max(0, Math.min(remaining, b.limit - prevLimit));
+        const bracketTax = amountInBracket * b.rate;
+        tax += bracketTax;
+        prevLimit = b.limit;
+        remaining -= amountInBracket;
+        return { amount: amountInBracket, tax: bracketTax, rate: b.rate * 100 };
+      });
+      pit = tax;
+      totalTax = pit;
+      ssRef = netTaxable * 0.22; // Auto-entrepreneur simplified
+      vatRate = 0.20;
+      vatCollected = gross * vatRate;
+    } else if (countryCode === 'GB') {
+      // UK simplified
+      allowance = 12570;
+      const brackets = [
+        { limit: 12570, rate: 0 },
+        { limit: 50270, rate: 0.20 },
+        { limit: 125140, rate: 0.40 },
+        { limit: Infinity, rate: 0.45 }
+      ];
+      let remaining = netTaxable;
+      let prevLimit = 0;
+      bracketDetails = brackets.map(b => {
+        const amountInBracket = Math.max(0, Math.min(remaining, b.limit - prevLimit));
+        const bracketTax = amountInBracket * b.rate;
+        tax += bracketTax;
+        prevLimit = b.limit;
+        remaining -= amountInBracket;
+        return { amount: amountInBracket, tax: bracketTax, rate: b.rate * 100 };
+      });
+      pit = tax;
+      totalTax = pit;
+      ssRef = netTaxable * 0.09; // National Insurance Class 4
+      vatRate = 0.20;
+      vatCollected = gross * vatRate;
+    } else if (countryCode === 'NL') {
+      // Netherlands simplified
+      allowance = 2470 + 2123; // Zelfstandigenaftrek + Startersaftrek
+      const brackets = [
+        { limit: 75518, rate: 0.3697 },
+        { limit: Infinity, rate: 0.4950 }
+      ];
+      let remaining = Math.max(0, netTaxable - allowance);
+      let prevLimit = 0;
+      bracketDetails = brackets.map(b => {
+        const amountInBracket = Math.max(0, Math.min(remaining, b.limit - prevLimit));
+        const bracketTax = amountInBracket * b.rate;
+        tax += bracketTax;
+        prevLimit = b.limit;
+        remaining -= amountInBracket;
+        return { amount: amountInBracket, tax: bracketTax, rate: b.rate * 100 };
+      });
+      const credits = 3362 + 5158; // Algemene heffingskorting + Arbeidskorting (max)
+      pit = Math.max(0, tax - credits);
+      totalTax = pit;
+      ssRef = netTaxable * 0.0543; // Zvw
+      vatRate = 0.09;
+      vatCollected = gross * vatRate;
+    } else if (countryCode === 'DE') {
+      // Germany simplified
+      allowance = 11784;
+      const brackets = [
+        { limit: 11784, rate: 0 },
+        { limit: 66760, rate: 0.28 }, // Simplified progressive average
+        { limit: 277826, rate: 0.42 },
+        { limit: Infinity, rate: 0.45 }
+      ];
+      let remaining = netTaxable;
+      let prevLimit = 0;
+      bracketDetails = brackets.map(b => {
+        const amountInBracket = Math.max(0, Math.min(remaining, b.limit - prevLimit));
+        const bracketTax = amountInBracket * b.rate;
+        tax += bracketTax;
+        prevLimit = b.limit;
+        remaining -= amountInBracket;
+        return { amount: amountInBracket, tax: bracketTax, rate: b.rate * 100 };
+      });
+      pit = tax;
+      totalTax = pit + (pit * 0.055); // Soli
+      ssRef = netTaxable * 0.186; // Pension insurance
+      vatRate = 0.07;
+      vatCollected = gross * vatRate;
+    } else if (countryCode === 'US') {
+      // USA simplified (Federal only)
+      allowance = 15000;
+      const brackets = [
+        { limit: 11925, rate: 0.10 },
+        { limit: 48475, rate: 0.12 },
+        { limit: 103350, rate: 0.22 },
+        { limit: 197300, rate: 0.24 },
+        { limit: 243725, rate: 0.32 },
+        { limit: 609350, rate: 0.35 },
+        { limit: Infinity, rate: 0.37 }
+      ];
+      let remaining = Math.max(0, netTaxable - allowance);
+      let prevLimit = 0;
+      bracketDetails = brackets.map(b => {
+        const amountInBracket = Math.max(0, Math.min(remaining, b.limit - prevLimit));
+        const bracketTax = amountInBracket * b.rate;
+        tax += bracketTax;
+        prevLimit = b.limit;
+        remaining -= amountInBracket;
+        return { amount: amountInBracket, tax: bracketTax, rate: b.rate * 100 };
+      });
+      pit = tax;
+      const seTax = netTaxable * 0.153;
+      totalTax = pit + seTax + (netTaxable * (localTaxSettings.customIncomeTaxRate || 5) / 100);
+      ssRef = seTax;
+      vatRate = (localTaxSettings.customVatRate || 8) / 100;
+      vatCollected = gross * vatRate;
+    } else if (countryCode === 'ES') {
+      // Spain simplified
+      allowance = 5550;
+      const brackets = [
+        { limit: 12450, rate: 0.19 },
+        { limit: 20200, rate: 0.24 },
+        { limit: 35200, rate: 0.30 },
+        { limit: 60000, rate: 0.37 },
+        { limit: 300000, rate: 0.45 },
+        { limit: Infinity, rate: 0.47 }
+      ];
+      let remaining = Math.max(0, netTaxable - allowance);
+      let prevLimit = 0;
+      bracketDetails = brackets.map(b => {
+        const amountInBracket = Math.max(0, Math.min(remaining, b.limit - prevLimit));
+        const bracketTax = amountInBracket * b.rate;
+        tax += bracketTax;
+        prevLimit = b.limit;
+        remaining -= amountInBracket;
+        return { amount: amountInBracket, tax: bracketTax, rate: b.rate * 100 };
+      });
+      pit = tax;
+      totalTax = pit + (300 * 12); // Flat SS fee average
+      ssRef = 3600;
+      vatRate = 0.10;
+      vatCollected = gross * vatRate;
+    } else if (countryCode === 'IT') {
+      // Italy simplified
+      if (gross < 85000) {
+        // Regime forfettario
+        tax = gross * 0.40 * 0.15;
+        bracketDetails = [{ amount: gross, tax: tax, rate: 6 }]; // Effective on gross
+        pit = tax;
+        totalTax = pit;
+        ssRef = gross * 0.40 * 0.2607;
+        vatRate = 0;
+        vatCollected = 0;
+      } else {
+        const brackets = [
+          { limit: 28000, rate: 0.23 },
+          { limit: 50000, rate: 0.35 },
+          { limit: Infinity, rate: 0.43 }
+        ];
+        let remaining = netTaxable;
+        let prevLimit = 0;
+        bracketDetails = brackets.map(b => {
+          const amountInBracket = Math.max(0, Math.min(remaining, b.limit - prevLimit));
+          const bracketTax = amountInBracket * b.rate;
+          tax += bracketTax;
+          prevLimit = b.limit;
+          remaining -= amountInBracket;
+          return { amount: amountInBracket, tax: bracketTax, rate: b.rate * 100 };
+        });
+        pit = tax;
+        totalTax = pit;
+        ssRef = netTaxable * 0.2607;
+        vatRate = 0.10;
+        vatCollected = gross * vatRate;
+      }
+    } else if (countryCode === 'CA') {
+      // Canada simplified (Federal)
+      allowance = 16129;
+      const brackets = [
+        { limit: 57375, rate: 0.15 },
+        { limit: 114750, rate: 0.205 },
+        { limit: 158519, rate: 0.26 },
+        { limit: 220000, rate: 0.29 },
+        { limit: Infinity, rate: 0.33 }
+      ];
+      let remaining = Math.max(0, netTaxable - allowance);
+      let prevLimit = 0;
+      bracketDetails = brackets.map(b => {
+        const amountInBracket = Math.max(0, Math.min(remaining, b.limit - prevLimit));
+        const bracketTax = amountInBracket * b.rate;
+        tax += bracketTax;
+        prevLimit = b.limit;
+        remaining -= amountInBracket;
+        return { amount: amountInBracket, tax: bracketTax, rate: b.rate * 100 };
+      });
+      pit = tax;
+      const cpp = netTaxable * 0.119;
+      totalTax = pit + cpp + (netTaxable * 0.10); // Default 10% provincial
+      ssRef = cpp;
+      vatRate = 0.05;
+      vatCollected = gross * vatRate;
+    } else if (countryCode === 'AU') {
+      // Australia simplified
+      allowance = 18200;
+      const brackets = [
+        { limit: 18200, rate: 0 },
+        { limit: 45000, rate: 0.19 },
+        { limit: 120000, rate: 0.325 },
+        { limit: 180000, rate: 0.37 },
+        { limit: Infinity, rate: 0.45 }
+      ];
+      let remaining = netTaxable;
+      let prevLimit = 0;
+      bracketDetails = brackets.map(b => {
+        const amountInBracket = Math.max(0, Math.min(remaining, b.limit - prevLimit));
+        const bracketTax = amountInBracket * b.rate;
+        tax += bracketTax;
+        prevLimit = b.limit;
+        remaining -= amountInBracket;
+        return { amount: amountInBracket, tax: bracketTax, rate: b.rate * 100 };
+      });
+      pit = tax;
+      totalTax = pit + (netTaxable * 0.02); // Medicare levy
+      ssRef = netTaxable * 0.02;
+      vatRate = 0.10;
+      vatCollected = gross * vatRate;
+    } else if (countryCode === 'AE') {
+      // UAE simplified
+      tax = gross > 375000 ? (gross - 375000) * 0.09 : 0;
+      bracketDetails = [{ amount: gross, tax: tax, rate: 9 }];
+      pit = 0;
+      totalTax = tax;
+      ssRef = 0;
+      vatRate = 0.05;
+      vatCollected = gross * vatRate;
+    } else if (countryCode === 'SA') {
+      // Saudi Arabia simplified
+      tax = netTaxable * 0.025; // Zakat
+      bracketDetails = [{ amount: netTaxable, tax: tax, rate: 2.5 }];
+      pit = 0;
+      totalTax = tax;
+      ssRef = 0;
+      vatRate = 0.15;
+      vatCollected = gross * vatRate;
+    } else if (countryCode === 'EG') {
+      // Egypt simplified
+      allowance = 20000;
+      const brackets = [
+        { limit: 40000, rate: 0 },
+        { limit: 55000, rate: 0.10 },
+        { limit: 70000, rate: 0.15 },
+        { limit: 200000, rate: 0.20 },
+        { limit: 400000, rate: 0.225 },
+        { limit: Infinity, rate: 0.275 }
+      ];
+      let remaining = Math.max(0, netTaxable - allowance);
+      let prevLimit = 0;
+      bracketDetails = brackets.map(b => {
+        const amountInBracket = Math.max(0, Math.min(remaining, b.limit - prevLimit));
+        const bracketTax = amountInBracket * b.rate;
+        tax += bracketTax;
+        prevLimit = b.limit;
+        remaining -= amountInBracket;
+        return { amount: amountInBracket, tax: bracketTax, rate: b.rate * 100 };
+      });
+      pit = tax;
+      totalTax = pit + (netTaxable * 0.11);
+      ssRef = netTaxable * 0.11;
+      vatRate = 0.14;
+      vatCollected = gross * vatRate;
+    } else if (countryCode === 'MA') {
+      // Morocco simplified
+      const brackets = [
+        { limit: 40000, rate: 0 },
+        { limit: 60000, rate: 0.10 },
+        { limit: 80000, rate: 0.20 },
+        { limit: 100000, rate: 0.30 },
+        { limit: 180000, rate: 0.34 },
+        { limit: Infinity, rate: 0.37 }
+      ];
+      let remaining = netTaxable;
+      let prevLimit = 0;
+      bracketDetails = brackets.map(b => {
+        const amountInBracket = Math.max(0, Math.min(remaining, b.limit - prevLimit));
+        const bracketTax = amountInBracket * b.rate;
+        tax += bracketTax;
+        prevLimit = b.limit;
+        remaining -= amountInBracket;
+        return { amount: amountInBracket, tax: bracketTax, rate: b.rate * 100 };
+      });
+      pit = tax;
+      totalTax = pit;
+      ssRef = 0;
+      vatRate = 0.10;
+      vatCollected = gross * vatRate;
+    } else if (countryCode === 'JO') {
+      // Jordan simplified
+      const brackets = [
+        { limit: 5000, rate: 0 },
+        { limit: 10000, rate: 0.05 },
+        { limit: 15000, rate: 0.10 },
+        { limit: 20000, rate: 0.15 },
+        { limit: 1000000, rate: 0.20 },
+        { limit: Infinity, rate: 0.30 }
+      ];
+      let remaining = netTaxable;
+      let prevLimit = 0;
+      bracketDetails = brackets.map(b => {
+        const amountInBracket = Math.max(0, Math.min(remaining, b.limit - prevLimit));
+        const bracketTax = amountInBracket * b.rate;
+        tax += bracketTax;
+        prevLimit = b.limit;
+        remaining -= amountInBracket;
+        return { amount: amountInBracket, tax: bracketTax, rate: b.rate * 100 };
+      });
+      pit = tax;
+      totalTax = pit;
+      ssRef = 0;
+      vatRate = 0.16;
+      vatCollected = gross * vatRate;
+    } else {
+      // Generic Fallback
+      const customRate = (localTaxSettings.customIncomeTaxRate || 20) / 100;
+      const customVat = (localTaxSettings.customVatRate || 15) / 100;
+      const customSS = (localTaxSettings.customSocialSecurityRate || 10) / 100;
+      
+      tax = netTaxable * customRate;
+      bracketDetails = [{ amount: netTaxable, tax: tax, rate: customRate * 100 }];
+      pit = tax;
+      totalTax = pit;
+      ssRef = netTaxable * customSS;
+      vatRate = customVat;
+      vatCollected = gross * vatRate;
+    }
 
     const effectiveRate = gross > 0 ? (totalTax / gross) * 100 : 0;
 
     return {
-      gross, deductible, ssPaid, netTaxable, bracketDetails, pit, muniTax, totalTax, ssRef, vatCollected, effectiveRate, allowanceDiscount
+      gross, deductible, ssPaid, netTaxable, bracketDetails, pit, muniTax, totalTax, ssRef, vatCollected, effectiveRate, allowanceDiscount, vatRate
     };
-  }, [localTaxSettings, totalSalesRevenue, expenseSummaries.yearTotal]);
+  }, [localTaxSettings, totalSalesRevenue, expenseSummaries.yearTotal, countryCode]);
 
   // Profit Overview Logic
   const profitOverview = useMemo(() => {
@@ -234,60 +598,98 @@ export const FinanceTab = () => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    setIsScanning(true);
-    
-    // Convert to base64
     const reader = new FileReader();
-    reader.onloadend = async () => {
-      const base64Data = reader.result as string;
-      setScannedImage(base64Data);
-      
-      try {
-        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-        const model = "gemini-3-flash-preview";
-        
-        const response = await ai.models.generateContent({
-          model,
-          contents: [
-            {
-              parts: [
-                { inlineData: { data: base64Data.split(',')[1], mimeType: file.type } },
-                { text: "Extract expense details from this receipt. Return JSON with fields: name (store/vendor name), amount (number), date (YYYY-MM-DD), and category (one of: Utilities, Rent, Supplies, Staff, Transport, Marketing, Insurance, Equipment, Other)." }
-              ]
-            }
-          ],
-          config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                name: { type: Type.STRING },
-                amount: { type: Type.NUMBER },
-                date: { type: Type.STRING },
-                category: { type: Type.STRING }
-              },
-              required: ["name", "amount", "date", "category"]
-            }
-          }
-        });
-
-        const result = JSON.parse(response.text || '{}');
-        setExpenseForm(prev => ({
-          ...prev,
-          name: result.name || prev.name,
-          amount: result.amount || prev.amount,
-          date: result.date || prev.date,
-          category: (EXPENSE_CATEGORIES.includes(result.category as any) ? result.category : 'Other') as ExpenseCategory
-        }));
-        addToast("Receipt scanned successfully!");
-      } catch (error) {
-        console.error("Scanning failed:", error);
-        addToast("Scanning failed. Please enter details manually.", "error");
-      } finally {
-        setIsScanning(false);
-      }
+    reader.onloadend = () => {
+      setSelectedFile(reader.result as string);
     };
     reader.readAsDataURL(file);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const startScan = async () => {
+    if (!selectedFile) return;
+
+    setIsScanning(true);
+    setScanStatus('uploading');
+    setScanThumbnail(selectedFile);
+    
+    try {
+      const compressed = await compressImage(selectedFile);
+      setScanStatus('analyzing');
+
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+      
+      const timeoutId = setTimeout(() => {
+        controller.abort();
+        setScanStatus('timeout');
+      }, 30000);
+
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const model = "gemini-3-flash-preview";
+      
+      const response = await ai.models.generateContent({
+        model,
+        contents: [
+          {
+            parts: [
+              { inlineData: { data: compressed.split(',')[1], mimeType: 'image/jpeg' } },
+              { text: "Extract expense details from this receipt. Return JSON with fields: name (store/vendor name), amount (number), date (YYYY-MM-DD), and category (one of: Utilities, Rent, Supplies, Staff, Transport, Marketing, Insurance, Equipment, Other)." }
+            ]
+          }
+        ],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              name: { type: Type.STRING },
+              amount: { type: Type.NUMBER },
+              date: { type: Type.STRING },
+              category: { type: Type.STRING }
+            },
+            required: ["name", "amount", "date", "category"]
+          }
+        },
+        // Pass signal if SDK supports it (some versions might not, but we handle abort via catch)
+      });
+      
+      clearTimeout(timeoutId);
+
+      setScanStatus('extracting');
+      const result = JSON.parse(response.text || '{}');
+      setExpenseForm(prev => ({
+        ...prev,
+        name: result.name || prev.name,
+        amount: result.amount || prev.amount,
+        date: result.date || prev.date,
+        category: (EXPENSE_CATEGORIES.includes(result.category as any) ? result.category : 'Other') as ExpenseCategory
+      }));
+      setScannedImage(compressed);
+      setScanStatus('success');
+      setSelectedFile(null);
+      addToast("Receipt scanned successfully!");
+    } catch (error) {
+      if (scanStatus !== 'timeout') {
+        setScanStatus('error');
+        console.error("Scanning failed:", error);
+        addToast("Scanning failed. Please enter details manually.", "error");
+      }
+    } finally {
+      abortControllerRef.current = null;
+      if (scanStatus === 'success') {
+        setTimeout(() => setIsScanning(false), 1000);
+      }
+    }
+  };
+
+  const cancelScan = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    setIsScanning(false);
+    setScanStatus('uploading');
+    setSelectedFile(null);
   };
 
   const handleDeleteExpense = () => {
@@ -299,9 +701,9 @@ export const FinanceTab = () => {
   };
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-6 animate-fade-in max-w-full overflow-hidden">
       {/* Tab Navigation */}
-      <div className="flex gap-2 bg-bakery-beige/30 p-1 rounded-2xl w-fit">
+      <div className="flex flex-wrap gap-1 sm:gap-2 bg-bakery-beige/30 p-1 rounded-2xl w-full sm:w-fit overflow-x-auto scrollbar-hide">
         {[
           { id: 'expenses', label: t('expenses'), icon: Receipt },
           { id: 'tax', label: t('taxCalculator'), icon: Calculator },
@@ -310,11 +712,11 @@ export const FinanceTab = () => {
           <button
             key={tab.id}
             onClick={() => setActiveSection(tab.id as any)}
-            className={`flex items-center gap-2 px-6 py-2 rounded-xl font-bold text-sm transition-all ${
+            className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-3 sm:px-4 md:px-6 py-2 rounded-xl font-bold text-[10px] sm:text-xs md:text-sm transition-all whitespace-nowrap ${
               activeSection === tab.id ? 'bg-bakery-brown text-white shadow-md' : 'text-bakery-brown/60 hover:text-bakery-brown'
             }`}
           >
-            <tab.icon size={16} />
+            <tab.icon size={14} className="sm:w-4 sm:h-4" />
             {tab.label}
           </button>
         ))}
@@ -323,25 +725,25 @@ export const FinanceTab = () => {
       {/* SECTION 1: EXPENSES */}
       {activeSection === 'expenses' && (
         <div className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="card-bakery p-6 bg-bakery-beige/20">
-              <p className="text-xs font-bold text-bakery-brown/40 uppercase tracking-widest mb-1">{t('totalExpensesMonth')}</p>
-              <p className="text-2xl font-black font-serif">€{expenseSummaries.monthTotal.toFixed(2)}</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
+            <div className="card-bakery p-4 md:p-6 bg-bakery-beige/20">
+              <p className="text-[10px] font-bold text-bakery-brown/40 uppercase tracking-widest mb-1">{t('totalExpensesMonth')}</p>
+              <p className="text-xl md:text-2xl font-black font-serif">{formatPrice(expenseSummaries.monthTotal)}</p>
             </div>
-            <div className="card-bakery p-6 bg-bakery-beige/20">
-              <p className="text-xs font-bold text-bakery-brown/40 uppercase tracking-widest mb-1">{t('totalExpensesYear')}</p>
-              <p className="text-2xl font-black font-serif">€{expenseSummaries.yearTotal.toFixed(2)}</p>
+            <div className="card-bakery p-4 md:p-6 bg-bakery-beige/20">
+              <p className="text-[10px] font-bold text-bakery-brown/40 uppercase tracking-widest mb-1">{t('totalExpensesYear')}</p>
+              <p className="text-xl md:text-2xl font-black font-serif">{formatPrice(expenseSummaries.yearTotal)}</p>
             </div>
-            <div className="card-bakery p-6 bg-bakery-accent/20">
-              <p className="text-xs font-bold text-bakery-brown/40 uppercase tracking-widest mb-1">{t('totalExpensesAllTime')}</p>
-              <p className="text-2xl font-black font-serif">€{expenseSummaries.allTimeTotal.toFixed(2)}</p>
+            <div className="card-bakery p-4 md:p-6 bg-bakery-accent/20 sm:col-span-2 lg:col-span-1">
+              <p className="text-[10px] font-bold text-bakery-brown/40 uppercase tracking-widest mb-1">{t('totalExpensesAllTime')}</p>
+              <p className="text-xl md:text-2xl font-black font-serif">{formatPrice(expenseSummaries.allTimeTotal)}</p>
             </div>
           </div>
 
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-            <div className="flex flex-wrap gap-4 items-center">
+          <div className="flex flex-col lg:flex-row justify-between items-stretch lg:items-center gap-4">
+            <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
               <select 
-                className="p-2 border rounded-xl outline-none focus:ring-2 focus:ring-bakery-caramel"
+                className="p-3 md:p-2 border border-bakery-beige rounded-xl outline-none focus:ring-2 focus:ring-bakery-caramel text-sm bg-white"
                 value={expenseFilter}
                 onChange={e => setExpenseFilter(e.target.value as any)}
               >
@@ -349,14 +751,14 @@ export const FinanceTab = () => {
                 {EXPENSE_CATEGORIES.map(c => <option key={c} value={c}>{t(c.toLowerCase())}</option>)}
               </select>
               <div className="flex items-center gap-2">
-                <input type="date" className="p-2 border rounded-xl text-sm" value={expenseDateRange.from} onChange={e => setExpenseDateRange({...expenseDateRange, from: e.target.value})} />
-                <span className="text-bakery-brown/40">→</span>
-                <input type="date" className="p-2 border rounded-xl text-sm" value={expenseDateRange.to} onChange={e => setExpenseDateRange({...expenseDateRange, to: e.target.value})} />
+                <input type="date" className="flex-1 p-3 md:p-2 border border-bakery-beige rounded-xl text-xs md:text-sm bg-white min-w-0" value={expenseDateRange.from} onChange={e => setExpenseDateRange({...expenseDateRange, from: e.target.value})} />
+                <span className="text-bakery-brown/40 shrink-0">→</span>
+                <input type="date" className="flex-1 p-3 md:p-2 border border-bakery-beige rounded-xl text-xs md:text-sm bg-white min-w-0" value={expenseDateRange.to} onChange={e => setExpenseDateRange({...expenseDateRange, to: e.target.value})} />
               </div>
             </div>
             <button 
               onClick={() => setIsExpenseModalOpen(true)}
-              className="flex items-center gap-2 px-6 py-3 bg-bakery-brown text-white rounded-2xl font-bold hover:bg-bakery-brown/90 transition-all shadow-lg"
+              className="flex items-center justify-center gap-2 px-6 py-4 md:py-3 bg-bakery-brown text-white rounded-2xl font-bold hover:bg-bakery-brown/90 transition-all shadow-lg active:scale-95 text-sm"
             >
               <Plus size={20} />
               {t('addExpense')}
@@ -364,8 +766,8 @@ export const FinanceTab = () => {
           </div>
 
           <div className="card-bakery overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
+            <div className="overflow-x-auto scrollbar-hide">
+              <table className="w-full text-left text-sm min-w-[900px]">
                 <thead className="bg-bakery-beige/30 text-bakery-brown/40 uppercase text-[10px] font-black tracking-widest">
                   <tr>
                     <th className="p-4">Receipt</th>
@@ -379,7 +781,7 @@ export const FinanceTab = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-bakery-beige">
-                  {filteredExpenses.map(e => (
+                  {paginatedExpenses.map(e => (
                     <tr key={e.id} className="hover:bg-bakery-cream/50 transition-colors">
                       <td className="p-4">
                         {e.receiptImage ? (
@@ -398,29 +800,29 @@ export const FinanceTab = () => {
                           </div>
                         )}
                       </td>
-                      <td className="p-4 font-bold">{e.name}</td>
+                      <td className="p-4 font-bold whitespace-nowrap">{e.name}</td>
                       <td className="p-4">
-                        <span className="px-2 py-1 bg-bakery-beige/50 rounded-lg text-[10px] font-bold uppercase text-bakery-brown/60">
+                        <span className="px-2 py-1 bg-bakery-beige/50 rounded-lg text-[10px] font-bold uppercase text-bakery-brown/60 whitespace-nowrap">
                           {t(e.category.toLowerCase())}
                         </span>
                       </td>
-                      <td className="p-4 font-black">€{e.amount.toFixed(2)}</td>
-                      <td className="p-4 text-bakery-brown/60">{e.date}</td>
+                      <td className="p-4 font-black whitespace-nowrap">{formatPrice(e.amount)}</td>
+                      <td className="p-4 text-bakery-brown/60 whitespace-nowrap">{e.date}</td>
                       <td className="p-4">
                         {e.isRecurring ? <Check className="text-emerald-500" size={16} /> : <X className="text-rose-500" size={16} />}
                       </td>
-                      <td className="p-4 text-bakery-brown/60">{e.isRecurring ? t(e.frequency?.toLowerCase() || '') : '-'}</td>
+                      <td className="p-4 text-bakery-brown/60 whitespace-nowrap">{e.isRecurring ? t(e.frequency?.toLowerCase() || '') : '-'}</td>
                       <td className="p-4 text-right">
                         <div className="flex justify-end gap-2">
                           <button 
                             onClick={() => { setEditingExpense(e); setExpenseForm(e); setIsExpenseModalOpen(true); }}
-                            className="p-2 text-bakery-brown/40 hover:text-bakery-caramel transition-colors"
+                            className="p-2 text-bakery-brown/40 hover:text-bakery-caramel transition-colors active:scale-90"
                           >
                             <Edit2 size={16} />
                           </button>
                           <button 
                             onClick={() => setExpenseToDelete(e)}
-                            className="p-2 text-bakery-brown/40 hover:text-rose-500 transition-colors"
+                            className="p-2 text-bakery-brown/40 hover:text-rose-500 transition-colors active:scale-90"
                           >
                             <Trash2 size={16} />
                           </button>
@@ -437,6 +839,48 @@ export const FinanceTab = () => {
               </div>
             )}
           </div>
+          <ScanProgressModal 
+            isOpen={isScanning} 
+            status={scanStatus} 
+            imageThumbnail={scanThumbnail}
+            onClose={() => { setIsScanning(false); setSelectedFile(null); }}
+            onCancel={cancelScan}
+            onRetry={() => { setIsScanning(false); startScan(); }}
+          />
+
+          {selectedFile && !isScanning && (
+            <Modal title="Preview Receipt" onClose={() => setSelectedFile(null)}>
+              <div className="space-y-6">
+                <div className="aspect-video w-full rounded-2xl overflow-hidden bg-bakery-beige/20 border-2 border-bakery-beige">
+                  <img src={selectedFile} alt="Preview" className="w-full h-full object-contain" />
+                </div>
+                <div className="flex gap-4">
+                  <button 
+                    onClick={() => setSelectedFile(null)}
+                    className="flex-1 py-4 bg-bakery-beige text-bakery-brown rounded-2xl font-bold hover:bg-bakery-beige/80 transition-all"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    onClick={startScan}
+                    className="flex-[2] py-4 bg-bakery-brown text-white rounded-2xl font-bold hover:bg-bakery-brown/90 transition-all flex items-center justify-center gap-2"
+                  >
+                    <Camera size={20} />
+                    Scan Receipt
+                  </button>
+                </div>
+              </div>
+            </Modal>
+          )}
+
+          {filteredExpenses.length > itemsPerPage && (
+            <Pagination 
+              currentPage={currentPage}
+              totalPages={totalPages}
+              onPageChange={setCurrentPage}
+              t={t}
+            />
+          )}
         </div>
       )}
 
@@ -453,36 +897,36 @@ export const FinanceTab = () => {
               
               <div className="space-y-4">
                 <div>
-                  <label className="text-xs font-bold uppercase text-bakery-brown/40 mb-1 block">{t('grossRevenue')} (€)</label>
+                  <label className="text-xs font-bold uppercase text-bakery-brown/40 mb-1 block">{t('grossRevenue')} ({businessSettings?.currencySymbol || '€'})</label>
                   <input 
                     type="number" 
                     className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-bakery-caramel"
                     value={localTaxSettings.manualGrossRevenue ?? totalSalesRevenue}
                     onChange={e => setLocalTaxSettings({...localTaxSettings, manualGrossRevenue: parseFloat(e.target.value)})}
                   />
-                  <p className="text-[10px] text-bakery-brown/40 mt-1 italic">Auto-filled from sales records (€{totalSalesRevenue.toFixed(2)})</p>
+                  <p className="text-[10px] text-bakery-brown/40 mt-1 italic">Auto-filled from sales records ({formatPrice(totalSalesRevenue)})</p>
                 </div>
 
                 <div>
-                  <label className="text-xs font-bold uppercase text-bakery-brown/40 mb-1 block">{t('deductibleExpenses')} (€)</label>
+                  <label className="text-xs font-bold uppercase text-bakery-brown/40 mb-1 block">{t('deductibleExpenses')} ({businessSettings?.currencySymbol || '€'})</label>
                   <input 
                     type="number" 
                     className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-bakery-caramel"
                     value={localTaxSettings.manualExpenses ?? expenseSummaries.yearTotal}
                     onChange={e => setLocalTaxSettings({...localTaxSettings, manualExpenses: parseFloat(e.target.value)})}
                   />
-                  <p className="text-[10px] text-bakery-brown/40 mt-1 italic">Auto-filled from logged expenses (€{expenseSummaries.yearTotal.toFixed(2)})</p>
+                  <p className="text-[10px] text-bakery-brown/40 mt-1 italic">Auto-filled from logged expenses ({formatPrice(expenseSummaries.yearTotal)})</p>
                 </div>
 
                 <div>
-                  <label className="text-xs font-bold uppercase text-bakery-brown/40 mb-1 block">{t('socialSecurityPaid')} (€)</label>
+                  <label className="text-xs font-bold uppercase text-bakery-brown/40 mb-1 block">{t('socialSecurityPaid')} ({businessSettings?.currencySymbol || '€'})</label>
                   <input 
                     type="number" 
                     className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-bakery-caramel"
                     value={localTaxSettings.socialSecurityPaid ?? 0}
                     onChange={e => setLocalTaxSettings({...localTaxSettings, socialSecurityPaid: parseFloat(e.target.value)})}
                   />
-                  <p className="text-[10px] text-bakery-brown/40 mt-1 italic">Standard rate: 20.5% of net taxable income paid quarterly.</p>
+                  <p className="text-[10px] text-bakery-brown/40 mt-1 italic">Enter the total social security contributions paid this year.</p>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
@@ -520,7 +964,7 @@ export const FinanceTab = () => {
                   <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-xl flex gap-3">
                     <Check className="text-emerald-500 shrink-0" size={18} />
                     <p className="text-[10px] text-emerald-700">
-                      Eligible for <strong>Small Business Exemption</strong> (turnover under €25,000/year). No VAT charged or reclaimed.
+                      Eligible for <strong>Small Business Exemption</strong> (turnover under {formatPrice(25000)}/year). No VAT charged or reclaimed.
                     </p>
                   </div>
                 )}
@@ -542,27 +986,27 @@ export const FinanceTab = () => {
           </div>
 
           {/* Results Panel */}
-          <div className="card-bakery p-8 bg-bakery-brown text-bakery-cream space-y-6 shadow-2xl relative overflow-hidden">
-            <div className="absolute top-0 right-0 p-12 opacity-5 -rotate-12">
+          <div className="card-bakery p-4 sm:p-8 bg-bakery-brown text-bakery-cream space-y-6 shadow-2xl relative overflow-hidden">
+            <div className="absolute top-0 right-0 p-12 opacity-5 -rotate-12 hidden sm:block">
               <Calculator size={200} />
             </div>
             
             <div className="space-y-2 relative z-10">
               <div className="flex justify-between items-center border-b border-bakery-cream/20 pb-2">
                 <span className="uppercase text-[10px] font-black tracking-widest opacity-60">{t('grossRevenue')}</span>
-                <span className="font-black">€{taxResults.gross.toFixed(2)}</span>
+                <span className="font-black text-sm sm:text-base">{formatPrice(taxResults.gross)}</span>
               </div>
               <div className="flex justify-between items-center opacity-80">
                 <span className="text-xs">− {t('deductibleExpenses')}</span>
-                <span className="font-bold">€{taxResults.deductible.toFixed(2)}</span>
+                <span className="font-bold text-sm">{formatPrice(taxResults.deductible)}</span>
               </div>
               <div className="flex justify-between items-center opacity-80">
                 <span className="text-xs">− {t('socialSecurityPaid')}</span>
-                <span className="font-bold">€{taxResults.ssPaid.toFixed(2)}</span>
+                <span className="font-bold text-sm">{formatPrice(taxResults.ssPaid)}</span>
               </div>
               <div className="flex justify-between items-center border-t border-bakery-cream/40 pt-2 mt-2">
                 <span className="uppercase text-xs font-black tracking-widest">{t('netTaxableIncome')}</span>
-                <span className="text-xl font-black">€{taxResults.netTaxable.toFixed(2)}</span>
+                <span className="text-lg sm:text-xl font-black">{formatPrice(taxResults.netTaxable)}</span>
               </div>
             </div>
 
@@ -571,37 +1015,41 @@ export const FinanceTab = () => {
               <div className="space-y-1">
                 {taxResults.bracketDetails.map((b, i) => (
                   <div key={i} className="flex justify-between items-center text-xs opacity-80">
-                    <span>{t('bracket')} {i+1} ({b.rate}%)</span>
-                    <span>€{b.tax.toFixed(2)}</span>
+                    <span>{t('bracket')} {i+1} ({b.rate.toFixed(1)}%)</span>
+                    <span>{formatPrice(b.tax)}</span>
                   </div>
                 ))}
-                <div className="flex justify-between items-center text-xs text-emerald-300 font-bold">
-                  <span>− {t('taxFreeAllowance')}</span>
-                  <span>−€{taxResults.allowanceDiscount.toFixed(2)}</span>
-                </div>
+                {taxResults.allowanceDiscount > 0 && (
+                  <div className="flex justify-between items-center text-xs text-emerald-300 font-bold">
+                    <span>− {t('taxFreeAllowance')}</span>
+                    <span>−{formatPrice(taxResults.allowanceDiscount)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between items-center pt-2 border-t border-bakery-cream/20">
                   <span className="text-sm font-bold">{t('personalIncomeTax')}</span>
-                  <span className="text-sm font-black">€{taxResults.pit.toFixed(2)}</span>
+                  <span className="text-sm font-black">{formatPrice(taxResults.pit)}</span>
                 </div>
-                <div className="flex justify-between items-center text-xs opacity-80">
-                  <span>+ {t('municipalTaxRate')} ({localTaxSettings.municipalTaxRate}%)</span>
-                  <span>€{taxResults.muniTax.toFixed(2)}</span>
-                </div>
+                {taxResults.muniTax > 0 && (
+                  <div className="flex justify-between items-center text-xs opacity-80">
+                    <span>+ {t('municipalTaxRate')} ({localTaxSettings.municipalTaxRate}%)</span>
+                    <span>{formatPrice(taxResults.muniTax)}</span>
+                  </div>
+                )}
               </div>
             </div>
 
             <div className="pt-4 border-t-2 border-bakery-cream/20 space-y-4 relative z-10">
               <div className="flex justify-between items-center">
-                <span className="uppercase text-sm font-black tracking-widest">{t('totalTaxBurden')}</span>
-                <span className="text-2xl font-black text-bakery-caramel">€{taxResults.totalTax.toFixed(2)}</span>
+                <span className="uppercase text-xs sm:text-sm font-black tracking-widest">{t('totalTaxBurden')}</span>
+                <span className="text-xl sm:text-2xl font-black text-bakery-caramel">{formatPrice(taxResults.totalTax)}</span>
               </div>
-              <div className="flex justify-between items-center opacity-60 text-xs">
-                <span>{t('vatOwed')} (12%)</span>
-                <span>€{taxResults.vatCollected.toFixed(2)}</span>
+              <div className="flex justify-between items-center opacity-60 text-[10px] sm:text-xs">
+                <span>{t('vatOwed')} ({(taxResults.vatRate * 100).toFixed(0)}%)</span>
+                <span>{formatPrice(taxResults.vatCollected)}</span>
               </div>
               <div className="flex justify-between items-center pt-2 border-t border-bakery-cream/10">
                 <span className="uppercase text-[10px] font-black tracking-widest opacity-60">{t('effectiveTaxRate')}</span>
-                <span className="font-black text-lg">{taxResults.effectiveRate.toFixed(1)}%</span>
+                <span className="font-black text-base sm:text-lg">{taxResults.effectiveRate.toFixed(1)}%</span>
               </div>
             </div>
 
@@ -609,7 +1057,7 @@ export const FinanceTab = () => {
               <div className="p-3 bg-rose-500/20 border border-rose-500/40 rounded-xl flex gap-3 items-center relative z-10">
                 <AlertTriangle className="text-rose-300 shrink-0" size={18} />
                 <p className="text-[10px] text-rose-100">
-                  Large discrepancy in Social Security. Calculated 20.5% is <strong>€{taxResults.ssRef.toFixed(2)}</strong>.
+                  Large discrepancy in Social Security. Calculated reference is <strong>{formatPrice(taxResults.ssRef)}</strong>.
                 </p>
               </div>
             )}
@@ -637,30 +1085,30 @@ export const FinanceTab = () => {
                 <div className="space-y-3 flex-1">
                   <div className="flex justify-between items-center">
                     <span className="text-xs font-bold text-bakery-brown/40 uppercase">{t('revenueTotal')}</span>
-                    <span className="font-black">€{period.data.revenue.toFixed(2)}</span>
+                    <span className="font-black">{formatPrice(period.data.revenue)}</span>
                   </div>
                   <div className="flex justify-between items-center text-rose-500">
                     <span className="text-xs">− {t('expenses')}</span>
-                    <span className="font-bold">€{period.data.expenses.toFixed(2)}</span>
+                    <span className="font-bold">{formatPrice(period.data.expenses)}</span>
                   </div>
                   <div className="flex justify-between items-center border-t border-bakery-beige pt-2">
                     <span className="text-xs font-bold uppercase">{t('grossProfit')}</span>
-                    <span className="font-black">€{(period.data.revenue - period.data.expenses).toFixed(2)}</span>
+                    <span className="font-black">{formatPrice(period.data.revenue - period.data.expenses)}</span>
                   </div>
                   <div className="flex justify-between items-center text-bakery-brown/60">
                     <span className="text-xs">− {t('estimatedIncomeTax')}</span>
-                    <span className="font-bold">€{period.data.tax.toFixed(2)}</span>
+                    <span className="font-bold">{formatPrice(period.data.tax)}</span>
                   </div>
                   <div className="flex justify-between items-center text-bakery-brown/60">
                     <span className="text-xs">− {t('socialSecurityPaid')}</span>
-                    <span className="font-bold">€{period.data.ss.toFixed(2)}</span>
+                    <span className="font-bold">{formatPrice(period.data.ss)}</span>
                   </div>
                 </div>
 
                 <div className="pt-4 border-t-2 border-bakery-brown/10 mt-auto">
                   <div className="flex justify-between items-center">
                     <span className="uppercase text-xs font-black tracking-widest text-bakery-caramel">{t('estimatedNetProfit')}</span>
-                    <span className="text-2xl font-black text-bakery-brown">€{period.data.netProfit.toFixed(2)}</span>
+                    <span className="text-2xl font-black text-bakery-brown">{formatPrice(period.data.netProfit)}</span>
                   </div>
                 </div>
 
@@ -764,7 +1212,7 @@ export const FinanceTab = () => {
                 </select>
               </div>
               <div>
-                <label className="text-xs font-bold uppercase text-bakery-brown/40 mb-1 block">{t('amount')} (€)</label>
+                <label className="text-xs font-bold uppercase text-bakery-brown/40 mb-1 block">{t('amount')} ({businessSettings?.currencySymbol || '€'})</label>
                 <input 
                   type="number" 
                   className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-bakery-caramel"
@@ -817,7 +1265,8 @@ export const FinanceTab = () => {
       {/* Delete Confirmation */}
       {expenseToDelete && (
         <ConfirmDialog 
-          onCancel={() => setExpenseToDelete(null)}
+          isOpen={!!expenseToDelete}
+          onClose={() => setExpenseToDelete(null)}
           onConfirm={handleDeleteExpense}
           title={t('delete')}
           message={t('confirmDeleteExpense')}
