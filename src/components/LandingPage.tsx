@@ -23,7 +23,7 @@ export const LandingPage = ({ onLoginClick }: { onLoginClick: () => void }) => {
                   lang === l ? 'bg-bakery-brown text-white shadow-sm' : 'text-bakery-brown hover:bg-bakery-brown/10'
                 }`}
               >
-                {l}
+                {t(`langShort_${l}`)}
               </button>
             ))}
           </div>

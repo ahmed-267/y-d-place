@@ -67,14 +67,14 @@ export const MyShiftsTab = () => {
       breakMinutes: '30',
       notes: ''
     });
-    addToast("Shift logged successfully!");
+    addToast(t('shiftLogged'));
   };
 
   const handleDelete = () => {
     if (!deleteConfirm) return;
     setWorkShifts(workShifts.filter(s => s.id !== deleteConfirm.id));
     setDeleteConfirm(null);
-    addToast("Shift deleted", "info");
+    addToast(t('shiftDeleted'), "info");
   };
 
   return (
@@ -105,7 +105,7 @@ export const MyShiftsTab = () => {
             <Calendar size={20} className="sm:w-6 sm:h-6" />
           </div>
           <div>
-            <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40">Shifts</p>
+            <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40">{t('shifts')}</p>
             <p className="text-xl sm:text-2xl font-black text-bakery-brown">{myShifts.length}</p>
           </div>
         </div>
@@ -122,7 +122,7 @@ export const MyShiftsTab = () => {
                 <th className="p-4">{t('break')}</th>
                 <th className="p-4">{t('totalHours')}</th>
                 <th className="p-4">{t('notes')}</th>
-                <th className="p-4 text-right">Actions</th>
+                <th className="p-4 text-right">{t('actions')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-bakery-beige">
@@ -133,7 +133,7 @@ export const MyShiftsTab = () => {
                   <td className="p-4 whitespace-nowrap">{s.endTime}</td>
                   <td className="p-4 text-bakery-brown/40 whitespace-nowrap">{s.breakMinutes}m</td>
                   <td className="p-4 font-black text-bakery-caramel whitespace-nowrap">{s.totalHours}h</td>
-                  <td className="p-4 text-xs max-w-[200px] truncate" title={s.notes}>{s.notes || '-'}</td>
+                  <td className="p-4 text-xs max-w-[200px] truncate" title={s.notes}>{s.notes || t('dash')}</td>
                   <td className="p-4 text-right">
                     <button 
                       onClick={() => setDeleteConfirm(s)}
@@ -147,7 +147,7 @@ export const MyShiftsTab = () => {
               {myShifts.length === 0 && (
                 <tr>
                   <td colSpan={7} className="p-10 text-center text-bakery-brown/40 italic">
-                    No shifts logged yet.
+                    {t('noShiftsLogged')}
                   </td>
                 </tr>
               )}
@@ -206,7 +206,7 @@ export const MyShiftsTab = () => {
                   />
                 </div>
                 <div className="bg-bakery-accent/20 p-4 rounded-2xl border border-bakery-accent/30 text-center">
-                  <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-1">Calculated Hours</p>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-1">{t('calculatedHours')}</p>
                   <p className="text-2xl font-black text-bakery-brown">{calculatedHours}h</p>
                 </div>
               </div>
@@ -215,7 +215,7 @@ export const MyShiftsTab = () => {
                 <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('notes')}</label>
                 <textarea 
                   className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel min-h-[100px] font-medium"
-                  placeholder="Optional notes about your shift..."
+                  placeholder={t('optionalShiftNotes')}
                   value={formData.notes}
                   onChange={e => setFormData({ ...formData, notes: e.target.value })}
                 ></textarea>
@@ -231,10 +231,10 @@ export const MyShiftsTab = () => {
 
       {deleteConfirm && (
         <ConfirmDialog 
-          title="Delete Shift"
-          message={`Are you sure you want to delete the shift on ${deleteConfirm.date}?`}
+          title={t('deleteShift')}
+          message={t('deleteShiftConfirm').replace('{date}', deleteConfirm.date)}
           onConfirm={handleDelete}
-          onCancel={() => setDeleteConfirm(null)}
+          onClose={() => setDeleteConfirm(null)}
         />
       )}
     </div>

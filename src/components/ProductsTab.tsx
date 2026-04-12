@@ -25,6 +25,7 @@ import { ScanProgressModal } from './ScanProgressModal';
 import { Product, Ingredient, IngredientLink } from '../types';
 import { getAIAssistance, scanMenu, ScanMenuResult, compressImage } from '../utils/aiHelper';
 import { motion, AnimatePresence } from 'motion/react';
+import { toSearchValue, priceMatchesQuery } from '../utils/search';
 
 export const ProductsTab = () => {
   const { 
@@ -40,7 +41,8 @@ export const ProductsTab = () => {
     tp, 
     addToast, 
     formatPrice, 
-    businessSettings 
+    businessSettings,
+    tc
   } = useApp();
   const [editItem, setEditItem] = useState<Partial<Product> | null>(null);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
@@ -62,12 +64,16 @@ export const ProductsTab = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const filteredProducts = useMemo(() => {
-    return products.filter(p => 
-      p.nameEN.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.category.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (p.translations && Object.values(p.translations).some(t => (t as string).toLowerCase().includes(searchQuery.toLowerCase())))
-    );
-  }, [products, searchQuery]);
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return products;
+    return products.filter(p => {
+      const nameMatch = toSearchValue(p?.nameEN).includes(query);
+      const categoryMatch = toSearchValue(p?.category).includes(query);
+      const priceMatch = priceMatchesQuery(p?.price, query) || toSearchValue(p?.price).includes(query);
+      const translationMatch = p?.translations ? Object.values(p.translations).some(t => toSearchValue(t).includes(query)) : false;
+      return nameMatch || categoryMatch || priceMatch || translationMatch;
+    });
+  }, [products, searchQuery, formatPrice]);
 
   const paginatedProducts = useMemo(() => {
     const start = (currentPage - 1) * itemsPerPage;
@@ -129,12 +135,12 @@ export const ProductsTab = () => {
         setSelectedFile(null);
       } else if (scanStatus !== 'timeout') {
         setScanStatus('error');
-        addToast("Could not extract menu items from image. Please try a clearer photo.", "error");
+        addToast(t('scanMenuNoItems'), "error");
       }
     } catch (err) {
       if (scanStatus !== 'timeout') {
         setScanStatus('error');
-        addToast("Scanning failed. Please try again.", "error");
+        addToast(t('scanMenuFailed'), "error");
       }
     } finally {
       abortControllerRef.current = null;
@@ -218,7 +224,7 @@ export const ProductsTab = () => {
     setPreparedStock(currentPreparedStock);
     setProducts([...products, ...newProducts]);
     setScanResults(null);
-    addToast(`${newProducts.length} menu items added successfully!`, 'success');
+    addToast(t('menuItemsAdded').replace('{count}', String(newProducts.length)), 'success');
   };
 
   const handleNameChange = async (name: string) => {
@@ -265,10 +271,10 @@ export const ProductsTab = () => {
 
     if (editItem.id) {
       setProducts(products.map(p => p.id === editItem.id ? newProduct : p));
-      addToast("Menu item updated!");
+      addToast(t('menuItemUpdated'));
     } else {
       setProducts([...products, newProduct]);
-      addToast("Menu item added!");
+      addToast(t('menuItemAdded'));
     }
     setEditItem(null);
   };
@@ -280,28 +286,28 @@ export const ProductsTab = () => {
   const handleDelete = () => {
     if (!deleteConfirm) return;
     setProducts(products.filter(p => p.id !== deleteConfirm.id));
-    addToast(`${deleteConfirm.nameEN} deleted`, "info");
+    addToast(t('menuItemDeleted').replace('{name}', deleteConfirm.nameEN), "info");
     setDeleteConfirm(null);
   };
 
   const addCategory = () => {
     if (!newCategoryName.trim()) return;
     if (categories.includes(newCategoryName.trim())) {
-      addToast("Category already exists", "error");
+      addToast(t('categoryExists'), "error");
       return;
     }
     setCategories([...categories, newCategoryName.trim()]);
     setNewCategoryName('');
-    addToast("Category added!");
+    addToast(t('categoryAdded'));
   };
 
   const removeCategory = (cat: string) => {
     if (products.some(p => p.category === cat)) {
-      addToast("Cannot delete category with menu items", "error");
+      addToast(t('categoryInUse'), "error");
       return;
     }
     setCategories(categories.filter(c => c !== cat));
-    addToast("Category removed");
+    addToast(t('categoryRemoved'));
   };
 
   return (
@@ -320,21 +326,21 @@ export const ProductsTab = () => {
             onClick={() => fileInputRef.current?.click()}
             disabled={isScanning}
             className="flex-1 sm:flex-none p-3 md:p-4 bg-bakery-accent text-bakery-brown rounded-xl hover:bg-bakery-brown hover:text-white transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2 font-bold text-[10px] sm:text-xs md:text-sm whitespace-nowrap"
-            title="Scan Menu from Image"
+            title={t('scanMenuFromImage')}
           >
             {isScanning ? <Loader2 size={16} className="animate-spin" /> : <Camera size={16} />}
-            <span>{isScanning ? "Scanning..." : "Scan Menu"}</span>
+            <span>{isScanning ? t('scanning') : t('scanMenu')}</span>
           </button>
           <button 
             onClick={() => setShowCategoryModal(true)} 
             className="flex-1 sm:flex-none p-3 md:p-4 bg-bakery-beige text-bakery-brown rounded-xl hover:bg-bakery-brown hover:text-white transition-all active:scale-95 flex items-center justify-center gap-2 font-bold text-[10px] sm:text-xs md:text-sm whitespace-nowrap"
           >
             <Plus size={16} />
-            <span>Add New Category</span>
+            <span>{t('addCategory')}</span>
           </button>
           <button onClick={() => setEditItem({})} className="flex-1 sm:flex-none btn-primary flex items-center justify-center gap-2 px-4 md:px-6 py-3 md:py-4 rounded-xl font-bold active:scale-95 text-[10px] sm:text-xs md:text-sm whitespace-nowrap">
             <Plus size={18} />
-            Add New Menu Item
+            {t('addMenuProduct')}
           </button>
         </div>
       </div>
@@ -360,24 +366,24 @@ export const ProductsTab = () => {
       />
 
       {selectedFile && !isScanning && (
-        <Modal title="Preview Menu Image" onClose={() => setSelectedFile(null)}>
+        <Modal title={t('previewMenuImage')} onClose={() => setSelectedFile(null)}>
           <div className="space-y-6">
             <div className="aspect-video w-full rounded-2xl overflow-hidden bg-bakery-beige/20 border-2 border-bakery-beige">
-              <img src={selectedFile} alt="Preview" className="w-full h-full object-contain" />
+              <img src={selectedFile} alt={t('preview')} className="w-full h-full object-contain" />
             </div>
             <div className="flex gap-4">
               <button 
                 onClick={() => setSelectedFile(null)}
                 className="flex-1 py-4 bg-bakery-beige text-bakery-brown rounded-2xl font-bold hover:bg-bakery-beige/80 transition-all"
               >
-                Cancel
+                {t('cancel')}
               </button>
               <button 
                 onClick={startScan}
                 className="flex-[2] py-4 bg-bakery-brown text-white rounded-2xl font-bold hover:bg-bakery-brown/90 transition-all flex items-center justify-center gap-2"
               >
                 <Camera size={20} />
-                Scan Menu
+                {t('scanMenu')}
               </button>
             </div>
           </div>
@@ -385,9 +391,9 @@ export const ProductsTab = () => {
       )}
 
       {scanResults && (
-        <Modal title="Review Scanned Menu Items" onClose={() => setScanResults(null)}>
+        <Modal title={t('reviewScannedMenu')} onClose={() => setScanResults(null)}>
           <div className="space-y-4">
-            <p className="text-xs sm:text-sm text-bakery-brown/60">We found {scanResults.products.length} items. Review them and their predicted ingredients.</p>
+            <p className="text-xs sm:text-sm text-bakery-brown/60">{t('scanReviewIntro').replace('{count}', String(scanResults.products.length))}</p>
             <div className="max-h-[60vh] overflow-y-auto space-y-3 pr-2 scrollbar-hide">
               {scanResults.products.map((p, idx) => (
                 <div key={idx} className="bg-bakery-beige/20 rounded-2xl overflow-hidden border border-bakery-beige/50">
@@ -447,7 +453,7 @@ export const ProductsTab = () => {
                   
                   {expandedScanItem === idx && (
                     <div className="px-4 pb-4 pt-2 bg-white/50 border-t border-bakery-beige/30 animate-fade-in">
-                      <label className="block text-[8px] font-black uppercase tracking-widest text-bakery-brown/40 mb-2">Predicted Ingredients</label>
+                      <label className="block text-[8px] font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('predictedIngredients')}</label>
                       <div className="space-y-2">
                         {p.ingredientLinks.map((link, lIdx) => (
                           <div key={lIdx} className="flex items-center gap-2">
@@ -499,12 +505,12 @@ export const ProductsTab = () => {
                           }}
                           className="text-[10px] font-bold text-bakery-brown/60 hover:text-bakery-brown flex items-center gap-1 mt-2"
                         >
-                          <Plus size={12} /> Add Ingredient
+                          <Plus size={12} /> {t('addIngredient')}
                         </button>
                       </div>
 
                       <div className="mt-4">
-                        <label className="block text-[8px] font-black uppercase tracking-widest text-bakery-brown/40 mb-2">Predicted Prepped Stock</label>
+                        <label className="block text-[8px] font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('predictedPreppedStock')}</label>
                         <div className="flex flex-wrap gap-2">
                           {p.preparedStockNeeds.map((need, nIdx) => (
                             <div key={nIdx} className="flex items-center gap-1 bg-bakery-brown/5 px-2 py-1 rounded-lg">
@@ -537,7 +543,7 @@ export const ProductsTab = () => {
                             }}
                             className="text-[10px] font-bold text-bakery-brown/60 hover:text-bakery-brown flex items-center gap-1"
                           >
-                            <Plus size={10} /> Add Prepped Need
+                            <Plus size={10} /> {t('addPreppedNeed')}
                           </button>
                         </div>
                       </div>
@@ -558,7 +564,7 @@ export const ProductsTab = () => {
                 className="flex-[2] p-3 sm:p-4 bg-bakery-brown text-white rounded-2xl font-bold hover:bg-bakery-brown/90 transition-all flex items-center justify-center gap-2 text-sm"
               >
                 <Check size={18} />
-                Add {scanResults.products.length} Menu Items
+                {t('addMenuItems').replace('{count}', String(scanResults.products.length))}
               </button>
             </div>
           </div>
@@ -570,13 +576,13 @@ export const ProductsTab = () => {
           <table className="w-full text-left text-sm min-w-[700px]">
             <thead className="bg-bakery-beige/30 text-bakery-brown/40 uppercase text-[10px] font-black tracking-widest">
               <tr>
-                <th className="p-4">Emoji</th>
-                <th className="p-4">Name (EN)</th>
-                <th className="p-4">Category</th>
-                <th className="p-4">Price</th>
-                <th className="p-4">Ingredients</th>
-                <th className="p-4">Active</th>
-                <th className="p-4 text-right">Actions</th>
+                <th className="p-4">{t('emoji')}</th>
+                <th className="p-4">{t('nameEN')}</th>
+                <th className="p-4">{t('category')}</th>
+                <th className="p-4">{t('price')}</th>
+                <th className="p-4">{t('ingredients')}</th>
+                <th className="p-4">{t('active')}</th>
+                <th className="p-4 text-right">{t('actions')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-bakery-beige">
@@ -584,13 +590,13 @@ export const ProductsTab = () => {
                 <tr key={p.id} className={`hover:bg-bakery-cream/30 transition-colors ${!p.active ? 'bg-rose-50/30' : ''}`}>
                   <td className="p-4 text-2xl">{p.emoji}</td>
                   <td className="p-4 font-bold whitespace-nowrap">{tp(p)}</td>
-                  <td className="p-4 text-[10px] font-bold uppercase tracking-wider text-bakery-brown/60 whitespace-nowrap">{p.category}</td>
+                  <td className="p-4 text-[10px] font-bold uppercase tracking-wider text-bakery-brown/60 whitespace-nowrap">{tc(p.category)}</td>
                   <td className="p-4 font-black whitespace-nowrap">{formatPrice(p.price)}</td>
                   <td className="p-4">
                     {(() => {
                       const totalLinks = (p.ingredientLinks?.length || 0) + (p.preparedStockLinks?.length || 0);
                       if (totalLinks === 0) {
-                        return <span className="text-[10px] text-bakery-brown/30 italic">None</span>;
+                        return <span className="text-[10px] text-bakery-brown/30 italic">{t('none')}</span>;
                       }
                       return (
                         <div className="relative">
@@ -599,20 +605,20 @@ export const ProductsTab = () => {
                             className="flex items-center gap-1.5 px-2 py-1 bg-bakery-beige/50 text-bakery-brown rounded-full text-[10px] font-bold hover:bg-bakery-beige transition-colors whitespace-nowrap"
                           >
                             <Info size={10} />
-                            {totalLinks} linked
+                            {t('linkedCount').replace('{count}', String(totalLinks))}
                           </button>
                           
                           {showLinkedPopover === p.id && (
                             <>
                               <div className="fixed inset-0 z-10" onClick={() => setShowLinkedPopover(null)} />
                               <div className="absolute left-0 bottom-full mb-2 z-20 w-48 bg-white rounded-xl shadow-xl border border-bakery-beige p-3 animate-fade-in">
-                                <p className="text-[8px] font-black uppercase tracking-widest text-bakery-brown/40 mb-2">Linked Items</p>
+                                <p className="text-[8px] font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('linkedItems')}</p>
                                 <div className="space-y-1.5 max-h-32 overflow-y-auto scrollbar-hide">
                                   {p.ingredientLinks?.map(link => {
                                     const ing = ingredients.find(i => i.id === link.ingredientId);
                                     return (
                                       <div key={link.ingredientId} className="flex justify-between items-center text-[10px]">
-                                        <span className="font-bold truncate mr-2">{ing?.name || 'Unknown'}</span>
+                                        <span className="font-bold truncate mr-2">{ing?.name || t('unknown')}</span>
                                         <span className="text-bakery-brown/50 shrink-0">{link.quantityUsed}{link.unit}</span>
                                       </div>
                                     );
@@ -621,8 +627,8 @@ export const ProductsTab = () => {
                                     const prepped = preparedStock.find(ps => ps.id === link.preparedStockId);
                                     return (
                                       <div key={link.preparedStockId} className="flex justify-between items-center text-[10px]">
-                                        <span className="font-bold truncate mr-2 text-bakery-caramel">{prepped?.name || 'Unknown'}</span>
-                                        <span className="text-bakery-brown/50 shrink-0">{link.portionsPerSale} port.</span>
+                                        <span className="font-bold truncate mr-2 text-bakery-caramel">{prepped?.name || t('unknown')}</span>
+                                        <span className="text-bakery-brown/50 shrink-0">{link.portionsPerSale} {t('portionsAbbr')}</span>
                                       </div>
                                     );
                                   })}
@@ -669,11 +675,11 @@ export const ProductsTab = () => {
       )}
 
       {editItem && (
-        <Modal title={editItem.id ? t('edit') : t('addProd')} onClose={() => setEditItem(null)}>
+        <Modal title={editItem.id ? t('editMenuItem') : t('addMenuProduct')} onClose={() => setEditItem(null)}>
           <form onSubmit={handleSave} className="space-y-4">
             <div className="grid grid-cols-4 gap-4">
               <div className="col-span-1">
-                <label className="block text-xs font-bold uppercase mb-1">Emoji</label>
+                <label className="block text-xs font-bold uppercase mb-1">{t('emoji')}</label>
                 <input 
                   name="emoji" 
                   value={editItem.emoji || ''} 
@@ -683,7 +689,7 @@ export const ProductsTab = () => {
                 />
               </div>
               <div className="col-span-3">
-                <label className="block text-xs font-bold uppercase mb-1">Product Name</label>
+                <label className="block text-xs font-bold uppercase mb-1">{t('productName')}</label>
                 <input 
                   name="nameEN" 
                   value={editItem.nameEN || ''} 
@@ -697,24 +703,24 @@ export const ProductsTab = () => {
             {isAIProcessing && (
               <div className="text-xs text-bakery-brown/40 italic flex items-center gap-2 px-2">
                 <div className="w-2 h-2 bg-bakery-brown/40 rounded-full animate-bounce" />
-                AI is translating and suggesting emoji...
+                {t('aiTranslating')}
               </div>
             )}
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-bold uppercase mb-1">Category</label>
+                <label className="block text-xs font-bold uppercase mb-1">{t('category')}</label>
                 <select name="category" defaultValue={editItem.category || categories[0]} className="w-full p-3 border rounded-xl">
-                  {categories.map(c => <option key={c} value={c}>{c}</option>)}
+                  {categories.map(c => <option key={c} value={c}>{tc(c)}</option>)}
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-bold uppercase mb-1">Price ({businessSettings?.currencySymbol || '€'})</label>
+                <label className="block text-xs font-bold uppercase mb-1">{t('price')} ({businessSettings?.currencySymbol || '€'})</label>
                 <input name="price" type="number" step="0.01" defaultValue={editItem.price} className="w-full p-3 border rounded-xl" required />
               </div>
             </div>
 
             <div className="pt-4 border-t border-bakery-beige">
-              <label className="block text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-3">Prepped Stock Used</label>
+              <label className="block text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-3">{t('preppedStockUsed')}</label>
               <div className="space-y-3 mb-6">
                 {(editItem.preparedStockLinks || []).map((link, idx) => (
                   <div key={idx} className="flex items-center gap-2 animate-fade-in">
@@ -727,7 +733,7 @@ export const ProductsTab = () => {
                         setEditItem({ ...editItem, preparedStockLinks: newLinks });
                       }}
                     >
-                      <option value="">Select Prepped Item</option>
+                      <option value="">{t('selectPreppedItem')}</option>
                       {preparedStock.map(ps => (
                         <option key={ps.id} value={ps.id}>{ps.name}</option>
                       ))}
@@ -744,7 +750,7 @@ export const ProductsTab = () => {
                       }}
                       placeholder="Portions"
                     />
-                    <span className="text-xs text-bakery-brown/40 w-12">portions</span>
+                    <span className="text-xs text-bakery-brown/40 w-12">{t('portions')}</span>
                     <button 
                       type="button"
                       onClick={() => {
@@ -765,11 +771,11 @@ export const ProductsTab = () => {
                   }}
                   className="w-full p-3 border-2 border-dashed border-bakery-beige rounded-xl text-bakery-brown/40 font-bold text-xs hover:border-bakery-brown/20 hover:text-bakery-brown/60 transition-all flex items-center justify-center gap-2"
                 >
-                  <Plus size={16} /> Add Prepped Stock Link
+                  <Plus size={16} /> {t('addPreppedStockLink')}
                 </button>
               </div>
 
-              <label className="block text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-3">Ingredients Used</label>
+              <label className="block text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-3">{t('ingredientsUsed')}</label>
               <div className="space-y-3">
                 {(editItem.ingredientLinks || []).map((link, idx) => (
                   <div key={idx} className="flex items-center gap-2 animate-fade-in">
@@ -782,7 +788,7 @@ export const ProductsTab = () => {
                         setEditItem({ ...editItem, ingredientLinks: newLinks });
                       }}
                     >
-                      <option value="">Select Ingredient</option>
+                      <option value="">{t('selectIngredient')}</option>
                       {ingredients.map(i => (
                         <option key={i.id} value={i.id}>{i.name} ({i.unit})</option>
                       ))}
@@ -822,7 +828,7 @@ export const ProductsTab = () => {
                   }}
                   className="w-full p-3 border-2 border-dashed border-bakery-beige rounded-xl text-bakery-brown/40 font-bold text-xs hover:border-bakery-brown/20 hover:text-bakery-brown/60 transition-all flex items-center justify-center gap-2"
                 >
-                  <Plus size={16} /> Add Ingredient Link
+                  <Plus size={16} /> {t('addIngredientLink')}
                 </button>
               </div>
             </div>
@@ -834,12 +840,12 @@ export const ProductsTab = () => {
       )}
 
       {showCategoryModal && (
-        <Modal title="Manage Categories" onClose={() => setShowCategoryModal(false)}>
+        <Modal title={t('manageCategories')} onClose={() => setShowCategoryModal(false)}>
           <div className="space-y-6">
             <div className="flex gap-2">
               <input 
                 type="text" 
-                placeholder="New Category Name"
+                placeholder={t('newCategoryName')}
                 className="flex-1 p-3 border rounded-xl"
                 value={newCategoryName}
                 onChange={e => setNewCategoryName(e.target.value)}
@@ -851,7 +857,7 @@ export const ProductsTab = () => {
             <div className="space-y-2">
               {categories.map(cat => (
                 <div key={cat} className="flex justify-between items-center p-3 bg-bakery-beige/20 rounded-xl">
-                  <span className="font-bold">{cat}</span>
+                  <span className="font-bold">{tc(cat)}</span>
                   <button 
                     onClick={() => removeCategory(cat)}
                     className="p-1 text-rose-500 hover:bg-rose-50 rounded"
@@ -867,10 +873,11 @@ export const ProductsTab = () => {
 
       {deleteConfirm && (
         <ConfirmDialog 
-          title="Delete Menu Item"
-          message={`Are you sure you want to delete ${deleteConfirm.nameEN}? This action cannot be undone.`}
+          isOpen={!!deleteConfirm}
+          title={t('deleteMenuItem')}
+          message={t('deleteMenuItemConfirm').replace('{name}', deleteConfirm.nameEN)}
           onConfirm={handleDelete}
-          onCancel={() => setDeleteConfirm(null)}
+          onClose={() => setDeleteConfirm(null)}
         />
       )}
     </div>

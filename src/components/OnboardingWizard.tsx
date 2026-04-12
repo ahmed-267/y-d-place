@@ -40,6 +40,8 @@ export const OnboardingWizard = () => {
     setUsers, 
     completeOnboarding,
     t,
+    tp,
+    tc,
     formatPrice,
     addToast
   } = useApp();
@@ -204,12 +206,12 @@ export const OnboardingWizard = () => {
         setSelectedFile(null);
       } else if (scanStatus !== 'timeout') {
         setScanStatus('error');
-        addToast("Could not extract menu items from image. Please try a clearer photo.", "error");
+        addToast(t('scanMenuNoItems'), "error");
       }
     } catch (err) {
       if (scanStatus !== 'timeout') {
         setScanStatus('error');
-        addToast("Scanning failed. Please try again.", "error");
+      addToast(t('scanMenuFailed'), "error");
       }
     } finally {
       abortControllerRef.current = null;
@@ -291,7 +293,7 @@ export const OnboardingWizard = () => {
     setPreparedStock(currentPreparedStock);
     setProducts([...products, ...newProducts]);
     setScanResults(null);
-    addToast(`${newProducts.length} menu items added successfully!`, 'success');
+    addToast(t('menuItemsAdded').replace('{count}', String(newProducts.length)), 'success');
   };
 
   const nextStep = () => setStep(prev => Math.min(prev + 1, totalSteps));
@@ -329,16 +331,16 @@ export const OnboardingWizard = () => {
                   <Layout size={32} className="sm:w-10 sm:h-10" />
                 </div>
                 <h2 className="text-2xl sm:text-4xl font-black font-serif text-bakery-brown mb-4 sm:mb-6">
-                  Welcome, {businessSettings?.name}!
+                  {t('onboardingWelcome').replace('{name}', businessSettings?.name || '')}
                 </h2>
                 <p className="text-bakery-brown/60 text-base sm:text-lg mb-8 sm:mb-10 leading-relaxed">
-                  We're excited to help you grow your business. Y&D Place is your all-in-one platform for managing sales, inventory, and your team. Let's get your shop ready in just a few steps.
+                  {t('onboardingIntro')}
                 </p>
                 <button 
                   onClick={nextStep}
                   className="w-full py-4 sm:py-5 bg-bakery-brown text-white rounded-2xl font-bold text-lg sm:text-xl hover:bg-bakery-brown/90 transition-all active:scale-95 flex items-center justify-center gap-3"
                 >
-                  Let's get started
+                  {t('letsGetStarted')}
                   <ArrowRight size={24} />
                 </button>
               </div>
@@ -351,8 +353,8 @@ export const OnboardingWizard = () => {
                     <Users size={20} className="sm:w-6 sm:h-6" />
                   </div>
                   <div className="text-left">
-                    <h2 className="text-xl sm:text-2xl font-black font-serif text-bakery-brown">Add your team</h2>
-                    <p className="text-bakery-brown/50 text-xs sm:text-sm">Add staff members to help you run the shop.</p>
+                    <h2 className="text-xl sm:text-2xl font-black font-serif text-bakery-brown">{t('onboardingAddTeam')}</h2>
+                    <p className="text-bakery-brown/50 text-xs sm:text-sm">{t('onboardingAddTeamSubtitle')}</p>
                   </div>
                 </div>
 
@@ -360,21 +362,21 @@ export const OnboardingWizard = () => {
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                     <input 
                       type="text" 
-                      placeholder="Full Name"
+                      placeholder={t('fullName')}
                       className="sm:col-span-2 p-3 sm:p-4 bg-bakery-cream rounded-2xl outline-none font-bold text-sm sm:text-base"
                       value={staffForm.fullName}
                       onChange={e => setStaffForm({ ...staffForm, fullName: e.target.value })}
                     />
                     <input 
                       type="text" 
-                      placeholder="Username"
+                      placeholder={t('username')}
                       className="p-3 sm:p-4 bg-bakery-cream rounded-2xl outline-none font-bold text-sm sm:text-base"
                       value={staffForm.username}
                       onChange={e => setStaffForm({ ...staffForm, username: e.target.value })}
                     />
                     <input 
                       type="password" 
-                      placeholder="Password"
+                      placeholder={t('password')}
                       className="p-3 sm:p-4 bg-bakery-cream rounded-2xl outline-none font-bold text-sm sm:text-base"
                       value={staffForm.password}
                       onChange={e => setStaffForm({ ...staffForm, password: e.target.value })}
@@ -384,8 +386,8 @@ export const OnboardingWizard = () => {
                       value={staffForm.role}
                       onChange={e => setStaffForm({ ...staffForm, role: e.target.value as Role })}
                     >
-                      <option value="staff">Staff</option>
-                      <option value="manager">Manager</option>
+                      <option value="staff">{t('staffRole')}</option>
+                      <option value="manager">{t('manager')}</option>
                     </select>
                   </div>
                   <button 
@@ -393,7 +395,7 @@ export const OnboardingWizard = () => {
                     className="w-full py-3 border-2 border-dashed border-bakery-brown/20 text-bakery-brown/60 rounded-2xl font-bold hover:border-bakery-brown/40 hover:text-bakery-brown transition-all flex items-center justify-center gap-2 text-sm"
                   >
                     <Plus size={18} />
-                    Add Staff Member
+                    {t('addStaffMember')}
                   </button>
 
                   <div className="max-h-32 overflow-y-auto space-y-2 pr-2 scrollbar-hide">
@@ -401,7 +403,7 @@ export const OnboardingWizard = () => {
                       <div key={u.id} className="flex justify-between items-center p-3 bg-bakery-beige/30 rounded-xl text-xs sm:text-sm">
                         <span className="font-bold truncate max-w-[150px] sm:max-w-none">{u.fullName}</span>
                         <div className="flex items-center gap-4 shrink-0">
-                          <span className="text-bakery-brown/60 uppercase text-[10px] font-black tracking-widest">{u.role}</span>
+                          <span className="text-bakery-brown/60 uppercase text-[10px] font-black tracking-widest">{t(u.role === 'owner' ? 'owner' : u.role === 'manager' ? 'manager' : 'staffRole')}</span>
                           <button onClick={() => setUsers(users.filter(user => user.id !== u.id))} className="text-rose-500">
                             <Trash2 size={14} />
                           </button>
@@ -414,14 +416,14 @@ export const OnboardingWizard = () => {
                 <div className="flex flex-col gap-3">
                   <div className="flex gap-4">
                     <button onClick={nextStep} className="flex-1 py-4 bg-bakery-brown text-white rounded-2xl font-bold hover:bg-bakery-brown/90 transition-all active:scale-95 text-sm sm:text-base">
-                      Continue
+                      {t('continue')}
                     </button>
                     <button onClick={nextStep} className="px-4 sm:px-8 py-4 text-bakery-brown/50 font-bold hover:text-bakery-brown transition-colors text-sm sm:text-base">
-                      Skip
+                      {t('skip')}
                     </button>
                   </div>
                   <button onClick={prevStep} className="w-full py-2 text-bakery-brown/40 font-bold hover:text-bakery-brown transition-colors text-xs uppercase tracking-widest">
-                    Back
+                    {t('back')}
                   </button>
                 </div>
               </div>
@@ -434,8 +436,8 @@ export const OnboardingWizard = () => {
                     <Camera size={20} className="sm:w-6 sm:h-6" />
                   </div>
                   <div className="text-left">
-                    <h2 className="text-xl sm:text-2xl font-black font-serif text-bakery-brown">Scan your menu</h2>
-                    <p className="text-bakery-brown/50 text-xs sm:text-sm">Quickly add all your menu items by taking a photo of your menu.</p>
+                    <h2 className="text-xl sm:text-2xl font-black font-serif text-bakery-brown">{t('scanYourMenu')}</h2>
+                    <p className="text-bakery-brown/50 text-xs sm:text-sm">{t('scanYourMenuSubtitle')}</p>
                   </div>
                 </div>
 
@@ -452,31 +454,31 @@ export const OnboardingWizard = () => {
                       {isScanning ? <Loader2 size={32} className="animate-spin" /> : <Camera size={32} />}
                     </div>
                     <div>
-                      <p className="font-bold text-bakery-brown mb-1">Take a photo or upload</p>
-                      <p className="text-xs text-bakery-brown/40">AI will extract names, prices, and predict ingredients</p>
+                      <p className="font-bold text-bakery-brown mb-1">{t('takePhotoUpload')}</p>
+                      <p className="text-xs text-bakery-brown/40">{t('aiExtractsMenu')}</p>
                     </div>
                     <button 
                       onClick={() => fileInputRef.current?.click()}
                       disabled={isScanning}
                       className="mt-4 px-8 py-3 bg-bakery-brown text-white rounded-xl font-bold hover:bg-bakery-brown/90 transition-all disabled:opacity-50"
                     >
-                      {isScanning ? "Processing..." : "Select Image"}
+                      {isScanning ? t('processing') : t('selectImage')}
                     </button>
                   </div>
                 </div>
 
                 {products.length > 0 && (
                   <div className="mb-8 animate-fade-in">
-                    <h3 className="text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-3">Scanned Items ({products.length})</h3>
+                    <h3 className="text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-3">{t('scannedItems').replace('{count}', String(products.length))}</h3>
                     <div className="max-h-48 overflow-y-auto space-y-2 pr-2 scrollbar-hide">
                       {products.map(p => (
                         <div key={p.id} className="flex justify-between items-center p-3 bg-white border border-bakery-beige rounded-xl text-xs sm:text-sm">
                           <div className="flex items-center gap-2">
                             <span className="text-lg">{p.emoji}</span>
-                            <span className="font-bold truncate max-w-[150px]">{p.nameEN}</span>
+                            <span className="font-bold truncate max-w-[150px]">{tp(p)}</span>
                           </div>
                           <div className="flex items-center gap-3">
-                            <span className="text-bakery-brown/60 text-[10px]">{p.category}</span>
+                            <span className="text-bakery-brown/60 text-[10px]">{tc(p.category)}</span>
                             <span className="font-black">{formatPrice(p.price)}</span>
                             <button onClick={() => setProducts(products.filter(prod => prod.id !== p.id))} className="text-rose-500">
                               <Trash2 size={14} />
@@ -498,24 +500,24 @@ export const OnboardingWizard = () => {
                 />
 
                 {selectedFile && !isScanning && (
-                  <Modal title="Preview Menu Image" onClose={() => setSelectedFile(null)}>
+                  <Modal title={t('previewMenuImage')} onClose={() => setSelectedFile(null)}>
                     <div className="space-y-6">
                       <div className="aspect-video w-full rounded-2xl overflow-hidden bg-bakery-beige/20 border-2 border-bakery-beige">
-                        <img src={selectedFile} alt="Preview" className="w-full h-full object-contain" />
+                        <img src={selectedFile} alt={t('preview')} className="w-full h-full object-contain" />
                       </div>
                       <div className="flex gap-4">
                         <button 
                           onClick={() => setSelectedFile(null)}
                           className="flex-1 py-4 bg-bakery-beige text-bakery-brown rounded-2xl font-bold hover:bg-bakery-beige/80 transition-all"
                         >
-                          Cancel
+                          {t('cancel')}
                         </button>
                         <button 
                           onClick={startScan}
                           className="flex-[2] py-4 bg-bakery-brown text-white rounded-2xl font-bold hover:bg-bakery-brown/90 transition-all flex items-center justify-center gap-2"
                         >
                           <Camera size={20} />
-                          Scan Menu
+                          {t('scanMenu')}
                         </button>
                       </div>
                     </div>
@@ -523,9 +525,11 @@ export const OnboardingWizard = () => {
                 )}
 
                 {scanResults && (
-                  <Modal title="Review Scanned Menu Items" onClose={() => setScanResults(null)}>
+                  <Modal title={t('reviewScannedMenu')} onClose={() => setScanResults(null)}>
                     <div className="space-y-4">
-                      <p className="text-xs sm:text-sm text-bakery-brown/60">We found {scanResults.products.length} items. Review them and their predicted ingredients. New ingredients will start with 20 units in stock.</p>
+                      <p className="text-xs sm:text-sm text-bakery-brown/60">
+                        {t('scanReviewIntro').replace('{count}', String(scanResults.products.length))}
+                      </p>
                       <div className="max-h-[50vh] overflow-y-auto space-y-3 pr-2 scrollbar-hide">
                         {scanResults.products.map((p, idx) => (
                           <div key={idx} className="bg-bakery-beige/20 rounded-2xl overflow-hidden border border-bakery-beige/50">
@@ -585,7 +589,7 @@ export const OnboardingWizard = () => {
                             
                             {expandedScanItem === idx && (
                               <div className="px-4 pb-4 pt-2 bg-white/50 border-t border-bakery-beige/30 animate-fade-in">
-                                <label className="block text-[8px] font-black uppercase tracking-widest text-bakery-brown/40 mb-2">Predicted Ingredients</label>
+                                <label className="block text-[8px] font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('predictedIngredients')}</label>
                                 <div className="space-y-2">
                                   {p.ingredientLinks.map((link, lIdx) => (
                                     <div key={lIdx} className="flex items-center gap-2">
@@ -637,12 +641,12 @@ export const OnboardingWizard = () => {
                                     }}
                                     className="text-[10px] font-bold text-bakery-brown/60 hover:text-bakery-brown flex items-center gap-1 mt-2"
                                   >
-                                    <Plus size={12} /> Add Ingredient
+                                    <Plus size={12} /> {t('addIngredient')}
                                   </button>
                                 </div>
 
                                 <div className="mt-4">
-                                  <label className="block text-[8px] font-black uppercase tracking-widest text-bakery-brown/40 mb-2">Predicted Prepped Stock</label>
+                                  <label className="block text-[8px] font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('predictedPreppedStock')}</label>
                                   <div className="flex flex-wrap gap-2">
                                     {p.preparedStockNeeds.map((need, nIdx) => (
                                       <div key={nIdx} className="flex items-center gap-1 bg-bakery-brown/5 px-2 py-1 rounded-lg">
@@ -675,7 +679,7 @@ export const OnboardingWizard = () => {
                                       }}
                                       className="text-[10px] font-bold text-bakery-brown/60 hover:text-bakery-brown flex items-center gap-1"
                                     >
-                                      <Plus size={10} /> Add Prepped Need
+                                      <Plus size={10} /> {t('addPreppedNeed')}
                                     </button>
                                   </div>
                                 </div>
@@ -696,7 +700,7 @@ export const OnboardingWizard = () => {
                           className="flex-[2] p-3 sm:p-4 bg-bakery-brown text-white rounded-2xl font-bold hover:bg-bakery-brown/90 transition-all flex items-center justify-center gap-2 text-sm"
                         >
                           <Check size={18} />
-                          Add {scanResults.products.length} Menu Items
+                          {t('addMenuItems').replace('{count}', String(scanResults.products.length))}
                         </button>
                       </div>
                     </div>
@@ -706,14 +710,14 @@ export const OnboardingWizard = () => {
                 <div className="flex flex-col gap-3">
                   <div className="flex gap-4">
                     <button onClick={nextStep} className="flex-1 py-4 bg-bakery-brown text-white rounded-2xl font-bold hover:bg-bakery-brown/90 transition-all active:scale-95 text-sm sm:text-base">
-                      Continue
+                      {t('continue')}
                     </button>
                     <button onClick={nextStep} className="px-4 sm:px-8 py-4 text-bakery-brown/50 font-bold hover:text-bakery-brown transition-colors text-sm sm:text-base">
-                      Skip
+                      {t('skip')}
                     </button>
                   </div>
                   <button onClick={prevStep} className="w-full py-2 text-bakery-brown/40 font-bold hover:text-bakery-brown transition-colors text-xs uppercase tracking-widest">
-                    Back
+                    {t('back')}
                   </button>
                 </div>
               </div>
@@ -726,11 +730,11 @@ export const OnboardingWizard = () => {
                     <UtensilsCrossed size={20} className="sm:w-6 sm:h-6" />
                   </div>
                   <div className="text-left">
-                    <h2 className="text-xl sm:text-2xl font-black font-serif text-bakery-brown">Categories</h2>
+                    <h2 className="text-xl sm:text-2xl font-black font-serif text-bakery-brown">{t('categories')}</h2>
                     <p className="text-bakery-brown/50 text-xs sm:text-sm">
                       {categories.length > 0 
-                        ? `We found ${categories.length} categories from your scan. Add more if needed.`
-                        : "Categories help organize your menu for faster service."}
+                        ? t('categoriesFound').replace('{count}', String(categories.length))
+                        : t('categoriesHelp')}
                     </p>
                   </div>
                 </div>
@@ -739,7 +743,7 @@ export const OnboardingWizard = () => {
                   <div className="flex gap-2">
                     <input 
                       type="text" 
-                      placeholder="e.g. Starters, Mains, Drinks..."
+                      placeholder={t('categoryPlaceholder')}
                       className="flex-1 p-3 sm:p-4 bg-bakery-cream border-2 border-transparent focus:border-bakery-brown rounded-2xl outline-none font-bold transition-all text-sm sm:text-base"
                       value={newCategory}
                       onChange={e => setNewCategory(e.target.value)}
@@ -756,7 +760,7 @@ export const OnboardingWizard = () => {
                   <div className="flex flex-wrap gap-2">
                     {categories.map(cat => (
                       <div key={cat} className="px-3 sm:px-4 py-2 bg-bakery-beige text-bakery-brown rounded-full font-bold text-xs sm:text-sm flex items-center gap-2 group">
-                        {cat}
+                        {tc(cat)}
                         <button 
                           onClick={() => setCategories(categories.filter(c => c !== cat))}
                           className="text-bakery-brown/30 hover:text-rose-500 transition-colors"
@@ -771,14 +775,14 @@ export const OnboardingWizard = () => {
                 <div className="flex flex-col gap-3">
                   <div className="flex gap-4">
                     <button onClick={nextStep} className="flex-1 py-4 bg-bakery-brown text-white rounded-2xl font-bold hover:bg-bakery-brown/90 transition-all active:scale-95 text-sm sm:text-base">
-                      Continue
+                      {t('continue')}
                     </button>
                     <button onClick={nextStep} className="px-4 sm:px-8 py-4 text-bakery-brown/50 font-bold hover:text-bakery-brown transition-colors text-sm sm:text-base">
-                      Skip
+                      {t('skip')}
                     </button>
                   </div>
                   <button onClick={prevStep} className="w-full py-2 text-bakery-brown/40 font-bold hover:text-bakery-brown transition-colors text-xs uppercase tracking-widest">
-                    Back
+                    {t('back')}
                   </button>
                 </div>
               </div>
@@ -791,8 +795,8 @@ export const OnboardingWizard = () => {
                     <Package size={20} className="sm:w-6 sm:h-6" />
                   </div>
                   <div className="text-left">
-                    <h2 className="text-xl sm:text-2xl font-black font-serif text-bakery-brown">Manual Menu Items</h2>
-                    <p className="text-bakery-brown/50 text-xs sm:text-sm">Add any items that weren't in your scan.</p>
+                    <h2 className="text-xl sm:text-2xl font-black font-serif text-bakery-brown">{t('manualMenuItems')}</h2>
+                    <p className="text-bakery-brown/50 text-xs sm:text-sm">{t('manualMenuSubtitle')}</p>
                   </div>
                 </div>
 
@@ -801,7 +805,7 @@ export const OnboardingWizard = () => {
                     <div className="sm:col-span-1">
                       <input 
                         type="text" 
-                        placeholder="Emoji"
+                        placeholder={t('emoji')}
                         className="w-full p-3 sm:p-4 bg-bakery-cream rounded-2xl outline-none font-bold text-center text-xl"
                         value={productForm.emoji}
                         onChange={e => setProductForm({ ...productForm, emoji: e.target.value })}
@@ -809,7 +813,7 @@ export const OnboardingWizard = () => {
                     </div>
                     <input 
                       type="text" 
-                      placeholder="Item Name"
+                      placeholder={t('productName')}
                       className="sm:col-span-5 p-3 sm:p-4 bg-bakery-cream rounded-2xl outline-none font-bold text-sm sm:text-base"
                       value={productForm.name}
                       onChange={e => handleProductNameChange(e.target.value)}
@@ -818,7 +822,7 @@ export const OnboardingWizard = () => {
                     {isAIProcessing && (
                       <div className="sm:col-span-6 text-[10px] sm:text-xs text-bakery-brown/40 italic flex items-center gap-2 px-2">
                         <div className="w-2 h-2 bg-bakery-brown/40 rounded-full animate-bounce" />
-                        AI is translating and suggesting emoji...
+                        {t('aiTranslating')}
                       </div>
                     )}
                     <select 
@@ -826,11 +830,11 @@ export const OnboardingWizard = () => {
                       value={productForm.category}
                       onChange={e => setProductForm({ ...productForm, category: e.target.value })}
                     >
-                      {categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                      {categories.map(cat => <option key={cat} value={cat}>{tc(cat)}</option>)}
                     </select>
                     <input 
                       type="number" 
-                      placeholder="Price"
+                      placeholder={t('price')}
                       className="sm:col-span-3 p-3 sm:p-4 bg-bakery-cream rounded-2xl outline-none font-bold text-sm sm:text-base"
                       value={productForm.price}
                       onChange={e => setProductForm({ ...productForm, price: e.target.value })}
@@ -847,9 +851,9 @@ export const OnboardingWizard = () => {
                   <div className="max-h-32 overflow-y-auto space-y-2 pr-2 scrollbar-hide">
                     {products.map(p => (
                       <div key={p.id} className="flex justify-between items-center p-3 bg-bakery-beige/30 rounded-xl text-xs sm:text-sm">
-                        <span className="font-bold truncate max-w-[120px] sm:max-w-none">{p.nameEN}</span>
+                        <span className="font-bold truncate max-w-[120px] sm:max-w-none">{tp(p)}</span>
                         <div className="flex items-center gap-2 sm:gap-4 shrink-0">
-                          <span className="text-bakery-brown/60 text-[10px] sm:text-xs hidden sm:inline">{p.category}</span>
+                          <span className="text-bakery-brown/60 text-[10px] sm:text-xs hidden sm:inline">{tc(p.category)}</span>
                           <span className="font-black">{formatPrice(p.price)}</span>
                           <button onClick={() => setProducts(products.filter(prod => prod.id !== p.id))} className="text-rose-500">
                             <Trash2 size={14} />
@@ -863,14 +867,14 @@ export const OnboardingWizard = () => {
                 <div className="flex flex-col gap-3">
                   <div className="flex gap-4">
                     <button onClick={nextStep} className="flex-1 py-4 bg-bakery-brown text-white rounded-2xl font-bold hover:bg-bakery-brown/90 transition-all active:scale-95 text-sm sm:text-base">
-                      Continue
+                      {t('continue')}
                     </button>
                     <button onClick={nextStep} className="px-4 sm:px-8 py-4 text-bakery-brown/50 font-bold hover:text-bakery-brown transition-colors text-sm sm:text-base">
-                      Skip
+                      {t('skip')}
                     </button>
                   </div>
                   <button onClick={prevStep} className="w-full py-2 text-bakery-brown/40 font-bold hover:text-bakery-brown transition-colors text-xs uppercase tracking-widest">
-                    Back
+                    {t('back')}
                   </button>
                 </div>
               </div>
@@ -883,26 +887,26 @@ export const OnboardingWizard = () => {
                     <Boxes size={20} className="sm:w-6 sm:h-6" />
                   </div>
                   <div className="text-left">
-                    <h2 className="text-xl sm:text-2xl font-black font-serif text-bakery-brown">Stock Management</h2>
-                    <p className="text-bakery-brown/50 text-xs sm:text-sm">Set up your prepped items and raw ingredients.</p>
+                    <h2 className="text-xl sm:text-2xl font-black font-serif text-bakery-brown">{t('stockManagement')}</h2>
+                    <p className="text-bakery-brown/50 text-xs sm:text-sm">{t('stockSetupSubtitle')}</p>
                   </div>
                 </div>
 
                 <div className="space-y-8 mb-10">
                   {/* Prepped Stock Section */}
                   <div className="space-y-4">
-                    <h3 className="text-sm font-black uppercase tracking-widest text-bakery-brown/40">Prepped Stock (Auto-deducted)</h3>
+                    <h3 className="text-sm font-black uppercase tracking-widest text-bakery-brown/40">{t('preppedStockAuto')}</h3>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
                       <input 
                         type="text" 
-                        placeholder="e.g. Waffle Batter"
+                        placeholder={t('exampleWaffleBatter')}
                         className="sm:col-span-2 p-3 sm:p-4 bg-bakery-cream rounded-2xl outline-none font-bold text-sm sm:text-base"
                         value={preppedForm.name}
                         onChange={e => setPreppedForm({ ...preppedForm, name: e.target.value })}
                       />
                       <input 
                         type="number" 
-                        placeholder="Portions"
+                        placeholder={t('portions')}
                         className="p-3 sm:p-4 bg-bakery-cream rounded-2xl outline-none font-bold text-sm sm:text-base"
                         value={preppedForm.portions}
                         onChange={e => setPreppedForm({ ...preppedForm, portions: e.target.value })}
@@ -913,7 +917,7 @@ export const OnboardingWizard = () => {
                       className="w-full py-3 bg-bakery-brown/5 text-bakery-brown rounded-2xl font-bold hover:bg-bakery-brown/10 transition-all flex items-center justify-center gap-2 text-sm"
                     >
                       <Plus size={18} />
-                      Add Prepped Item
+                      {t('addPrepped')}
                     </button>
 
                     <div className="max-h-24 overflow-y-auto space-y-2 pr-2 scrollbar-hide">
@@ -921,7 +925,7 @@ export const OnboardingWizard = () => {
                         <div key={ps.id} className="flex justify-between items-center p-3 bg-bakery-beige/30 rounded-xl text-xs sm:text-sm">
                           <span className="font-bold truncate">{ps.name}</span>
                           <div className="flex items-center gap-4 shrink-0">
-                            <span className="font-black">{ps.portions} portions</span>
+                            <span className="font-black">{ps.portions} {t('portions')}</span>
                             <button onClick={() => setPreparedStock(preparedStock.filter(p => p.id !== ps.id))} className="text-rose-500">
                               <Trash2 size={14} />
                             </button>
@@ -933,25 +937,25 @@ export const OnboardingWizard = () => {
 
                   {/* Raw Ingredients Section */}
                   <div className="space-y-4">
-                    <h3 className="text-sm font-black uppercase tracking-widest text-bakery-brown/40">Raw Ingredients (Manual)</h3>
+                    <h3 className="text-sm font-black uppercase tracking-widest text-bakery-brown/40">{t('rawIngredientsManual')}</h3>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
                       <input 
                         type="text" 
-                        placeholder="e.g. Flour"
+                        placeholder={t('exampleFlour')}
                         className="sm:col-span-3 p-3 sm:p-4 bg-bakery-cream rounded-2xl outline-none font-bold text-sm sm:text-base"
                         value={ingredientForm.name}
                         onChange={e => setIngredientForm({ ...ingredientForm, name: e.target.value })}
                       />
                       <input 
                         type="text" 
-                        placeholder="Unit (kg, l, pcs)"
+                        placeholder={t('unitPlaceholder')}
                         className="p-3 sm:p-4 bg-bakery-cream rounded-2xl outline-none font-bold text-sm sm:text-base"
                         value={ingredientForm.unit}
                         onChange={e => setIngredientForm({ ...ingredientForm, unit: e.target.value })}
                       />
                       <input 
                         type="number" 
-                        placeholder="Quantity"
+                        placeholder={t('quantity')}
                         className="sm:col-span-2 p-3 sm:p-4 bg-bakery-cream rounded-2xl outline-none font-bold text-sm sm:text-base"
                         value={ingredientForm.quantity}
                         onChange={e => setIngredientForm({ ...ingredientForm, quantity: e.target.value })}
@@ -962,7 +966,7 @@ export const OnboardingWizard = () => {
                       className="w-full py-3 border-2 border-dashed border-bakery-brown/20 text-bakery-brown/60 rounded-2xl font-bold hover:border-bakery-brown/40 hover:text-bakery-brown transition-all flex items-center justify-center gap-2 text-sm"
                     >
                       <Plus size={18} />
-                      Add Raw Ingredient
+                      {t('addIngredient')}
                     </button>
 
                     <div className="max-h-24 overflow-y-auto space-y-2 pr-2 scrollbar-hide">
@@ -984,14 +988,14 @@ export const OnboardingWizard = () => {
                 <div className="flex flex-col gap-3">
                   <div className="flex gap-4">
                     <button onClick={nextStep} className="flex-1 py-4 bg-bakery-brown text-white rounded-2xl font-bold hover:bg-bakery-brown/90 transition-all active:scale-95 text-sm sm:text-base">
-                      Continue
+                      {t('continue')}
                     </button>
                     <button onClick={nextStep} className="px-4 sm:px-8 py-4 text-bakery-brown/50 font-bold hover:text-bakery-brown transition-colors text-sm sm:text-base">
-                      Skip
+                      {t('skip')}
                     </button>
                   </div>
                   <button onClick={prevStep} className="w-full py-2 text-bakery-brown/40 font-bold hover:text-bakery-brown transition-colors text-xs uppercase tracking-widest">
-                    Back
+                    {t('back')}
                   </button>
                 </div>
               </div>
@@ -1003,32 +1007,32 @@ export const OnboardingWizard = () => {
                   <CheckCircle2 size={32} className="sm:w-10 sm:h-10" />
                 </div>
                 <h2 className="text-2xl sm:text-4xl font-black font-serif text-bakery-brown mb-4 sm:mb-6">
-                  All set!
+                  {t('allSet')}
                 </h2>
                 <p className="text-bakery-brown/60 text-base sm:text-lg mb-8 sm:mb-10 leading-relaxed">
-                  Congratulations! Your business is now ready to go. Here's a summary of what we've set up:
+                  {t('onboardingCompleteIntro')}
                 </p>
 
                 <div className="grid grid-cols-2 gap-3 sm:gap-4 mb-8 sm:mb-12">
                   <div className="p-3 sm:p-4 bg-bakery-beige/30 rounded-2xl">
                     <p className="text-xl sm:text-2xl font-black text-bakery-brown">{categories.length}</p>
-                    <p className="text-[10px] sm:text-xs font-bold uppercase tracking-widest text-bakery-brown/40">Categories</p>
+                    <p className="text-[10px] sm:text-xs font-bold uppercase tracking-widest text-bakery-brown/40">{t('categories')}</p>
                   </div>
                   <div className="p-3 sm:p-4 bg-bakery-beige/30 rounded-2xl">
                     <p className="text-xl sm:text-2xl font-black text-bakery-brown">{products.length}</p>
-                    <p className="text-[10px] sm:text-xs font-bold uppercase tracking-widest text-bakery-brown/40">Menu Items</p>
+                    <p className="text-[10px] sm:text-xs font-bold uppercase tracking-widest text-bakery-brown/40">{t('menuItems')}</p>
                   </div>
                   <div className="p-3 sm:p-4 bg-bakery-beige/30 rounded-2xl">
                     <p className="text-xl sm:text-2xl font-black text-bakery-brown">{ingredients.length}</p>
-                    <p className="text-[10px] sm:text-xs font-bold uppercase tracking-widest text-bakery-brown/40">Raw Ingredients</p>
+                    <p className="text-[10px] sm:text-xs font-bold uppercase tracking-widest text-bakery-brown/40">{t('rawIngredients')}</p>
                   </div>
                   <div className="p-3 sm:p-4 bg-bakery-beige/30 rounded-2xl">
                     <p className="text-xl sm:text-2xl font-black text-bakery-brown">{preparedStock.length}</p>
-                    <p className="text-[10px] sm:text-xs font-bold uppercase tracking-widest text-bakery-brown/40">Prepped Stock</p>
+                    <p className="text-[10px] sm:text-xs font-bold uppercase tracking-widest text-bakery-brown/40">{t('preppedStock')}</p>
                   </div>
                   <div className="p-3 sm:p-4 bg-bakery-beige/30 rounded-2xl">
                     <p className="text-xl sm:text-2xl font-black text-bakery-brown">{users.filter(u => u.role !== 'owner').length}</p>
-                    <p className="text-[10px] sm:text-xs font-bold uppercase tracking-widest text-bakery-brown/40">Team Members</p>
+                    <p className="text-[10px] sm:text-xs font-bold uppercase tracking-widest text-bakery-brown/40">{t('teamMembers')}</p>
                   </div>
                 </div>
 
@@ -1037,11 +1041,11 @@ export const OnboardingWizard = () => {
                     onClick={completeOnboarding}
                     className="w-full py-4 sm:py-5 bg-bakery-brown text-white rounded-2xl font-bold text-lg sm:text-xl hover:bg-bakery-brown/90 transition-all active:scale-95 flex items-center justify-center gap-3"
                   >
-                    Go to my dashboard
+                    {t('goToDashboard')}
                     <ChevronRight size={24} />
                   </button>
                   <button onClick={prevStep} className="w-full py-2 text-bakery-brown/40 font-bold hover:text-bakery-brown transition-colors text-xs uppercase tracking-widest">
-                    Back
+                    {t('back')}
                   </button>
                 </div>
               </div>

@@ -1,8 +1,10 @@
 import React from 'react';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { AppContext } from '../AppContext';
 
 export class ErrorBoundary extends React.Component<any, any> {
   state = { hasError: false };
+  static contextType = AppContext;
 
   static getDerivedStateFromError() {
     return { hasError: true };
@@ -14,6 +16,7 @@ export class ErrorBoundary extends React.Component<any, any> {
 
   render() {
     if ((this as any).state.hasError) {
+      const t = this.context?.t || ((key: string) => key);
       return (
         <div className="min-h-screen bg-bakery-cream flex items-center justify-center p-4">
           <div className="max-w-md w-full bg-white rounded-[2.5rem] shadow-2xl p-8 text-center animate-fade-in">
@@ -21,17 +24,17 @@ export class ErrorBoundary extends React.Component<any, any> {
               <AlertTriangle size={40} />
             </div>
             <h1 className="text-2xl font-black font-serif text-bakery-brown mb-4">
-              Something went wrong
+              {t('errorTitle')}
             </h1>
             <p className="text-bakery-brown/60 mb-8">
-              An unexpected error occurred. Please try reloading the application.
+              {t('errorMessage')}
             </p>
             <button
               onClick={() => window.location.reload()}
               className="w-full py-4 bg-bakery-brown text-white rounded-2xl font-bold flex items-center justify-center gap-3 hover:bg-bakery-brown/90 transition-all active:scale-95"
             >
               <RefreshCw size={20} />
-              Reload Application
+              {t('reloadApp')}
             </button>
           </div>
         </div>

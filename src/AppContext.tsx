@@ -1,6 +1,6 @@
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { User, Product, Ingredient, PreparedStock, Sale, ShiftLog, Language, Role, Expense, TaxSettings, WorkShift, BusinessSettings } from './types';
+import { User, Product, Ingredient, PreparedStock, Sale, ShiftLog, Language, Role, Expense, TaxSettings, WorkShift, BusinessSettings, Order, RotaShift, StaffAvailability } from './types';
 import { DEFAULT_PRODUCTS, DEFAULT_INGREDIENTS, DEFAULT_USERS, TRANSLATIONS, DEFAULT_CATEGORIES } from './constants';
 import { generateDemoData } from './utils/demoData';
 
@@ -9,6 +9,7 @@ interface AppContextType {
   setLang: (l: Language) => void;
   t: (key: string) => string;
   tp: (product: Product | undefined) => string;
+  tc: (category: string) => string;
   user: User | null;
   setUser: (u: User | null) => void;
   products: Product[];
@@ -19,6 +20,8 @@ interface AppContextType {
   setPreparedStock: React.Dispatch<React.SetStateAction<PreparedStock[]>>;
   sales: Sale[];
   setSales: React.Dispatch<React.SetStateAction<Sale[]>>;
+  orders: Order[];
+  setOrders: React.Dispatch<React.SetStateAction<Order[]>>;
   users: User[];
   setUsers: React.Dispatch<React.SetStateAction<User[]>>;
   categories: string[];
@@ -29,6 +32,10 @@ interface AppContextType {
   setExpenses: React.Dispatch<React.SetStateAction<Expense[]>>;
   workShifts: WorkShift[];
   setWorkShifts: React.Dispatch<React.SetStateAction<WorkShift[]>>;
+  rota: RotaShift[];
+  setRota: React.Dispatch<React.SetStateAction<RotaShift[]>>;
+  staffAvailability: StaffAvailability[];
+  setStaffAvailability: React.Dispatch<React.SetStateAction<StaffAvailability[]>>;
   taxSettings: TaxSettings;
   setTaxSettings: React.Dispatch<React.SetStateAction<TaxSettings>>;
   toasts: { id: number; message: string; type: 'success' | 'error' | 'info' }[];
@@ -40,7 +47,7 @@ interface AppContextType {
   businessSettings: BusinessSettings | null;
   setBusinessSettings: (s: BusinessSettings) => void;
   registerBusiness: (s: BusinessSettings, owner: User) => void;
-  loginToBusiness: (email: string, pass: string) => boolean;
+  loginToBusiness: (payload: { mode: 'owner' | 'staff'; restaurantName: string; identifier: string; password: string }) => boolean;
   isFirstTime: boolean;
   isOnboarding: boolean;
   completeOnboarding: () => void;
@@ -48,6 +55,8 @@ interface AppContextType {
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
+export { AppContext };
+
 
 export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [currentBizId, setCurrentBizId] = useState<string | null>(localStorage.getItem('current_biz_id'));
@@ -57,6 +66,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     if (!currentBizId || currentBizId === 'ydplace') return 'ydplace_';
     return `biz_${currentBizId}_`;
   };
+
+  const getPrefixForBiz = (bizId: string) => {
+    if (bizId === 'ydplace') return 'ydplace_';
+    return `biz_${bizId}_`;
+  };
+
+  const normalizeName = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, '');
 
   const [lang, setLangState] = useState<Language>('en');
   
@@ -74,11 +90,14 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [preparedStock, setPreparedStock] = useState<PreparedStock[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [shiftLogs, setShiftLogs] = useState<ShiftLog[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [workShifts, setWorkShifts] = useState<WorkShift[]>([]);
+  const [rota, setRota] = useState<RotaShift[]>([]);
+  const [staffAvailability, setStaffAvailability] = useState<StaffAvailability[]>([]);
   const [taxSettings, setTaxSettings] = useState<TaxSettings>({ municipalTaxRate: 7, vatRegime: 'Standard' });
   const [toasts, setToasts] = useState<{ id: number; message: string; type: 'success' | 'error' | 'info' }[]>([]);
   const [isOnboarding, setIsOnboarding] = useState(false);
@@ -91,6 +110,25 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const tp = (product: Product | undefined) => {
     if (!product) return '';
     return product.translations?.[lang] || product.nameEN;
+  };
+
+  const tc = (category: string) => {
+    const normalized = category.toLowerCase().replace(/\s+/g, '').replace(/ê/g, 'e');
+    const keyMap: Record<string, string> = {
+      waffles: 'waffles',
+      crepes: 'crepes',
+      drinks: 'drinks',
+      icecream: 'icecream',
+      extras: 'extras',
+      other: 'other',
+      general: 'general'
+    };
+    const key = keyMap[normalized];
+    if (key) {
+      const translated = t(key);
+      if (translated !== key) return translated;
+    }
+    return category;
   };
 
   const isFirstTime = !localStorage.getItem('biz_registry');
@@ -134,9 +172,12 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     const storedUsers = localStorage.getItem(`${prefix}users`);
     const storedCategories = localStorage.getItem(`${prefix}categories`);
     const storedSales = localStorage.getItem(`${prefix}sales`);
+    const storedOrders = localStorage.getItem(`${prefix}orders`);
     const storedShiftLogs = localStorage.getItem(`${prefix}shiftlogs`);
     const storedExpenses = localStorage.getItem(`${prefix}expenses`);
     const storedWorkShifts = localStorage.getItem(`${prefix}workshifts`);
+    const storedRota = localStorage.getItem(`${prefix}rota`);
+    const storedAvailability = localStorage.getItem(`${prefix}staff_availability`);
     const storedTaxSettings = localStorage.getItem(`${prefix}tax_settings`);
 
     if (currentBizId === 'ydplace') {
@@ -147,9 +188,12 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       setUsers(storedUsers ? JSON.parse(storedUsers) : demo.users);
       setCategories(storedCategories ? JSON.parse(storedCategories) : DEFAULT_CATEGORIES);
       setSales(storedSales ? JSON.parse(storedSales) : demo.sales);
+      setOrders(storedOrders ? JSON.parse(storedOrders) : []);
       setShiftLogs(storedShiftLogs ? JSON.parse(storedShiftLogs) : demo.shiftLogs);
       setExpenses(storedExpenses ? JSON.parse(storedExpenses) : demo.expenses);
       setWorkShifts(storedWorkShifts ? JSON.parse(storedWorkShifts) : demo.workShifts);
+      setRota(storedRota ? JSON.parse(storedRota) : []);
+      setStaffAvailability(storedAvailability ? JSON.parse(storedAvailability) : []);
       setTaxSettings(storedTaxSettings ? JSON.parse(storedTaxSettings) : { 
         municipalTaxRate: 7, 
         vatRegime: 'Standard',
@@ -162,9 +206,12 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       setUsers(storedUsers ? JSON.parse(storedUsers) : []);
       setCategories(storedCategories ? JSON.parse(storedCategories) : ['General']);
       setSales(storedSales ? JSON.parse(storedSales) : []);
+      setOrders(storedOrders ? JSON.parse(storedOrders) : []);
       setShiftLogs(storedShiftLogs ? JSON.parse(storedShiftLogs) : []);
       setExpenses(storedExpenses ? JSON.parse(storedExpenses) : []);
       setWorkShifts(storedWorkShifts ? JSON.parse(storedWorkShifts) : []);
+      setRota(storedRota ? JSON.parse(storedRota) : []);
+      setStaffAvailability(storedAvailability ? JSON.parse(storedAvailability) : []);
       setTaxSettings(storedTaxSettings ? JSON.parse(storedTaxSettings) : { 
         municipalTaxRate: 7, 
         vatRegime: 'Standard',
@@ -190,16 +237,19 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     localStorage.setItem(`${prefix}users`, JSON.stringify(users));
     localStorage.setItem(`${prefix}categories`, JSON.stringify(categories));
     localStorage.setItem(`${prefix}sales`, JSON.stringify(sales));
+    localStorage.setItem(`${prefix}orders`, JSON.stringify(orders));
     localStorage.setItem(`${prefix}shiftlogs`, JSON.stringify(shiftLogs));
     localStorage.setItem(`${prefix}expenses`, JSON.stringify(expenses));
     localStorage.setItem(`${prefix}workshifts`, JSON.stringify(workShifts));
+    localStorage.setItem(`${prefix}rota`, JSON.stringify(rota));
+    localStorage.setItem(`${prefix}staff_availability`, JSON.stringify(staffAvailability));
     localStorage.setItem(`${prefix}tax_settings`, JSON.stringify(taxSettings));
     localStorage.setItem(`${prefix}lang`, lang);
     localStorage.setItem(`${prefix}user`, JSON.stringify(user));
     if (businessSettings) {
       localStorage.setItem(`${prefix}settings`, JSON.stringify(businessSettings));
     }
-  }, [products, ingredients, users, categories, sales, shiftLogs, expenses, workShifts, taxSettings, lang, user, businessSettings, currentBizId]);
+  }, [products, ingredients, users, categories, sales, orders, shiftLogs, expenses, workShifts, rota, staffAvailability, taxSettings, lang, user, businessSettings, currentBizId]);
 
   const registerBusiness = (settings: BusinessSettings, owner: User) => {
     const registry = JSON.parse(localStorage.getItem('biz_registry') || '[]');
@@ -228,8 +278,11 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     setIngredients([]);
     setPreparedStock([]);
     setSales([]);
+    setOrders([]);
     setExpenses([]);
     setWorkShifts([]);
+    setRota([]);
+    setStaffAvailability([]);
     setTaxSettings({ 
       municipalTaxRate: 0, 
       vatRegime: 'Standard',
@@ -237,46 +290,90 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     });
     setCurrentBizId(settings.id);
     setIsOnboarding(true);
-    addToast("Business registered successfully!");
+    addToast(t('businessRegistered'));
   };
 
-  const loginToBusiness = (usernameOrEmail: string, pass: string) => {
-    // Check Y&D Place first
-    if ((usernameOrEmail === 'owner@ydplace.com' || usernameOrEmail === 'owner') && pass === 'keoks2024') {
-      const ydOwner: User = {
-        id: 1,
-        username: 'owner',
-        fullName: 'Y&D Owner',
-        password: 'keoks2024',
-        role: 'owner'
-      };
-      localStorage.setItem('ydplace_user', JSON.stringify(ydOwner));
-      localStorage.setItem('current_biz_id', 'ydplace');
-      setCurrentBizId('ydplace');
-      setUser(ydOwner);
-      return true;
-    }
+  const loginToBusiness = (payload: { mode: 'owner' | 'staff'; restaurantName: string; identifier: string; password: string }) => {
+    const { mode, restaurantName, identifier, password } = payload;
+    const normalizedRestaurant = normalizeName(restaurantName);
 
     const registry = JSON.parse(localStorage.getItem('biz_registry') || '[]');
-    const biz = registry.find((b: any) => 
-      (b.ownerEmail === usernameOrEmail || b.username === usernameOrEmail) && b.password === pass
-    );
-    if (biz) {
-      const owner: User = {
-        id: 1,
-        username: biz.username,
-        fullName: biz.ownerName || biz.username,
-        password: biz.password,
-        role: 'owner'
-      };
-      const prefix = `biz_${biz.id}_`;
-      localStorage.setItem(`${prefix}user`, JSON.stringify(owner));
-      localStorage.setItem('current_biz_id', biz.id);
-      setCurrentBizId(biz.id);
-      setUser(owner);
-      return true;
+    const matchedBiz = registry.find((b: any) => {
+      if (!b?.name) return false;
+      if (!normalizedRestaurant) return true;
+      return normalizeName(b.name) === normalizedRestaurant;
+    });
+
+    const isYdPlace = normalizedRestaurant === normalizeName('Y&D Place') || normalizedRestaurant === 'ydplace';
+
+    if (mode === 'owner') {
+      if (isYdPlace && (identifier === 'owner@ydplace.com' || identifier === 'owner') && password === 'keoks2024') {
+        const ydOwner: User = {
+          id: 1,
+          username: 'owner',
+          fullName: 'Y&D Owner',
+          password: 'keoks2024',
+          role: 'owner'
+        };
+        localStorage.setItem('ydplace_user', JSON.stringify(ydOwner));
+        localStorage.setItem('current_biz_id', 'ydplace');
+        setCurrentBizId('ydplace');
+        setUser(ydOwner);
+        return true;
+      }
+
+      const biz = registry.find((b: any) => {
+        const nameMatch = !normalizedRestaurant || normalizeName(b.name || '') === normalizedRestaurant;
+        const identifierMatch = b.ownerEmail === identifier || b.username === identifier;
+        return nameMatch && identifierMatch && b.password === password;
+      });
+      if (biz) {
+        const owner: User = {
+          id: 1,
+          username: biz.username,
+          fullName: biz.ownerName || biz.username,
+          password: biz.password,
+          role: 'owner'
+        };
+        const prefix = getPrefixForBiz(biz.id);
+        localStorage.setItem(`${prefix}user`, JSON.stringify(owner));
+        localStorage.setItem('current_biz_id', biz.id);
+        setCurrentBizId(biz.id);
+        setUser(owner);
+        return true;
+      }
+      return false;
     }
-    return false;
+
+    const targetBizId = isYdPlace ? 'ydplace' : matchedBiz?.id;
+    if (!targetBizId) return false;
+
+    const prefix = getPrefixForBiz(targetBizId);
+    const storedUsers = localStorage.getItem(`${prefix}users`);
+    const availableUsers: User[] = storedUsers ? JSON.parse(storedUsers) : (targetBizId === 'ydplace' ? DEFAULT_USERS : []);
+    const staffUser = availableUsers.find(u => u.username === identifier && u.password === password);
+    if (!staffUser) return false;
+
+    const storedShiftLogs = localStorage.getItem(`${prefix}shiftlogs`);
+    const currentShiftLogs: ShiftLog[] = storedShiftLogs ? JSON.parse(storedShiftLogs) : [];
+    const newLog: ShiftLog = {
+      id: Date.now(),
+      username: staffUser.username,
+      fullName: staffUser.fullName,
+      role: staffUser.role,
+      loginTime: Date.now(),
+      logoutTime: null,
+      ordersProcessed: 0
+    };
+
+    const updatedLogs = [...currentShiftLogs, newLog];
+    localStorage.setItem(`${prefix}shiftlogs`, JSON.stringify(updatedLogs));
+    localStorage.setItem(`${prefix}user`, JSON.stringify(staffUser));
+    localStorage.setItem('current_biz_id', targetBizId);
+    setCurrentBizId(targetBizId);
+    setShiftLogs(updatedLogs);
+    setUser(staffUser);
+    return true;
   };
 
   const setBusinessSettings = (s: BusinessSettings) => {
@@ -306,11 +403,14 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     setIngredients([]);
     setPreparedStock([]);
     setSales([]);
+    setOrders([]);
     setUsers([]);
     setCategories([]);
     setShiftLogs([]);
     setExpenses([]);
     setWorkShifts([]);
+    setRota([]);
+    setStaffAvailability([]);
     setBusinessSettingsState(null);
     setUser(null);
     setCurrentBizId(null);
@@ -354,18 +454,22 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     setPreparedStock(demo.preparedStock);
     setUsers(usersWithRates);
     setSales(demo.sales);
+    setOrders([]);
     setShiftLogs(demo.shiftLogs);
     setExpenses(demo.expenses);
     setWorkShifts(demo.workShifts);
-    addToast("3 months of demo data loaded with full menu and stock!");
+    setRota([]);
+    setStaffAvailability([]);
+    addToast(t('demoDataLoaded'));
   };
 
   return (
     <AppContext.Provider value={{
-      lang, setLang, t, tp, user, setUser, products, setProducts, ingredients, setIngredients,
+      lang, setLang, t, tp, tc, user, setUser, products, setProducts, ingredients, setIngredients,
       preparedStock, setPreparedStock,
-      sales, setSales, users, setUsers, categories, setCategories, shiftLogs, setShiftLogs,
-      expenses, setExpenses, workShifts, setWorkShifts, taxSettings, setTaxSettings,
+      sales, setSales, orders, setOrders, users, setUsers, categories, setCategories, shiftLogs, setShiftLogs,
+      expenses, setExpenses, workShifts, setWorkShifts, rota, setRota, staffAvailability, setStaffAvailability,
+      taxSettings, setTaxSettings,
       toasts, addToast, logout, resetAllData, formatPrice,
       businessSettings, setBusinessSettings, registerBusiness, loginToBusiness, isFirstTime,
       isOnboarding, completeOnboarding, loadDemoData

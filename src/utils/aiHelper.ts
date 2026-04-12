@@ -69,6 +69,156 @@ const requestOpenRouterJSON = async (
   return JSON.parse(contentText);
 };
 
+const requestOpenRouterText = async (
+  prompt: string,
+  imageBase64?: string,
+  signal?: AbortSignal
+) => {
+  const config = getOpenRouterConfig();
+  if (!config) {
+    console.error("Missing OpenRouter API key. Set VITE_OPENROUTER_API_KEY.");
+    return null;
+  }
+
+  const content: Array<Record<string, unknown>> = [{ type: "text", text: prompt }];
+  if (imageBase64) {
+    content.push({ type: "image_url", image_url: { url: imageBase64 } });
+  }
+
+  const res = await fetch(OPENROUTER_URL, {
+    method: "POST",
+    headers: config.headers,
+    signal,
+    body: JSON.stringify({
+      model: config.model,
+      messages: [{ role: "user", content }],
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`OpenRouter request failed: ${res.status} ${errText}`);
+  }
+
+  const data = (await res.json()) as {
+    choices?: Array<{ message?: { content?: string } }>;
+  };
+  return data.choices?.[0]?.message?.content || null;
+};
+
+const extractFirstJSONObject = (text: string): Record<string, unknown> | null => {
+  const start = text.indexOf('{');
+  if (start === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+
+  for (let i = start; i < text.length; i += 1) {
+    const char = text[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (char === '\\' && inString) {
+      escape = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (char === '{') depth += 1;
+    if (char === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        const slice = text.slice(start, i + 1);
+        try {
+          return JSON.parse(slice) as Record<string, unknown>;
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
+};
+
+const normalizeMenuResult = (raw: Record<string, unknown>): ScanMenuResult | null => {
+  const productsRaw = Array.isArray(raw.products) ? raw.products : [];
+  if (!productsRaw.length) return null;
+
+  const languages = ["fr", "nl", "es", "it", "de", "ar", "pt", "tr", "pl", "ro", "zh", "ja"] as const;
+
+  const normalized = productsRaw
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const obj = item as Record<string, unknown>;
+      const name = typeof obj.name === "string" ? obj.name.trim() : "";
+      const priceValue = obj.price;
+      const price =
+        typeof priceValue === "number"
+          ? priceValue
+          : typeof priceValue === "string"
+            ? Number(priceValue.replace(/[^0-9.,-]/g, "").replace(",", "."))
+            : NaN;
+
+      if (!name || !Number.isFinite(price)) return null;
+
+      const category = typeof obj.category === "string" && obj.category.trim() ? obj.category.trim() : "Other";
+      const emoji = typeof obj.emoji === "string" && obj.emoji.trim() ? obj.emoji.trim() : "🍽️";
+
+      const translationsObj = obj.translations && typeof obj.translations === "object" ? (obj.translations as Record<string, unknown>) : {};
+      const translations = languages.reduce<Record<string, string>>((acc, lang) => {
+        const value = translationsObj[lang];
+        acc[lang] = typeof value === "string" && value.trim() ? value.trim() : name;
+        return acc;
+      }, {});
+
+      const preparedStockNeeds = Array.isArray(obj.preparedStockNeeds)
+        ? obj.preparedStockNeeds.filter((v) => typeof v === "string").map((v) => v.trim()).filter(Boolean)
+        : [];
+
+      const ingredientLinks = Array.isArray(obj.ingredientLinks)
+        ? obj.ingredientLinks
+            .map((link) => {
+              if (!link || typeof link !== "object") return null;
+              const linkObj = link as Record<string, unknown>;
+              const ingredientName =
+                typeof linkObj.ingredientName === "string" && linkObj.ingredientName.trim()
+                  ? linkObj.ingredientName.trim()
+                  : "";
+              const quantityValue = linkObj.quantityUsed;
+              const quantityUsed =
+                typeof quantityValue === "number"
+                  ? quantityValue
+                  : typeof quantityValue === "string"
+                    ? Number(quantityValue.replace(/[^0-9.,-]/g, "").replace(",", "."))
+                    : NaN;
+              const unit = typeof linkObj.unit === "string" && linkObj.unit.trim() ? linkObj.unit.trim() : "";
+              if (!ingredientName || !Number.isFinite(quantityUsed) || !unit) return null;
+              return { ingredientName, quantityUsed, unit };
+            })
+            .filter(Boolean)
+        : [];
+
+      return {
+        name,
+        price,
+        category,
+        emoji,
+        translations,
+        preparedStockNeeds,
+        ingredientLinks: ingredientLinks as ScanMenuResult["products"][number]["ingredientLinks"],
+      };
+    })
+    .filter(Boolean) as ScanMenuResult["products"];
+
+  if (!normalized.length) return null;
+  return { products: normalized };
+};
+
 export interface AIAssistanceResult {
   emoji: string;
   translations: Record<string, string>;
@@ -136,75 +286,91 @@ export interface ScanMenuResult {
 }
 
 export const scanMenu = async (base64Image: string, signal?: AbortSignal): Promise<ScanMenuResult | null> => {
-  try {
-    const schema = {
-      type: "object",
-      properties: {
-        products: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              name: { type: "string" },
-              price: { type: "number" },
-              category: { type: "string" },
-              emoji: { type: "string" },
-              translations: {
+  const schema = {
+    type: "object",
+    properties: {
+      products: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            name: { type: "string" },
+            price: { type: "number" },
+            category: { type: "string" },
+            emoji: { type: "string" },
+            translations: {
+              type: "object",
+              properties: {
+                fr: { type: "string" },
+                nl: { type: "string" },
+                es: { type: "string" },
+                it: { type: "string" },
+                de: { type: "string" },
+                ar: { type: "string" },
+                pt: { type: "string" },
+                tr: { type: "string" },
+                pl: { type: "string" },
+                ro: { type: "string" },
+                zh: { type: "string" },
+                ja: { type: "string" },
+              },
+              required: ["fr", "nl", "es", "it", "de", "ar", "pt", "tr", "pl", "ro", "zh", "ja"],
+              additionalProperties: false,
+            },
+            preparedStockNeeds: {
+              type: "array",
+              items: { type: "string" },
+            },
+            ingredientLinks: {
+              type: "array",
+              items: {
                 type: "object",
                 properties: {
-                  fr: { type: "string" },
-                  nl: { type: "string" },
-                  es: { type: "string" },
-                  it: { type: "string" },
-                  de: { type: "string" },
-                  ar: { type: "string" },
-                  pt: { type: "string" },
-                  tr: { type: "string" },
-                  pl: { type: "string" },
-                  ro: { type: "string" },
-                  zh: { type: "string" },
-                  ja: { type: "string" },
+                  ingredientName: { type: "string" },
+                  quantityUsed: { type: "number" },
+                  unit: { type: "string" },
                 },
-                required: ["fr", "nl", "es", "it", "de", "ar", "pt", "tr", "pl", "ro", "zh", "ja"],
+                required: ["ingredientName", "quantityUsed", "unit"],
                 additionalProperties: false,
               },
-              preparedStockNeeds: {
-                type: "array",
-                items: { type: "string" },
-              },
-              ingredientLinks: {
-                type: "array",
-                items: {
-                  type: "object",
-                  properties: {
-                    ingredientName: { type: "string" },
-                    quantityUsed: { type: "number" },
-                    unit: { type: "string" },
-                  },
-                  required: ["ingredientName", "quantityUsed", "unit"],
-                  additionalProperties: false,
-                },
-              },
             },
-            required: ["name", "price", "category", "emoji", "translations", "preparedStockNeeds", "ingredientLinks"],
-            additionalProperties: false,
           },
+          required: ["name", "price", "category", "emoji", "translations", "preparedStockNeeds", "ingredientLinks"],
+          additionalProperties: false,
         },
       },
-      required: ["products"],
-      additionalProperties: false,
-    };
+    },
+    required: ["products"],
+    additionalProperties: false,
+  };
 
-    const result = await requestOpenRouterJSON(
-      "Extract products from this menu image. For each item, provide: name (in English), price (as a number), category, a relevant emoji, translations (fr, nl, es, it, de, ar, pt, tr, pl, ro, zh, ja), typical ingredients (name, quantity, unit), and any prepped stock items needed. Return the results as a JSON object with a 'products' array.",
-      schema,
-      base64Image,
-      signal
-    );
+  const primaryPrompt =
+    "Extract products from this menu image. For each item, provide: name (in English), price (as a number), category, a relevant emoji, translations (fr, nl, es, it, de, ar, pt, tr, pl, ro, zh, ja), typical ingredients (name, quantity, unit), and any prepped stock items needed. Return the results as a JSON object with a 'products' array.";
 
-    if (result) return result as ScanMenuResult;
+  try {
+    const result = await requestOpenRouterJSON(primaryPrompt, schema, base64Image, signal);
+    if (result) {
+      const normalized = normalizeMenuResult(result as Record<string, unknown>);
+      if (normalized) return normalized;
+    }
   } catch (error) {
-    if ((error as any).name === 'AbortError') {
+    if ((error as any).name === "AbortError") {
+      console.log("Scan aborted by user");
+      return null;
+    }
+    console.warn("Structured menu scan failed, attempting fallback.", error);
+  }
+
+  try {
+    const fallbackPrompt =
+      "Extract products from this menu image. Return ONLY valid JSON with a top-level object containing a 'products' array. Each product must include: name (English), price (number), category, emoji, translations (fr, nl, es, it, de, ar, pt, tr, pl, ro, zh, ja), preparedStockNeeds (string array), ingredientLinks (array of {ingredientName, quantityUsed, unit}).";
+    const raw = await requestOpenRouterText(fallbackPrompt, base64Image, signal);
+    if (!raw) return null;
+    const parsed = extractFirstJSONObject(raw);
+    if (!parsed) return null;
+    return normalizeMenuResult(parsed);
+  } catch (error) {
+    if ((error as any).name === "AbortError") {
       console.log("Scan aborted by user");
     } else {
       console.error("Error scanning menu:", error);

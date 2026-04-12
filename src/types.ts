@@ -45,6 +45,27 @@ export interface Sale {
   cashierFullName: string;
 }
 
+export type OrderType = 'WalkIn' | 'PreOrder';
+export type OrderStatus = 'Preparing' | 'Ready' | 'Completed';
+
+export interface Order {
+  id: string;
+  type: OrderType;
+  status: OrderStatus;
+  createdAt: number;
+  lastUpdatedAt: number;
+  scheduledFor?: string;
+  customerName?: string;
+  customerPhone?: string;
+  items: SaleItem[];
+  subtotal: number;
+  paymentMethod: 'Cash' | 'Card';
+  createdByUsername: string;
+  createdByFullName: string;
+  completedAt?: number;
+  saleId?: string;
+}
+
 export interface PreparedStock {
   id: number;
   name: string;
@@ -104,6 +125,7 @@ export interface User {
   id: number;
   username: string;
   fullName: string;
+  email?: string;
   password?: string;
   role: Role;
   hourlyRate?: number;
@@ -130,6 +152,21 @@ export interface WorkShift {
   breakMinutes: number;
   totalHours: number;
   notes?: string;
+}
+
+export interface RotaShift {
+  id: string;
+  userId: number;
+  username: string;
+  fullName: string;
+  date: string;
+  startTime?: string;
+  endTime?: string;
+}
+
+export interface StaffAvailability {
+  userId: number;
+  note: string;
 }
 
 export type Language = 'en' | 'fr' | 'nl' | 'fl' | 'es' | 'it' | 'de' | 'ar' | 'pt' | 'tr' | 'pl' | 'ro' | 'zh' | 'ja';

@@ -2,6 +2,7 @@
 import React from 'react';
 import { Modal } from './Modal';
 import { AlertTriangle } from 'lucide-react';
+import { useApp } from '../AppContext';
 
 interface ConfirmDialogProps {
   isOpen: boolean;
@@ -20,11 +21,14 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   onConfirm,
   title,
   message,
-  confirmText = 'Delete',
-  cancelText = 'Cancel',
+  confirmText,
+  cancelText,
   type = 'danger'
 }) => {
   if (!isOpen) return null;
+  const { t } = useApp();
+  const resolvedCancel = cancelText || t('cancel');
+  const resolvedConfirm = confirmText || (type === 'danger' ? t('delete') : t('confirm'));
 
   return (
     <Modal title={title} onClose={onClose}>
@@ -43,7 +47,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
             onClick={onClose}
             className="flex-1 px-4 py-3 bg-bakery-beige text-bakery-brown rounded-xl font-bold hover:bg-bakery-beige/80 transition-all active:scale-95"
           >
-            {cancelText}
+            {resolvedCancel}
           </button>
           <button
             onClick={() => {
@@ -54,7 +58,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
               type === 'danger' ? 'bg-rose-500 hover:bg-rose-600 shadow-rose-200' : 'bg-orange-500 hover:bg-orange-600 shadow-orange-200'
             }`}
           >
-            {confirmText}
+            {resolvedConfirm}
           </button>
         </div>
       </div>

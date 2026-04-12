@@ -4,6 +4,7 @@ import { useApp } from '../AppContext';
 import { LogOut, Menu, X, Layout } from 'lucide-react';
 import { OverviewTab } from './OverviewTab';
 import { CashierTab } from './CashierTab';
+import { OrdersTab } from './OrdersTab';
 import { SalesTab } from './SalesTab';
 import { StockTab } from './StockTab';
 import { ProductsTab } from './ProductsTab';
@@ -14,15 +15,20 @@ import { SettingsTab } from './SettingsTab';
 import { Language, Role } from '../types';
 
 export const Dashboard = () => {
-  const { user, t, logout, lang, setLang, businessSettings } = useApp();
+  const { user, t, logout, lang, setLang, businessSettings, orders } = useApp();
   const [activeTab, setActiveTab] = useState('cashier');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+
+  const activeOrderCount = useMemo(() => {
+    return orders.filter(o => o.status === 'Preparing' || o.status === 'Ready').length;
+  }, [orders]);
 
   const tabs = useMemo(() => {
     if (!user) return [];
     return [
       { id: 'overview', label: t('overview'), roles: ['owner'] },
       { id: 'cashier', label: t('cashier'), roles: ['owner', 'manager', 'staff'] },
+      { id: 'orders', label: t('orders'), roles: ['owner', 'manager', 'staff'], badge: activeOrderCount > 0 ? activeOrderCount : undefined },
       { id: 'sales', label: t('sales'), roles: ['owner'] },
       { id: 'stock', label: t('stock'), roles: ['owner', 'manager', 'staff'] },
       { id: 'products', label: t('products'), roles: ['owner', 'manager', 'staff'] },
@@ -31,7 +37,7 @@ export const Dashboard = () => {
       { id: 'finance', label: t('finance'), roles: ['owner'] },
       { id: 'settings', label: t('settings'), roles: ['owner'] }
     ].filter(tab => tab.roles.includes(user.role));
-  }, [user, t]);
+  }, [user, t, activeOrderCount]);
 
   useEffect(() => {
     if (user && tabs.length > 0 && !tabs.find(t => t.id === activeTab)) {
@@ -58,17 +64,17 @@ export const Dashboard = () => {
 
   const mainLanguages: Language[] = ['en', 'fr', 'nl'];
   const otherLanguages: { code: Language, label: string }[] = [
-    { code: 'fl', label: 'Flemish' },
-    { code: 'es', label: 'Spanish' },
-    { code: 'it', label: 'Italian' },
-    { code: 'de', label: 'German' },
-    { code: 'ar', label: 'Arabic' },
-    { code: 'pt', label: 'Portuguese' },
-    { code: 'tr', label: 'Turkish' },
-    { code: 'pl', label: 'Polish' },
-    { code: 'ro', label: 'Romanian' },
-    { code: 'zh', label: 'Chinese' },
-    { code: 'ja', label: 'Japanese' }
+    { code: 'fl', label: t('langFlemish') },
+    { code: 'es', label: t('langSpanish') },
+    { code: 'it', label: t('langItalian') },
+    { code: 'de', label: t('langGerman') },
+    { code: 'ar', label: t('langArabic') },
+    { code: 'pt', label: t('langPortuguese') },
+    { code: 'tr', label: t('langTurkish') },
+    { code: 'pl', label: t('langPolish') },
+    { code: 'ro', label: t('langRomanian') },
+    { code: 'zh', label: t('langChinese') },
+    { code: 'ja', label: t('langJapanese') }
   ];
 
   return (
@@ -95,7 +101,14 @@ export const Dashboard = () => {
                       : 'text-bakery-brown/60 hover:text-bakery-brown hover:bg-bakery-beige/50'
                   }`}
                 >
-                  {tab.label}
+                  <span className="flex items-center gap-2">
+                    {tab.label}
+                    {typeof tab.badge === 'number' && tab.badge > 0 && (
+                      <span className="px-2 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-black">
+                        {tab.badge}
+                      </span>
+                    )}
+                  </span>
                 </button>
               ))}
             </div>
@@ -111,7 +124,7 @@ export const Dashboard = () => {
                     lang === l ? 'bg-bakery-brown text-white shadow-sm' : 'text-bakery-brown hover:bg-bakery-brown/10'
                   }`}
                 >
-                  {l}
+                  {t(`langShort_${l}`)}
                 </button>
               ))}
               <div className="relative">
@@ -121,7 +134,7 @@ export const Dashboard = () => {
                     !mainLanguages.includes(lang) ? 'bg-bakery-brown text-white shadow-sm' : 'text-bakery-brown hover:bg-bakery-brown/10'
                   }`}
                 >
-                  {!mainLanguages.includes(lang) ? lang : '+'}
+                  {!mainLanguages.includes(lang) ? t(`langShort_${lang}`) : '+'}
                 </button>
                 
                 {isLangDropdownOpen && (
@@ -175,7 +188,7 @@ export const Dashboard = () => {
             <div className="absolute inset-0 bg-bakery-brown/40 backdrop-blur-xl animate-fade-in" onClick={() => setIsMenuOpen(false)} />
             <div className="absolute right-4 top-20 left-4 bg-white rounded-3xl shadow-2xl p-6 animate-fade-in flex flex-col gap-2 border border-bakery-beige max-h-[80vh] overflow-y-auto">
               <div className="flex justify-between items-center mb-4 pb-4 border-b border-bakery-beige">
-                <h3 className="text-xl font-bold font-serif text-bakery-brown">Menu</h3>
+                <h3 className="text-xl font-bold font-serif text-bakery-brown">{t('menu')}</h3>
                 <button onClick={() => setIsMenuOpen(false)} className="text-bakery-brown/40">
                   <X size={24} />
                 </button>
@@ -188,7 +201,14 @@ export const Dashboard = () => {
                     activeTab === tab.id ? 'bg-bakery-beige text-bakery-brown' : 'text-bakery-brown/60 hover:bg-bakery-beige/30'
                   }`}
                 >
-                  {tab.label}
+                  <span className="flex items-center justify-between gap-3">
+                    <span>{tab.label}</span>
+                    {typeof tab.badge === 'number' && tab.badge > 0 && (
+                      <span className="px-2 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-black">
+                        {tab.badge}
+                      </span>
+                    )}
+                  </span>
                 </button>
               ))}
               <div className="flex flex-wrap justify-center gap-2 p-4 bg-bakery-beige/20 rounded-xl mt-2">
@@ -200,7 +220,7 @@ export const Dashboard = () => {
                       lang === l ? 'bg-bakery-brown text-white' : 'text-bakery-brown'
                     }`}
                   >
-                    {l}
+                    {t(`langShort_${l}`)}
                   </button>
                 ))}
                 <div className="w-full h-px bg-bakery-beige/30 my-2" />
@@ -213,7 +233,7 @@ export const Dashboard = () => {
                         lang === l.code ? 'bg-bakery-brown text-white' : 'text-bakery-brown/60 bg-white/50'
                       }`}
                     >
-                      {l.code}
+                      {t(`langShort_${l.code}`)}
                     </button>
                   ))}
                 </div>
@@ -244,6 +264,7 @@ export const Dashboard = () => {
       <main className="flex-1 p-4 sm:p-6 max-w-[1600px] mx-auto w-full overflow-x-hidden">
         {activeTab === 'overview' && <OverviewTab />}
         {activeTab === 'cashier' && <CashierTab />}
+        {activeTab === 'orders' && <OrdersTab />}
         {activeTab === 'sales' && <SalesTab />}
         {activeTab === 'stock' && <StockTab />}
         {activeTab === 'products' && <ProductsTab />}

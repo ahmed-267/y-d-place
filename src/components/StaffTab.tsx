@@ -1,29 +1,66 @@
-
 import React, { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../AppContext';
-import { Plus, Trash2, ShieldAlert, Clock, Filter, Calendar, Edit2, Search } from 'lucide-react';
+import { Plus, Trash2, ShieldAlert, Clock, Edit2, Search, Calendar, ChevronLeft, ChevronRight, Sparkles, Save, X } from 'lucide-react';
 import { Modal } from './Modal';
 import { ConfirmDialog } from './ConfirmDialog';
 import { Pagination } from './Pagination';
-import { User, Role, WorkShift } from '../types';
+import { User, Role, WorkShift, RotaShift } from '../types';
+import { toSearchValue } from '../utils/search';
 
 export const StaffTab = () => {
-  const { users, setUsers, shiftLogs, workShifts, setWorkShifts, t, addToast, resetAllData, formatPrice, businessSettings } = useApp();
+  const { users, setUsers, workShifts, setWorkShifts, t, addToast, resetAllData, formatPrice, businessSettings, user, rota, setRota, staffAvailability, setStaffAvailability, lang } = useApp();
+  const [activeSection, setActiveSection] = useState<'staff' | 'shifts' | 'rota'>('staff');
   const [showAddModal, setShowAddModal] = useState(false);
   const [showAddShiftModal, setShowAddShiftModal] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<User | null>(null);
   const [shiftDeleteConfirm, setShiftDeleteConfirm] = useState<WorkShift | null>(null);
   const [shiftFilter, setShiftFilter] = useState({ staff: 'All', from: '', to: '' });
-  
+  const [rotaView, setRotaView] = useState<'weekly' | 'monthly'>('weekly');
+  const [weekOffset, setWeekOffset] = useState(0);
+  const [monthOffset, setMonthOffset] = useState(0);
+  const [editingCell, setEditingCell] = useState<{ userId: number; date: string } | null>(null);
+  const [cellStart, setCellStart] = useState('09:00');
+  const [cellEnd, setCellEnd] = useState('17:00');
+  const [rotaPreview, setRotaPreview] = useState<RotaShift[] | null>(null);
+  const [pendingGenerated, setPendingGenerated] = useState<RotaShift[] | null>(null);
+  const [showOverwriteConfirm, setShowOverwriteConfirm] = useState(false);
+  const [staffNeeded, setStaffNeeded] = useState<Record<number, number>>({
+    0: 2,
+    1: 2,
+    2: 2,
+    3: 2,
+    4: 2,
+    5: 3,
+    6: 3
+  });
+
   const [staffPage, setStaffPage] = useState(1);
   const [shiftPage, setShiftPage] = useState(1);
   const [staffSearch, setStaffSearch] = useState('');
   const [editStaff, setEditStaff] = useState<User | null>(null);
   const [editShift, setEditShift] = useState<WorkShift | null>(null);
+  const [resetPassword, setResetPassword] = useState('');
+  const [resetPasswordConfirm, setResetPasswordConfirm] = useState('');
   const itemsPerPage = 10;
 
-  // Shift Form State
+  const canResetPassword = (viewer: User | null, target: User) => {
+    if (!viewer) return false;
+    if (viewer.id === target.id) return false;
+    if (viewer.role === 'owner') return target.role !== 'owner';
+    if (viewer.role === 'manager') return target.role === 'staff';
+    return false;
+  };
+
+  const canEditRota = user?.role === 'owner' || user?.role === 'manager';
+
+  useEffect(() => {
+    if (editStaff) {
+      setResetPassword('');
+      setResetPasswordConfirm('');
+    }
+  }, [editStaff]);
+
   const [shiftFormData, setShiftFormData] = useState({
     userId: '',
     date: new Date().toISOString().split('T')[0],
@@ -51,7 +88,7 @@ export const StaffTab = () => {
     const brk = parseInt(breakMinutes) || 0;
 
     let diff = (end.getTime() - start.getTime()) / (1000 * 60 * 60);
-    if (diff < 0) diff += 24; // Handle overnight shifts
+    if (diff < 0) diff += 24;
     
     const actualHours = Math.max(0, diff - (brk / 60));
     return parseFloat(actualHours.toFixed(2));
@@ -71,6 +108,7 @@ export const StaffTab = () => {
       id: Date.now(),
       username: data.username as string,
       fullName: data.fullName as string,
+      email: (data.email as string || '').trim() || undefined,
       password: data.password as string,
       role: data.role as Role,
       hourlyRate: parseFloat(data.hourlyRate as string) || 0
@@ -78,14 +116,34 @@ export const StaffTab = () => {
 
     setUsers([...users, newUser]);
     setShowAddModal(false);
-    addToast("Staff member added!");
+    addToast(t('staffAdded'));
   };
 
   const handleEditStaffSave = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editStaff) return;
-    setUsers(users.map(u => u.id === editStaff.id ? editStaff : u));
-    addToast("Staff member updated!");
+    const canReset = canResetPassword(user, editStaff);
+    if (canReset && (resetPassword || resetPasswordConfirm)) {
+      if (resetPassword.length < 4) {
+        addToast(t('passwordTooShort'), 'error');
+        return;
+      }
+      if (resetPassword !== resetPasswordConfirm) {
+        addToast(t('passwordsDontMatch'), 'error');
+        return;
+      }
+    }
+
+    const updatedUsers = users.map(u => {
+      if (u.id !== editStaff.id) return u;
+      const updated = { ...u, ...editStaff, password: u.password };
+      if (canReset && resetPassword) {
+        updated.password = resetPassword;
+      }
+      return updated;
+    });
+    setUsers(updatedUsers);
+    addToast(t('staffUpdated'));
     setEditStaff(null);
   };
 
@@ -93,7 +151,6 @@ export const StaffTab = () => {
     e.preventDefault();
     if (!editShift) return;
     
-    // Recalculate hours for edited shift
     const start = new Date(`${editShift.date}T${editShift.startTime}`);
     const end = new Date(`${editShift.date}T${editShift.endTime}`);
     let diff = (end.getTime() - start.getTime()) / (1000 * 60 * 60);
@@ -102,14 +159,14 @@ export const StaffTab = () => {
     
     const updatedShift = { ...editShift, totalHours: actualHours };
     setWorkShifts(workShifts.map(s => s.id === editShift.id ? updatedShift : s));
-    addToast("Shift updated!");
+    addToast(t('shiftUpdated'));
     setEditShift(null);
   };
 
   const handleDelete = () => {
     if (!deleteConfirm) return;
     setUsers(users.filter(u => u.id !== deleteConfirm.id));
-    addToast(`${deleteConfirm.fullName} removed`, "info");
+    addToast(t('staffRemoved'), 'info');
     setDeleteConfirm(null);
   };
 
@@ -117,14 +174,14 @@ export const StaffTab = () => {
     if (!shiftDeleteConfirm) return;
     setWorkShifts(workShifts.filter(s => s.id !== shiftDeleteConfirm.id));
     setShiftDeleteConfirm(null);
-    addToast("Shift deleted", "info");
+    addToast(t('shiftDeleted'), 'info');
   };
 
   const handleAddShift = (e: React.FormEvent) => {
     e.preventDefault();
     const targetUser = users.find(u => u.id === parseInt(shiftFormData.userId));
     if (!targetUser) {
-      addToast("Please select a staff member", "error");
+      addToast(t('selectStaffMember'), 'error');
       return;
     }
 
@@ -151,14 +208,19 @@ export const StaffTab = () => {
       breakMinutes: '30',
       notes: ''
     });
-    addToast("Shift logged successfully!");
+    addToast(t('shiftLogged'));
   };
 
   const filteredUsers = useMemo(() => {
-    return users.filter(u => 
-      u.fullName.toLowerCase().includes(staffSearch.toLowerCase()) ||
-      u.username.toLowerCase().includes(staffSearch.toLowerCase())
-    );
+    const query = staffSearch.trim().toLowerCase();
+    if (!query) return users;
+    return users.filter(u => {
+      const nameMatch = toSearchValue(u?.fullName).includes(query);
+      const usernameMatch = toSearchValue(u?.username).includes(query);
+      const roleMatch = toSearchValue(u?.role).includes(query);
+      const emailMatch = toSearchValue(u?.email).includes(query);
+      return nameMatch || usernameMatch || roleMatch || emailMatch;
+    });
   }, [users, staffSearch]);
 
   const paginatedUsers = useMemo(() => {
@@ -205,53 +267,270 @@ export const StaffTab = () => {
     return Object.values(summary).sort((a, b) => b.hours - a.hours);
   }, [filteredShifts]);
 
+  const staffForRota = useMemo(() => users.filter(u => u.role !== 'owner'), [users]);
+
+  const availabilityMap = useMemo(() => {
+    const map = new Map<number, string>();
+    staffAvailability.forEach(a => map.set(a.userId, a.note));
+    return map;
+  }, [staffAvailability]);
+
+  const setAvailabilityNote = (userId: number, note: string) => {
+    setStaffAvailability(prev => {
+      const exists = prev.find(a => a.userId === userId);
+      if (exists) {
+        return prev.map(a => a.userId === userId ? { ...a, note } : a);
+      }
+      return [...prev, { userId, note }];
+    });
+  };
+
+  const locale = lang === 'fl' ? 'nl-BE' : lang;
+  const toDateKey = (date: Date) => date.toLocaleDateString('en-CA');
+
+  const startOfWeek = (date: Date) => {
+    const d = new Date(date);
+    const day = (d.getDay() + 6) % 7;
+    d.setDate(d.getDate() - day);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  };
+
+  const displayDates = useMemo(() => {
+    if (rotaView === 'weekly') {
+      const base = startOfWeek(new Date());
+      base.setDate(base.getDate() + weekOffset * 7);
+      return Array.from({ length: 7 }, (_, i) => {
+        const d = new Date(base);
+        d.setDate(base.getDate() + i);
+        return d;
+      });
+    }
+    const base = new Date();
+    base.setDate(1);
+    base.setMonth(base.getMonth() + monthOffset);
+    const daysInMonth = new Date(base.getFullYear(), base.getMonth() + 1, 0).getDate();
+    return Array.from({ length: daysInMonth }, (_, i) => {
+      const d = new Date(base);
+      d.setDate(i + 1);
+      return d;
+    });
+  }, [rotaView, weekOffset, monthOffset]);
+
+  const effectiveRota = rotaPreview || rota;
+
+  const findShift = (userId: number, dateKey: string) => {
+    return effectiveRota.find(s => s.userId === userId && s.date === dateKey);
+  };
+
+  const updateRotaList = (next: RotaShift[]) => {
+    if (rotaPreview) {
+      setRotaPreview(next);
+      return;
+    }
+    setRota(next);
+  };
+
+  const handleCellClick = (staffMember: User, dateKey: string) => {
+    if (!canEditRota) return;
+    const existing = findShift(staffMember.id, dateKey);
+    setEditingCell({ userId: staffMember.id, date: dateKey });
+    setCellStart(existing?.startTime || '09:00');
+    setCellEnd(existing?.endTime || '17:00');
+  };
+
+  const handleSaveCell = () => {
+    if (!editingCell) return;
+    const staffMember = staffForRota.find(u => u.id === editingCell.userId);
+    if (!staffMember) return;
+
+    const existing = findShift(editingCell.userId, editingCell.date);
+    const updatedShift: RotaShift = {
+      id: existing?.id || `ROTA-${Date.now()}`,
+      userId: staffMember.id,
+      username: staffMember.username,
+      fullName: staffMember.fullName,
+      date: editingCell.date,
+      startTime: cellStart,
+      endTime: cellEnd
+    };
+
+    const next = existing
+      ? effectiveRota.map(s => s.id === existing.id ? updatedShift : s)
+      : [...effectiveRota, updatedShift];
+
+    updateRotaList(next);
+    setEditingCell(null);
+  };
+
+  const handleRemoveCell = () => {
+    if (!editingCell) return;
+    const existing = findShift(editingCell.userId, editingCell.date);
+    if (!existing) {
+      setEditingCell(null);
+      return;
+    }
+    const next = effectiveRota.filter(s => s.id !== existing.id);
+    updateRotaList(next);
+    setEditingCell(null);
+  };
+
+  const parseAvailability = (note: string) => {
+    const lower = note.toLowerCase();
+    const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+    const mentioned = days.filter(day => lower.includes(day));
+    const availability = new Set<number>([0, 1, 2, 3, 4, 5, 6]);
+
+    if (mentioned.length && lower.includes('only')) {
+      availability.clear();
+      mentioned.forEach(day => availability.add(days.indexOf(day)));
+    }
+
+    mentioned.forEach(day => {
+      const idx = days.indexOf(day);
+      const slice = lower.slice(Math.max(0, lower.indexOf(day) - 20), lower.indexOf(day) + 20);
+      if (slice.includes('not') || slice.includes('unavailable')) {
+        availability.delete(idx);
+      }
+    });
+
+    return availability;
+  };
+
+  const generateNextWeekRota = () => {
+    const baseWeekStart = startOfWeek(new Date());
+    baseWeekStart.setDate(baseWeekStart.getDate() + 7);
+    const weekDates = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(baseWeekStart);
+      d.setDate(baseWeekStart.getDate() + i);
+      return d;
+    });
+
+    const staffPool = staffForRota;
+    const assignmentCounts = new Map<number, number>();
+    staffPool.forEach(s => assignmentCounts.set(s.id, 0));
+
+    const generated: RotaShift[] = [];
+
+    weekDates.forEach(date => {
+      const dayIndex = (date.getDay() + 6) % 7;
+      const needed = staffNeeded[dayIndex] || 0;
+      if (needed === 0) return;
+
+      const availableStaff = staffPool.filter(s => {
+        const note = availabilityMap.get(s.id) || '';
+        if (!note.trim()) return true;
+        const allowedDays = parseAvailability(note);
+        return allowedDays.has(dayIndex);
+      });
+
+      const ranked = [...availableStaff].sort((a, b) => (assignmentCounts.get(a.id) || 0) - (assignmentCounts.get(b.id) || 0));
+      ranked.slice(0, needed).forEach(staffMember => {
+        assignmentCounts.set(staffMember.id, (assignmentCounts.get(staffMember.id) || 0) + 1);
+        generated.push({
+          id: `ROTA-${staffMember.id}-${toDateKey(date)}`,
+          userId: staffMember.id,
+          username: staffMember.username,
+          fullName: staffMember.fullName,
+          date: toDateKey(date),
+          startTime: '09:00',
+          endTime: '17:00'
+        });
+      });
+    });
+
+    const generatedDates = new Set(generated.map(g => g.date));
+    const hasOverlap = rota.some(r => generatedDates.has(r.date));
+    if (hasOverlap) {
+      setPendingGenerated(generated);
+      setShowOverwriteConfirm(true);
+      return;
+    }
+    setRotaPreview(generated);
+  };
+
+  const applyGeneratedRota = () => {
+    if (!pendingGenerated) return;
+    setRotaPreview(pendingGenerated);
+    setPendingGenerated(null);
+    setShowOverwriteConfirm(false);
+  };
+
+  const savePreviewRota = () => {
+    if (!rotaPreview) return;
+    const previewDates = new Set(rotaPreview.map(r => r.date));
+    const retained = rota.filter(r => !previewDates.has(r.date));
+    setRota([...retained, ...rotaPreview]);
+    setRotaPreview(null);
+    addToast(t('rotaSaved'));
+  };
+
+  const discardPreview = () => {
+    setRotaPreview(null);
+  };
+
   return (
-    <div className="space-y-12 animate-fade-in max-w-full overflow-hidden">
-      <section>
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-          <h3 className="text-xl font-bold font-serif">{t('staff')}</h3>
-          <div className="flex items-center gap-3 w-full sm:w-auto">
-            <div className="relative flex-1 sm:w-64">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-bakery-brown/40" size={16} />
-              <input 
-                type="text"
-                placeholder={t('search')}
-                value={staffSearch}
-                onChange={e => setStaffSearch(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border border-bakery-beige rounded-xl outline-none focus:ring-2 focus:ring-bakery-caramel text-sm"
-              />
-            </div>
-            <button onClick={() => setShowAddModal(true)} className="btn-primary flex items-center justify-center gap-2 text-sm px-6 py-3 rounded-xl active:scale-95 whitespace-nowrap">
-              <Plus size={18} />
-              {t('addStaff')}
+    <div className="space-y-10 animate-fade-in max-w-full overflow-hidden">
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-wrap gap-2 bg-bakery-beige/40 p-2 rounded-2xl">
+          {[
+            { id: 'staff', label: t('staffDetails') },
+            { id: 'shifts', label: t('workShifts') },
+            { id: 'rota', label: t('rota') }
+          ].map(section => (
+            <button
+              key={section.id}
+              onClick={() => setActiveSection(section.id as 'staff' | 'shifts' | 'rota')}
+              className={`px-4 py-2 rounded-xl font-bold text-xs sm:text-sm transition-all whitespace-nowrap ${
+                activeSection === section.id ? 'bg-bakery-brown text-white shadow-sm' : 'text-bakery-brown/60 hover:text-bakery-brown'
+              }`}
+            >
+              {section.label}
             </button>
-          </div>
+          ))}
         </div>
-        <div className="card-bakery overflow-hidden">
-          <div className="overflow-x-auto scrollbar-hide">
-            <table className="w-full text-left text-sm min-w-[600px]">
-              <thead className="bg-bakery-beige/30 text-bakery-brown/40 uppercase text-[10px] font-black tracking-widest">
-                <tr>
-                  <th className="p-4">Name</th>
-                  <th className="p-4">Role</th>
-                  <th className="p-4">Hourly Rate</th>
-                  <th className="p-4">Last Login</th>
-                  <th className="p-4">Total Orders</th>
-                  <th className="p-4 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-bakery-beige">
-                {paginatedUsers.map(u => {
-                  const userLogs = shiftLogs.filter(l => l.username === u.username);
-                  const lastLog = userLogs.length ? new Date(userLogs[userLogs.length - 1].loginTime).toLocaleString() : 'Never';
-                  const totalOrders = userLogs.reduce((acc, l) => acc + l.ordersProcessed, 0);
-                  
-                  return (
+      </div>
+
+      {activeSection === 'staff' && (
+        <section>
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+            <h3 className="text-xl font-bold font-serif">{t('staffDetails')}</h3>
+            <div className="flex items-center gap-3 w-full sm:w-auto">
+              <div className="relative flex-1 sm:w-64">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-bakery-brown/40" size={16} />
+                <input 
+                  type="text"
+                  placeholder={t('search')}
+                  value={staffSearch}
+                  onChange={e => setStaffSearch(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 border border-bakery-beige rounded-xl outline-none focus:ring-2 focus:ring-bakery-caramel text-sm"
+                />
+              </div>
+              <button onClick={() => setShowAddModal(true)} className="btn-primary flex items-center justify-center gap-2 text-sm px-6 py-3 rounded-xl active:scale-95 whitespace-nowrap">
+                <Plus size={18} />
+                {t('addStaff')}
+              </button>
+            </div>
+          </div>
+          <div className="card-bakery overflow-hidden">
+            <div className="overflow-x-auto scrollbar-hide">
+              <table className="w-full text-left text-sm min-w-[600px]">
+                <thead className="bg-bakery-beige/30 text-bakery-brown/40 uppercase text-[10px] font-black tracking-widest">
+                  <tr>
+                    <th className="p-4">{t('name')}</th>
+                    <th className="p-4">{t('username')}</th>
+                    <th className="p-4">{t('role')}</th>
+                    <th className="p-4">{t('hourlyRate')}</th>
+                    <th className="p-4 text-right">{t('actions')}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-bakery-beige">
+                  {paginatedUsers.map(u => (
                     <tr key={u.id} className="hover:bg-bakery-cream/30 transition-colors">
                       <td className="p-4">
                         <p className="font-bold leading-tight whitespace-nowrap">{u.fullName}</p>
-                        <p className="text-[10px] text-bakery-brown/50">@{u.username}</p>
                       </td>
+                      <td className="p-4 text-[10px] text-bakery-brown/50 whitespace-nowrap">@{u.username}</td>
                       <td className="p-4">
                         <span className={`inline-block px-2 py-1 rounded-full text-[10px] font-black uppercase tracking-wider whitespace-nowrap ${
                           u.role === 'owner' ? 'bg-amber-100 text-amber-700' : 
@@ -261,9 +540,7 @@ export const StaffTab = () => {
                           {t(u.role === 'staff' ? 'staffRole' : u.role)}
                         </span>
                       </td>
-                      <td className="p-4 font-bold">{u.hourlyRate ? formatPrice(u.hourlyRate) : '—'}</td>
-                      <td className="p-4 text-bakery-brown/60 whitespace-nowrap">{lastLog}</td>
-                      <td className="p-4 font-black">{totalOrders}</td>
+                      <td className="p-4 font-bold">{u.hourlyRate ? formatPrice(u.hourlyRate) : t('dash')}</td>
                       <td className="p-4 text-right">
                         <div className="flex justify-end gap-1">
                           <button 
@@ -282,161 +559,353 @@ export const StaffTab = () => {
                         </div>
                       </td>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
-        {filteredUsers.length > itemsPerPage && (
-          <Pagination 
-            currentPage={staffPage}
-            totalPages={totalStaffPages}
-            onPageChange={setStaffPage}
-            t={t}
-          />
-        )}
-      </section>
-
-      <section>
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
-          <div className="flex items-center gap-4 w-full md:w-auto">
-            <h3 className="text-xl font-bold font-serif flex items-center gap-2 whitespace-nowrap">
-              <Clock size={20} className="text-bakery-brown" />
-              Work Shifts
-            </h3>
-            <button 
-              onClick={() => setShowAddShiftModal(true)}
-              className="flex-1 md:flex-none btn-primary flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-bold active:scale-95"
-            >
-              <Plus size={16} />
-              Log Shift
-            </button>
-          </div>
-          <div className="flex flex-wrap gap-2 w-full md:w-auto">
-            <select 
-              value={shiftFilter.staff}
-              onChange={e => setShiftFilter({ ...shiftFilter, staff: e.target.value })}
-              className="flex-1 md:flex-none p-2 bg-white border border-bakery-beige rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-bakery-caramel"
-            >
-              <option value="All">All Staff</option>
-              <option value="CurrentStaff">Current Staff</option>
-              <option value="FormerStaff">Former Staff</option>
-              {users.map(u => <option key={u.id} value={u.username}>{u.fullName}</option>)}
-            </select>
-            <input 
-              type="date" 
-              value={shiftFilter.from}
-              onChange={e => setShiftFilter({ ...shiftFilter, from: e.target.value })}
-              className="flex-1 md:flex-none p-2 bg-white border border-bakery-beige rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-bakery-caramel"
+          {filteredUsers.length > itemsPerPage && (
+            <Pagination 
+              currentPage={staffPage}
+              totalPages={totalStaffPages}
+              onPageChange={setStaffPage}
+              t={t}
             />
-            <input 
-              type="date" 
-              value={shiftFilter.to}
-              onChange={e => setShiftFilter({ ...shiftFilter, to: e.target.value })}
-              className="flex-1 md:flex-none p-2 bg-white border border-bakery-beige rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-bakery-caramel"
-            />
-          </div>
-        </div>
+          )}
+        </section>
+      )}
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-          <div className="card-bakery p-4 bg-bakery-beige/20">
-            <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-1">Total Hours</p>
-            <p className="text-lg md:text-xl font-black text-bakery-brown">{totalFilteredHours.toFixed(2)}h</p>
+      {activeSection === 'shifts' && (
+        <section>
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+            <div className="flex items-center gap-4 w-full md:w-auto">
+              <h3 className="text-xl font-bold font-serif flex items-center gap-2 whitespace-nowrap">
+                <Clock size={20} className="text-bakery-brown" />
+                {t('workShifts')}
+              </h3>
+              <button 
+                onClick={() => setShowAddShiftModal(true)}
+                className="flex-1 md:flex-none btn-primary flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-bold active:scale-95"
+              >
+                <Plus size={16} />
+                {t('logShift')}
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-2 w-full md:w-auto">
+              <select 
+                value={shiftFilter.staff}
+                onChange={e => setShiftFilter({ ...shiftFilter, staff: e.target.value })}
+                className="flex-1 md:flex-none p-2 bg-white border border-bakery-beige rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-bakery-caramel"
+              >
+                <option value="All">{t('allStaff')}</option>
+                <option value="CurrentStaff">{t('currentStaff')}</option>
+                <option value="FormerStaff">{t('formerStaff')}</option>
+                {users.map(u => <option key={u.id} value={u.username}>{u.fullName}</option>)}
+              </select>
+              <input 
+                type="date" 
+                value={shiftFilter.from}
+                onChange={e => setShiftFilter({ ...shiftFilter, from: e.target.value })}
+                className="flex-1 md:flex-none p-2 bg-white border border-bakery-beige rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-bakery-caramel"
+              />
+              <input 
+                type="date" 
+                value={shiftFilter.to}
+                onChange={e => setShiftFilter({ ...shiftFilter, to: e.target.value })}
+                className="flex-1 md:flex-none p-2 bg-white border border-bakery-beige rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-bakery-caramel"
+              />
+            </div>
           </div>
-          <div className="card-bakery p-4 bg-bakery-beige/20">
-            <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-1">Total Shifts</p>
-            <p className="text-lg md:text-xl font-black text-bakery-brown">{filteredShifts.length}</p>
-          </div>
-          <div className="card-bakery p-4 bg-bakery-beige/20">
-            <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-1">{t('totalWageCost')}</p>
-            <p className="text-lg md:text-xl font-black text-bakery-brown">{formatPrice(totalWageCost)}</p>
-          </div>
-        </div>
 
-        {hoursPerPerson.length > 0 && shiftFilter.staff === 'All' && (
-          <div className="flex flex-wrap gap-3 mb-6">
-            {hoursPerPerson.map(p => (
-              <div key={p.name} className="px-3 py-2 bg-white border border-bakery-beige rounded-xl shadow-sm flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-bakery-brown text-white flex items-center justify-center text-[10px] font-bold shrink-0">
-                  {p.name.charAt(0)}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <div className="card-bakery p-4 bg-bakery-beige/20">
+              <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-1">{t('totalHours')}</p>
+              <p className="text-lg md:text-xl font-black text-bakery-brown">{totalFilteredHours.toFixed(2)}h</p>
+            </div>
+            <div className="card-bakery p-4 bg-bakery-beige/20">
+              <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-1">{t('totalShifts')}</p>
+              <p className="text-lg md:text-xl font-black text-bakery-brown">{filteredShifts.length}</p>
+            </div>
+            <div className="card-bakery p-4 bg-bakery-beige/20">
+              <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-1">{t('totalWageCost')}</p>
+              <p className="text-lg md:text-xl font-black text-bakery-brown">{formatPrice(totalWageCost)}</p>
+            </div>
+          </div>
+
+          {hoursPerPerson.length > 0 && shiftFilter.staff === 'All' && (
+            <div className="flex flex-wrap gap-3 mb-6">
+              {hoursPerPerson.map(p => (
+                <div key={p.name} className="px-3 py-2 bg-white border border-bakery-beige rounded-xl shadow-sm flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-full bg-bakery-brown text-white flex items-center justify-center text-[10px] font-bold shrink-0">
+                    {p.name.charAt(0)}
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-bold text-bakery-brown/40 uppercase leading-none mb-1 whitespace-nowrap">{p.name}</p>
+                    <p className="text-xs font-black text-bakery-brown">{p.hours.toFixed(2)}h</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-[10px] font-bold text-bakery-brown/40 uppercase leading-none mb-1 whitespace-nowrap">{p.name}</p>
-                  <p className="text-xs font-black text-bakery-brown">{p.hours.toFixed(2)}h</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+              ))}
+            </div>
+          )}
 
-        <div className="card-bakery overflow-hidden">
-          <div className="overflow-x-auto scrollbar-hide">
-            <table className="w-full text-left text-sm min-w-[700px]">
-              <thead className="bg-bakery-beige/30 text-bakery-brown/40 uppercase text-[10px] font-black tracking-widest">
-                <tr>
-                  <th className="p-4">Staff</th>
-                  <th className="p-4">Date</th>
-                  <th className="p-4">Start</th>
-                  <th className="p-4">End</th>
-                  <th className="p-4">Break</th>
-                  <th className="p-4">Total</th>
-                  <th className="p-4">{t('wageCost')}</th>
-                  <th className="p-4 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-bakery-beige">
-                {paginatedShifts.map(s => {
-                  const wage = calculateWage(s.totalHours, s.userId);
-                  return (
-                    <tr key={s.id} className="hover:bg-bakery-cream/30 transition-colors">
-                      <td className="p-4">
-                        <p className="font-bold leading-tight whitespace-nowrap">{s.fullName}</p>
-                        <p className="text-[10px] text-bakery-brown/50">@{s.username}</p>
-                      </td>
-                      <td className="p-4 font-medium whitespace-nowrap">{s.date}</td>
-                      <td className="p-4 whitespace-nowrap">{s.startTime}</td>
-                      <td className="p-4 whitespace-nowrap">{s.endTime}</td>
-                      <td className="p-4 text-bakery-brown/40 whitespace-nowrap">{s.breakMinutes}m</td>
-                      <td className="p-4 font-black text-bakery-caramel whitespace-nowrap">{s.totalHours}h</td>
-                      <td className="p-4 font-bold whitespace-nowrap">{wage > 0 ? formatPrice(wage) : '—'}</td>
-                      <td className="p-4 text-right">
-                        <div className="flex justify-end gap-1">
-                          <button 
-                            onClick={() => setEditShift(s)}
-                            className="p-2 text-bakery-brown hover:bg-bakery-beige rounded-lg transition-colors active:scale-90"
-                          >
-                            <Edit2 size={18} />
-                          </button>
-                          <button 
-                            onClick={() => setShiftDeleteConfirm(s)}
-                            className="p-2 text-rose-400 hover:text-rose-600 transition-colors active:scale-90"
-                          >
-                            <Trash2 size={18} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-                {filteredShifts.length === 0 && (
+          <div className="card-bakery overflow-hidden">
+            <div className="overflow-x-auto scrollbar-hide">
+              <table className="w-full text-left text-sm min-w-[700px]">
+                <thead className="bg-bakery-beige/30 text-bakery-brown/40 uppercase text-[10px] font-black tracking-widest">
                   <tr>
-                    <td colSpan={8} className="p-10 text-center text-bakery-brown/40 italic">No shifts found for these filters.</td>
+                    <th className="p-4">{t('staffMember')}</th>
+                    <th className="p-4">{t('date')}</th>
+                    <th className="p-4">{t('startTime')}</th>
+                    <th className="p-4">{t('endTime')}</th>
+                    <th className="p-4">{t('break')}</th>
+                    <th className="p-4">{t('total')}</th>
+                    <th className="p-4">{t('wageCost')}</th>
+                    <th className="p-4 text-right">{t('actions')}</th>
                   </tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-bakery-beige">
+                  {paginatedShifts.map(s => {
+                    const wage = calculateWage(s.totalHours, s.userId);
+                    return (
+                      <tr key={s.id} className="hover:bg-bakery-cream/30 transition-colors">
+                        <td className="p-4">
+                          <p className="font-bold leading-tight whitespace-nowrap">{s.fullName}</p>
+                          <p className="text-[10px] text-bakery-brown/50">@{s.username}</p>
+                        </td>
+                        <td className="p-4 font-medium whitespace-nowrap">{s.date}</td>
+                        <td className="p-4 whitespace-nowrap">{s.startTime}</td>
+                        <td className="p-4 whitespace-nowrap">{s.endTime}</td>
+                        <td className="p-4 text-bakery-brown/40 whitespace-nowrap">{s.breakMinutes}m</td>
+                        <td className="p-4 font-black text-bakery-caramel whitespace-nowrap">{s.totalHours}h</td>
+                        <td className="p-4 font-bold whitespace-nowrap">{wage > 0 ? formatPrice(wage) : t('dash')}</td>
+                        <td className="p-4 text-right">
+                          <div className="flex justify-end gap-1">
+                            <button 
+                              onClick={() => setEditShift(s)}
+                              className="p-2 text-bakery-brown hover:bg-bakery-beige rounded-lg transition-colors active:scale-90"
+                            >
+                              <Edit2 size={18} />
+                            </button>
+                            <button 
+                              onClick={() => setShiftDeleteConfirm(s)}
+                              className="p-2 text-rose-400 hover:text-rose-600 transition-colors active:scale-90"
+                            >
+                              <Trash2 size={18} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {filteredShifts.length === 0 && (
+                    <tr>
+                      <td colSpan={8} className="p-10 text-center text-bakery-brown/40 italic">{t('noShiftsFound')}</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
-        {filteredShifts.length > itemsPerPage && (
-          <Pagination 
-            currentPage={shiftPage}
-            totalPages={totalShiftPages}
-            onPageChange={setShiftPage}
-            t={t}
-          />
-        )}
-      </section>
+          {filteredShifts.length > itemsPerPage && (
+            <Pagination 
+              currentPage={shiftPage}
+              totalPages={totalShiftPages}
+              onPageChange={setShiftPage}
+              t={t}
+            />
+          )}
+        </section>
+      )}
+
+      {activeSection === 'rota' && (
+        <section className="space-y-6">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div>
+              <h3 className="text-xl font-bold font-serif">{t('rota')}</h3>
+              <p className="text-xs text-bakery-brown/60">{t('rotaHint')}</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1 bg-bakery-beige/40 p-1 rounded-2xl">
+                <button
+                  onClick={() => setRotaView('weekly')}
+                  className={`h-9 px-4 rounded-xl text-xs font-bold ${rotaView === 'weekly' ? 'bg-bakery-brown text-white' : 'text-bakery-brown/60'}`}
+                >
+                  {t('weekly')}
+                </button>
+                <button
+                  onClick={() => setRotaView('monthly')}
+                  className={`h-9 px-4 rounded-xl text-xs font-bold ${rotaView === 'monthly' ? 'bg-bakery-brown text-white' : 'text-bakery-brown/60'}`}
+                >
+                  {t('monthly')}
+                </button>
+              </div>
+              <button
+                onClick={() => rotaView === 'weekly' ? setWeekOffset(weekOffset - 1) : setMonthOffset(monthOffset - 1)}
+                className="h-9 w-9 rounded-xl bg-white border border-bakery-beige text-bakery-brown hover:bg-bakery-beige/40 flex items-center justify-center"
+              >
+                <ChevronLeft size={16} />
+              </button>
+              <button
+                onClick={() => rotaView === 'weekly' ? setWeekOffset(weekOffset + 1) : setMonthOffset(monthOffset + 1)}
+                className="h-9 w-9 rounded-xl bg-white border border-bakery-beige text-bakery-brown hover:bg-bakery-beige/40 flex items-center justify-center"
+              >
+                <ChevronRight size={16} />
+              </button>
+              {canEditRota && (
+                <button
+                  onClick={generateNextWeekRota}
+                  className="btn-primary flex items-center gap-2 h-9 px-4 rounded-xl text-xs font-bold"
+                >
+                  <Sparkles size={16} />
+                  {t('autoGenerateRota')}
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="card-bakery p-4 sm:p-6 space-y-4">
+            <div className="flex items-center gap-2">
+              <Calendar size={18} className="text-bakery-brown" />
+              <h4 className="font-bold">{t('availabilityExceptions')}</h4>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {staffForRota.map(staffMember => (
+                <div key={staffMember.id} className="space-y-2">
+                  <p className="text-xs font-bold text-bakery-brown/60">{staffMember.fullName}</p>
+                  {canEditRota ? (
+                    <textarea
+                      className="w-full p-3 border border-bakery-beige rounded-xl outline-none focus:ring-2 focus:ring-bakery-caramel text-sm min-h-[70px]"
+                      placeholder={t('availabilityPlaceholder')}
+                      value={availabilityMap.get(staffMember.id) || ''}
+                      onChange={e => setAvailabilityNote(staffMember.id, e.target.value)}
+                    />
+                  ) : (
+                    <div className="p-3 bg-bakery-beige/30 rounded-xl text-sm text-bakery-brown/70 min-h-[70px]">
+                      {availabilityMap.get(staffMember.id) || t('noAvailability')}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {canEditRota && (
+            <div className="card-bakery p-4 sm:p-6 space-y-4">
+              <h4 className="text-sm font-black uppercase tracking-widest text-bakery-brown/40">{t('staffNeededPerDay')}</h4>
+              <div className="grid grid-cols-2 md:grid-cols-7 gap-3">
+                {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((label, idx) => (
+                  <div key={label} className="space-y-2">
+                    <p className="text-xs font-bold text-bakery-brown/60">{t(`day${label}`)}</p>
+                    <input
+                      type="number"
+                      min={0}
+                      className="w-full p-2 border border-bakery-beige rounded-xl text-center font-bold"
+                      value={staffNeeded[idx] ?? 0}
+                      onChange={e => setStaffNeeded(prev => ({ ...prev, [idx]: Math.max(0, parseInt(e.target.value) || 0) }))}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {rotaPreview && (
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-4 bg-emerald-50 border border-emerald-100 rounded-2xl">
+              <div>
+                <p className="font-bold text-emerald-700">{t('previewingRota')}</p>
+                <p className="text-xs text-emerald-600/70">{t('previewHint')}</p>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={savePreviewRota} className="btn-primary flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold">
+                  <Save size={16} />
+                  {t('saveRota')}
+                </button>
+                <button onClick={discardPreview} className="px-4 py-2 rounded-xl text-xs font-bold border border-emerald-200 text-emerald-700 hover:bg-emerald-50">
+                  <X size={16} className="inline mr-1" />
+                  {t('discardPreview')}
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="card-bakery overflow-hidden">
+            <div className="overflow-x-auto scrollbar-hide">
+              <table className="w-full text-left text-xs min-w-[700px]">
+                <thead className="bg-bakery-beige/30 text-bakery-brown/50 uppercase text-[10px] font-black tracking-widest">
+                  <tr>
+                    <th className="p-3 sticky left-0 bg-bakery-beige/30">{t('staffMember')}</th>
+                    {displayDates.map(date => (
+                      <th key={toDateKey(date)} className="p-3 text-center whitespace-nowrap">
+                        <div className="font-black">{date.toLocaleDateString(locale, { day: '2-digit' })}</div>
+                        <div className="text-[10px] text-bakery-brown/40">{date.toLocaleDateString(locale, { weekday: 'short' })}</div>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-bakery-beige">
+                  {staffForRota.map(staffMember => (
+                    <tr key={staffMember.id}>
+                      <td className="p-3 font-bold sticky left-0 bg-white">{staffMember.fullName}</td>
+                      {displayDates.map(date => {
+                        const dateKey = toDateKey(date);
+                        const shift = findShift(staffMember.id, dateKey);
+                        return (
+                          <td key={`${staffMember.id}-${dateKey}`} className="p-2 text-center">
+                            <div
+                              onClick={() => handleCellClick(staffMember, dateKey)}
+                              className={`relative cursor-pointer rounded-xl border px-2 py-3 text-[10px] font-bold transition-all ${
+                                shift ? 'border-bakery-brown bg-bakery-beige/40 text-bakery-brown' : 'border-bakery-beige text-bakery-brown/40 hover:bg-bakery-cream/40'
+                              } ${!canEditRota ? 'cursor-default' : ''}`}
+                            >
+                              {shift ? (
+                                <div>
+                                  <div>{t('scheduled')}</div>
+                                  {shift.startTime && shift.endTime && (
+                                    <div className="text-[9px] text-bakery-brown/60">{shift.startTime} - {shift.endTime}</div>
+                                  )}
+                                </div>
+                              ) : (
+                                <div>{t('notScheduled')}</div>
+                              )}
+
+                              {editingCell && editingCell.userId === staffMember.id && editingCell.date === dateKey && (
+                                <div className="absolute z-20 left-1/2 top-full mt-2 -translate-x-1/2 w-48 bg-white border border-bakery-beige rounded-xl shadow-xl p-3 space-y-2">
+                                  <div>
+                                    <label className="block text-[10px] font-black uppercase text-bakery-brown/40 mb-1">{t('startTime')}</label>
+                                    <input
+                                      type="time"
+                                      className="w-full p-2 border border-bakery-beige rounded-lg text-xs"
+                                      value={cellStart}
+                                      onChange={e => setCellStart(e.target.value)}
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="block text-[10px] font-black uppercase text-bakery-brown/40 mb-1">{t('endTime')}</label>
+                                    <input
+                                      type="time"
+                                      className="w-full p-2 border border-bakery-beige rounded-lg text-xs"
+                                      value={cellEnd}
+                                      onChange={e => setCellEnd(e.target.value)}
+                                    />
+                                  </div>
+                                  <div className="flex gap-2 pt-2">
+                                    <button onClick={handleSaveCell} className="flex-1 bg-bakery-brown text-white rounded-lg py-2 text-[10px] font-bold">{t('save')}</button>
+                                    <button onClick={handleRemoveCell} className="flex-1 border border-bakery-beige rounded-lg py-2 text-[10px] font-bold text-bakery-brown/60">{t('remove')}</button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      )}
 
       <section className="p-6 md:p-8 bg-rose-50 rounded-3xl border border-rose-100 flex flex-col md:flex-row items-center justify-between gap-6">
         <div className="flex items-start gap-4">
@@ -444,9 +913,9 @@ export const StaffTab = () => {
             <ShieldAlert size={32} />
           </div>
           <div>
-            <h3 className="text-xl font-black font-serif text-rose-700 mb-1">Danger Zone</h3>
+            <h3 className="text-xl font-black font-serif text-rose-700 mb-1">{t('dangerZone')}</h3>
             <p className="text-sm text-rose-600/70 max-w-md">
-              Resetting will delete all sales, stock changes, and custom staff members. This action cannot be undone.
+              {t('resetWarning')}
             </p>
           </div>
         </div>
@@ -462,12 +931,16 @@ export const StaffTab = () => {
         <Modal title={t('addStaff')} onClose={() => setShowAddModal(false)}>
           <form onSubmit={handleAddStaff} className="space-y-6">
             <div>
-              <label className="block text-sm font-bold mb-2">Full Name</label>
-              <input name="fullName" className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel" placeholder="e.g. John Doe" required />
+              <label className="block text-sm font-bold mb-2">{t('fullName')}</label>
+              <input name="fullName" className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel" placeholder={t('fullNamePlaceholder')} required />
             </div>
             <div>
               <label className="block text-sm font-bold mb-2">{t('username')}</label>
-              <input name="username" className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel" placeholder="e.g. jdoe" required />
+              <input name="username" className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel" placeholder={t('usernamePlaceholder')} required />
+            </div>
+            <div>
+              <label className="block text-sm font-bold mb-2">{t('email')}</label>
+              <input name="email" type="email" className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel" placeholder={t('emailPlaceholder')} />
             </div>
             <div>
               <label className="block text-sm font-bold mb-2">{t('password')}</label>
@@ -477,9 +950,9 @@ export const StaffTab = () => {
               <div>
                 <label className="block text-sm font-bold mb-2">{t('role')}</label>
                 <select name="role" className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel">
-                  <option value="staff">Staff</option>
-                  <option value="manager">Manager</option>
-                  <option value="owner">Owner</option>
+                  <option value="staff">{t('staffRole')}</option>
+                  <option value="manager">{t('manager')}</option>
+                  <option value="owner">{t('owner')}</option>
                 </select>
               </div>
               <div>
@@ -495,15 +968,25 @@ export const StaffTab = () => {
       )}
 
       {editStaff && (
-        <Modal title="Edit Staff Member" onClose={() => setEditStaff(null)}>
+        <Modal title={t('editStaffMember')} onClose={() => setEditStaff(null)}>
           <form onSubmit={handleEditStaffSave} className="space-y-6">
             <div>
-              <label className="block text-sm font-bold mb-2">Full Name</label>
+              <label className="block text-sm font-bold mb-2">{t('fullName')}</label>
               <input 
                 className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel" 
                 value={editStaff.fullName}
                 onChange={e => setEditStaff({ ...editStaff, fullName: e.target.value })}
                 required 
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-bold mb-2">{t('email')}</label>
+              <input
+                type="email"
+                className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel"
+                value={editStaff.email || ''}
+                onChange={e => setEditStaff({ ...editStaff, email: e.target.value })}
+                placeholder={t('emailPlaceholder')}
               />
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -514,9 +997,9 @@ export const StaffTab = () => {
                   value={editStaff.role}
                   onChange={e => setEditStaff({ ...editStaff, role: e.target.value as Role })}
                 >
-                  <option value="staff">Staff</option>
-                  <option value="manager">Manager</option>
-                  <option value="owner">Owner</option>
+                  <option value="staff">{t('staffRole')}</option>
+                  <option value="manager">{t('manager')}</option>
+                  <option value="owner">{t('owner')}</option>
                 </select>
               </div>
               <div>
@@ -530,6 +1013,33 @@ export const StaffTab = () => {
                 />
               </div>
             </div>
+            {editStaff && canResetPassword(user, editStaff) && (
+              <div className="space-y-3 border-t border-bakery-beige pt-4">
+                <p className="text-xs font-black uppercase tracking-widest text-bakery-brown/40">{t('resetPassword')}</p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-bold mb-2">{t('newPassword')}</label>
+                    <input
+                      type="password"
+                      className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel"
+                      value={resetPassword}
+                      onChange={e => setResetPassword(e.target.value)}
+                      placeholder={t('newPasswordPlaceholder')}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold mb-2">{t('confirmPassword')}</label>
+                    <input
+                      type="password"
+                      className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel"
+                      value={resetPasswordConfirm}
+                      onChange={e => setResetPasswordConfirm(e.target.value)}
+                      placeholder={t('confirmPasswordPlaceholder')}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
             <button type="submit" className="btn-primary w-full p-4 rounded-2xl font-bold text-lg">
               {t('save')}
             </button>
@@ -538,7 +1048,7 @@ export const StaffTab = () => {
       )}
 
       {editShift && (
-        <Modal title="Edit Work Shift" onClose={() => setEditShift(null)}>
+        <Modal title={t('editWorkShift')} onClose={() => setEditShift(null)}>
           <form onSubmit={handleEditShiftSave} className="space-y-6">
             <div className="space-y-4">
               <div>
@@ -584,7 +1094,7 @@ export const StaffTab = () => {
                 />
               </div>
               <div className="bg-bakery-accent/20 p-4 rounded-2xl border border-bakery-accent/30 text-center">
-                <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-1">Wage Cost</p>
+                <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-1">{t('wageCost')}</p>
                 <p className="text-2xl font-black text-bakery-brown">
                   {formatPrice(calculateWage(editShift.totalHours, editShift.userId))}
                 </p>
@@ -598,18 +1108,18 @@ export const StaffTab = () => {
       )}
 
       {showAddShiftModal && (
-        <Modal title="Log Work Shift" onClose={() => setShowAddShiftModal(false)}>
+        <Modal title={t('logWorkShift')} onClose={() => setShowAddShiftModal(false)}>
           <form onSubmit={handleAddShift} className="space-y-6">
             <div className="space-y-4">
               <div>
-                <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">Staff Member</label>
+                <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('staffMember')}</label>
                 <select 
                   className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel font-bold"
                   value={shiftFormData.userId}
                   onChange={e => setShiftFormData({ ...shiftFormData, userId: e.target.value })}
                   required
                 >
-                  <option value="">Select Staff...</option>
+                  <option value="">{t('selectStaff')}</option>
                   {users.map(u => <option key={u.id} value={u.id}>{u.fullName} (@{u.username})</option>)}
                 </select>
               </div>
@@ -660,7 +1170,7 @@ export const StaffTab = () => {
                   />
                 </div>
                 <div className="bg-bakery-accent/20 p-4 rounded-2xl border border-bakery-accent/30 text-center">
-                  <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-1">Wage Cost</p>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-1">{t('wageCost')}</p>
                   <p className="text-2xl font-black text-bakery-brown">{formatPrice(calculatedWage)}</p>
                 </div>
               </div>
@@ -669,7 +1179,7 @@ export const StaffTab = () => {
                 <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('notes')}</label>
                 <textarea 
                   className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel min-h-[100px] font-medium"
-                  placeholder="Optional notes about the shift..."
+                  placeholder={t('notesPlaceholder')}
                   value={shiftFormData.notes}
                   onChange={e => setShiftFormData({ ...shiftFormData, notes: e.target.value })}
                 ></textarea>
@@ -687,7 +1197,7 @@ export const StaffTab = () => {
         <ConfirmDialog 
           isOpen={showResetConfirm}
           title={t('resetData')} 
-          message="This will permanently delete all your data and restore defaults. Are you absolutely sure?"
+          message={t('resetConfirmMessage')}
           onConfirm={resetAllData}
           onClose={() => setShowResetConfirm(false)}
         />
@@ -696,8 +1206,8 @@ export const StaffTab = () => {
       {deleteConfirm && (
         <ConfirmDialog 
           isOpen={!!deleteConfirm}
-          title="Delete Staff Member"
-          message={`Are you sure you want to delete ${deleteConfirm.fullName}? This action cannot be undone.`}
+          title={t('deleteStaffMember')}
+          message={t('deleteStaffConfirm').replace('{name}', deleteConfirm.fullName)}
           onConfirm={handleDelete}
           onClose={() => setDeleteConfirm(null)}
         />
@@ -706,10 +1216,20 @@ export const StaffTab = () => {
       {shiftDeleteConfirm && (
         <ConfirmDialog 
           isOpen={!!shiftDeleteConfirm}
-          title="Delete Shift"
-          message={`Are you sure you want to delete the shift for ${shiftDeleteConfirm.fullName} on ${shiftDeleteConfirm.date}?`}
+          title={t('deleteShift')}
+          message={t('deleteShiftConfirm').replace('{name}', shiftDeleteConfirm.fullName).replace('{date}', shiftDeleteConfirm.date)}
           onConfirm={handleDeleteShift}
           onClose={() => setShiftDeleteConfirm(null)}
+        />
+      )}
+
+      {showOverwriteConfirm && (
+        <ConfirmDialog
+          isOpen={showOverwriteConfirm}
+          title={t('overwriteRotaTitle')}
+          message={t('overwriteRotaMessage')}
+          onConfirm={applyGeneratedRota}
+          onClose={() => { setShowOverwriteConfirm(false); setPendingGenerated(null); }}
         />
       )}
     </div>

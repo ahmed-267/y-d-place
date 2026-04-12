@@ -6,6 +6,7 @@ import { Modal } from './Modal';
 import { ConfirmDialog } from './ConfirmDialog';
 import { Pagination } from './Pagination';
 import { ErrorBoundary } from './ErrorBoundary';
+import { toSearchValue } from '../utils/search';
 
 export const StockTab = () => {
   return (
@@ -25,7 +26,8 @@ const StockTabContent = () => {
     setPreparedStock,
     categories = [], 
     t, 
-    tp, 
+    tp,
+    tc,
     addToast 
   } = useApp();
   const [restockItem, setRestockItem] = useState<{ id: number; name: string; type: 'ingredient' | 'prepped' } | null>(null);
@@ -54,13 +56,33 @@ const StockTabContent = () => {
   const [deleteStockConfirm, setDeleteStockConfirm] = useState<{ id: number; name: string; type: 'ingredient' | 'prepped' } | null>(null);
   const itemsPerPage = 10;
 
+  const ingredientCategoryMap = useMemo(() => {
+    const map: Record<number, Set<string>> = {};
+    products.forEach(product => {
+      product.ingredientLinks?.forEach(link => {
+        if (!map[link.ingredientId]) map[link.ingredientId] = new Set();
+        map[link.ingredientId].add(product.category);
+      });
+    });
+    return map;
+  }, [products]);
+
   const filteredPrepped = useMemo(() => {
-    return preparedStock.filter(p => p.name.toLowerCase().includes(preppedSearch.toLowerCase()));
+    const query = preppedSearch.trim().toLowerCase();
+    if (!query) return preparedStock;
+    return preparedStock.filter(p => toSearchValue(p?.name).includes(query));
   }, [preparedStock, preppedSearch]);
 
   const filteredIngredients = useMemo(() => {
-    return ingredients.filter(i => i.name.toLowerCase().includes(ingredientSearch.toLowerCase()));
-  }, [ingredients, ingredientSearch]);
+    const query = ingredientSearch.trim().toLowerCase();
+    if (!query) return ingredients;
+    return ingredients.filter(i => {
+      const nameMatch = toSearchValue(i?.name).includes(query);
+      const categories = ingredientCategoryMap[i?.id || 0] ? Array.from(ingredientCategoryMap[i.id]).join(' ') : '';
+      const categoryMatch = toSearchValue(categories).includes(query);
+      return nameMatch || categoryMatch;
+    });
+  }, [ingredients, ingredientSearch, ingredientCategoryMap]);
 
   const paginatedPrepped = useMemo(() => {
     const start = (preppedPage - 1) * itemsPerPage;
@@ -88,7 +110,7 @@ const StockTabContent = () => {
       lowThreshold: parseFloat(newIngredient.lowThreshold) || 2
     };
     setIngredients([...ingredients, ingredient]);
-    addToast(`${newIngredient.name} added to ingredients!`);
+    addToast(t('ingredientAdded').replace('{name}', newIngredient.name));
     setShowAddIngredient(false);
     setNewIngredient({ name: '', unit: 'kg', quantity: '', lowThreshold: '2' });
   };
@@ -102,7 +124,7 @@ const StockTabContent = () => {
       lowThreshold: parseFloat(newPrepped.lowThreshold) || 5
     };
     setPreparedStock([...preparedStock, prepped]);
-    addToast(`${newPrepped.name} added to prepped stock!`);
+    addToast(t('preppedAdded').replace('{name}', newPrepped.name));
     setShowAddPrepped(false);
     setNewPrepped({ name: '', portions: '', lowThreshold: '5' });
   };
@@ -123,7 +145,7 @@ const StockTabContent = () => {
       setPreparedStock(preparedStock.map(p => p.id === restockItem.id ? { ...p, portions: p.portions + amount } : p));
     }
 
-    addToast(`${restockItem.name} restocked!`);
+    addToast(t('restocked').replace('{name}', restockItem.name));
     setRestockItem(null);
     setRestockAmount('');
   };
@@ -180,7 +202,7 @@ const StockTabContent = () => {
     } else {
       setPreparedStock(preparedStock.filter(p => p.id !== deleteStockConfirm.id));
     }
-    addToast(`${deleteStockConfirm.name} deleted`, "info");
+    addToast(t('stockItemDeleted').replace('{name}', deleteStockConfirm.name), "info");
     setDeleteStockConfirm(null);
   };
 
@@ -225,14 +247,14 @@ const StockTabContent = () => {
             className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-3 bg-bakery-accent text-bakery-brown rounded-xl font-bold hover:bg-bakery-brown hover:text-white transition-all active:scale-95 text-xs md:text-sm"
           >
             <Plus size={18} />
-            Add Prepped Item
+            {t('addPrepped')}
           </button>
           <button 
             onClick={() => setShowAddIngredient(true)}
             className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-3 bg-bakery-brown text-white rounded-xl font-bold hover:bg-bakery-brown/90 transition-all active:scale-95 text-xs md:text-sm"
           >
             <Plus size={18} />
-            Add Raw Ingredient
+            {t('addIngredient')}
           </button>
         </div>
       </div>
@@ -241,11 +263,9 @@ const StockTabContent = () => {
         <div className="p-4 bg-rose-50 border border-rose-100 rounded-2xl flex items-start gap-3 text-rose-700">
           <AlertCircle className="shrink-0 mt-0.5" size={20} />
           <div>
-            <p className="font-bold text-[10px] md:text-sm mb-1 uppercase tracking-wider">{t('lowStock')} Alert</p>
+            <p className="font-bold text-[10px] md:text-sm mb-1 uppercase tracking-wider">{t('lowStockAlert')}</p>
             <p className="text-xs md:text-sm opacity-80">
-              The following items need attention: {
-                [...lowStockPrepped.map(p => p.name), ...lowStockIngredients.map(i => i.name)].join(', ')
-              }
+              {t('lowStockItems').replace('{items}', [...lowStockPrepped.map(p => p.name), ...lowStockIngredients.map(i => i.name)].join(', '))}
             </p>
           </div>
         </div>
@@ -255,7 +275,7 @@ const StockTabContent = () => {
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-4">
           <h3 className="text-xl font-bold font-serif flex items-center gap-2">
             <span className="text-2xl">📦</span>
-            Prepped Stock
+            {t('preppedStock')}
           </h3>
           <div className="flex items-center gap-4 w-full sm:w-auto">
             <div className="relative flex-1 sm:flex-none">
@@ -268,7 +288,7 @@ const StockTabContent = () => {
                 className="w-full sm:w-48 p-2 pl-9 bg-white border border-bakery-beige rounded-xl outline-none text-xs"
               />
             </div>
-            <span className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 whitespace-nowrap">Auto-deducted</span>
+            <span className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 whitespace-nowrap">{t('autoDeducted')}</span>
           </div>
         </div>
         <div className="card-bakery overflow-hidden">
@@ -276,12 +296,12 @@ const StockTabContent = () => {
             <table className="w-full text-left text-sm min-w-[600px]">
               <thead className="bg-bakery-beige/30 text-bakery-brown/40 uppercase text-[10px] font-black tracking-widest">
                 <tr>
-                  <th className="p-4">Prepped Item</th>
-                  <th className="p-4">Portions</th>
-                  <th className="p-4">Threshold</th>
-                  <th className="p-4">Linked Menu Items</th>
-                  <th className="p-4">Status</th>
-                  <th className="p-4 text-right">Actions</th>
+                  <th className="p-4">{t('preppedItem')}</th>
+                  <th className="p-4">{t('portions')}</th>
+                  <th className="p-4">{t('threshold')}</th>
+                  <th className="p-4">{t('linkedMenuItems')}</th>
+                  <th className="p-4">{t('status')}</th>
+                  <th className="p-4 text-right">{t('actions')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-bakery-beige">
@@ -305,7 +325,7 @@ const StockTabContent = () => {
                         ))}
                         {products.filter(prod => 
                           (prod.preparedStockLinks || []).some(link => link.preparedStockId === p.id)
-                        ).length === 0 && <span className="text-[10px] text-bakery-brown/30 italic">No links</span>}
+                        ).length === 0 && <span className="text-[10px] text-bakery-brown/30 italic">{t('noLinks')}</span>}
                       </div>
                     </td>
                     <td className="p-4">
@@ -314,7 +334,7 @@ const StockTabContent = () => {
                         p.portions <= p.lowThreshold ? 'bg-orange-500 text-white' : 
                         'bg-emerald-500 text-white'
                       }`}>
-                        {p.portions <= 0 ? t('outOfStock') : p.portions <= p.lowThreshold ? t('lowStock') : 'OK'}
+                        {p.portions <= 0 ? t('outOfStock') : p.portions <= p.lowThreshold ? t('lowStock') : t('ok')}
                       </span>
                     </td>
                     <td className="p-4 text-right">
@@ -322,7 +342,7 @@ const StockTabContent = () => {
                         <button 
                           onClick={() => setRestockItem({ id: p.id, name: p.name, type: 'prepped' })}
                           className="p-2 text-bakery-brown hover:bg-bakery-beige rounded-lg transition-all active:scale-90"
-                          title="Restock"
+                          title={t('restock')}
                         >
                           <Plus size={18} />
                         </button>
@@ -360,7 +380,7 @@ const StockTabContent = () => {
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-4">
           <h3 className="text-xl font-bold font-serif flex items-center gap-2">
             <span className="text-2xl">🥣</span>
-            Raw Ingredients
+            {t('rawIngredients')}
           </h3>
           <div className="flex items-center gap-4 w-full sm:w-auto">
             <div className="relative flex-1 sm:flex-none">
@@ -373,7 +393,7 @@ const StockTabContent = () => {
                 className="w-full sm:w-48 p-2 pl-9 bg-white border border-bakery-beige rounded-xl outline-none text-xs"
               />
             </div>
-            <span className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 whitespace-nowrap">Manual Only</span>
+            <span className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 whitespace-nowrap">{t('manualOnly')}</span>
           </div>
         </div>
         <div className="card-bakery overflow-hidden">
@@ -381,12 +401,12 @@ const StockTabContent = () => {
             <table className="w-full text-left text-sm min-w-[600px]">
               <thead className="bg-bakery-beige/30 text-bakery-brown/40 uppercase text-[10px] font-black tracking-widest">
                 <tr>
-                  <th className="p-4">Ingredient</th>
-                  <th className="p-4">Stock</th>
-                  <th className="p-4">Unit</th>
-                  <th className="p-4">Threshold</th>
-                  <th className="p-4">Status</th>
-                  <th className="p-4 text-right">Actions</th>
+                  <th className="p-4">{t('ingredient')}</th>
+                  <th className="p-4">{t('stockLevel')}</th>
+                  <th className="p-4">{t('unit')}</th>
+                  <th className="p-4">{t('threshold')}</th>
+                  <th className="p-4">{t('status')}</th>
+                  <th className="p-4 text-right">{t('actions')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-bakery-beige">
@@ -406,7 +426,7 @@ const StockTabContent = () => {
                         i.qty <= i.lowThreshold ? 'bg-orange-500 text-white' : 
                         'bg-emerald-500 text-white'
                       }`}>
-                        {i.qty <= 0 ? t('outOfStock') : i.qty <= i.lowThreshold ? t('lowStock') : 'OK'}
+                        {i.qty <= 0 ? t('outOfStock') : i.qty <= i.lowThreshold ? t('lowStock') : t('ok')}
                       </span>
                     </td>
                     <td className="p-4 text-right">
@@ -414,7 +434,7 @@ const StockTabContent = () => {
                         <button 
                           onClick={() => setRestockItem({ id: i.id, name: i.name, type: 'ingredient' })}
                           className="p-2 text-bakery-brown hover:bg-bakery-beige rounded-lg transition-all active:scale-90"
-                          title="Restock"
+                          title={t('restock')}
                         >
                           <Plus size={18} />
                         </button>
@@ -449,10 +469,10 @@ const StockTabContent = () => {
       </section>
 
       {editStockItem && (
-        <Modal title={`Edit ${editStockItem.type === 'ingredient' ? 'Ingredient' : 'Prepped Item'}`} onClose={() => setEditStockItem(null)}>
+        <Modal title={t('editStockItem')} onClose={() => setEditStockItem(null)}>
           <form onSubmit={handleEditSave} className="space-y-4">
             <div>
-              <label className="block text-xs font-bold uppercase mb-1">Name</label>
+              <label className="block text-xs font-bold uppercase mb-1">{t('name')}</label>
               <input 
                 type="text" 
                 className="w-full p-3 border rounded-xl" 
@@ -464,7 +484,7 @@ const StockTabContent = () => {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-bold uppercase mb-1">
-                  {editStockItem.type === 'ingredient' ? 'Quantity' : 'Portions'}
+                  {editStockItem.type === 'ingredient' ? t('currentQuantity') : t('currentPortions')}
                 </label>
                 <input 
                   type="number" 
@@ -476,7 +496,7 @@ const StockTabContent = () => {
                 />
               </div>
               <div>
-                <label className="block text-xs font-bold uppercase mb-1">Low Threshold</label>
+                <label className="block text-xs font-bold uppercase mb-1">{t('lowThreshold')}</label>
                 <input 
                   type="number" 
                   step="0.1"
@@ -489,7 +509,7 @@ const StockTabContent = () => {
             </div>
             {editStockItem.type === 'ingredient' && (
               <div>
-                <label className="block text-xs font-bold uppercase mb-1">Unit</label>
+                <label className="block text-xs font-bold uppercase mb-1">{t('unit')}</label>
                 <input 
                   type="text" 
                   className="w-full p-3 border rounded-xl" 
@@ -509,8 +529,8 @@ const StockTabContent = () => {
       {deleteStockConfirm && (
         <ConfirmDialog 
           isOpen={!!deleteStockConfirm}
-          title={`Delete ${deleteStockConfirm.type === 'ingredient' ? 'Ingredient' : 'Prepped Item'}`}
-          message={`Are you sure you want to delete ${deleteStockConfirm.name}? This action cannot be undone.`}
+          title={t('confirmDeleteTitle')}
+          message={t('confirmDeleteMsg').replace('{name}', deleteStockConfirm.name)}
           onConfirm={handleDeleteStock}
           onClose={() => setDeleteStockConfirm(null)}
         />
@@ -520,7 +540,7 @@ const StockTabContent = () => {
         <Modal title={`${t('restock')}: ${restockItem.name}`} onClose={() => setRestockItem(null)}>
           <form onSubmit={handleRestock} className="space-y-6">
             <div>
-              <label className="block text-sm font-bold mb-2">Amount to add</label>
+              <label className="block text-sm font-bold mb-2">{t('amountToAdd')}</label>
               <input 
                 type="number" 
                 step="0.1"
@@ -532,21 +552,21 @@ const StockTabContent = () => {
               />
             </div>
             <button type="submit" className="btn-primary w-full p-4 rounded-2xl font-bold text-lg">
-              {t('save')}
+              {t('restockNow')}
             </button>
           </form>
         </Modal>
       )}
 
       {showAddPrepped && (
-        <Modal title="Add New Prepped Stock" onClose={() => setShowAddPrepped(false)}>
+        <Modal title={t('addNewPreppedStock')} onClose={() => setShowAddPrepped(false)}>
           <form onSubmit={handleAddPrepped} className="space-y-4">
             <div>
-              <label className="block text-xs font-bold uppercase mb-1">Item Name</label>
+              <label className="block text-xs font-bold uppercase mb-1">{t('itemName')}</label>
               <input 
                 type="text" 
                 className="w-full p-3 border rounded-xl" 
-                placeholder="e.g. Waffle Batter"
+                placeholder={t('exampleWaffleBatter')}
                 value={newPrepped.name}
                 onChange={e => setNewPrepped({ ...newPrepped, name: e.target.value })}
                 required 
@@ -554,7 +574,7 @@ const StockTabContent = () => {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-bold uppercase mb-1">Initial Portions</label>
+                <label className="block text-xs font-bold uppercase mb-1">{t('initialPortions')}</label>
                 <input 
                   type="number" 
                   className="w-full p-3 border rounded-xl" 
@@ -564,7 +584,7 @@ const StockTabContent = () => {
                 />
               </div>
               <div>
-                <label className="block text-xs font-bold uppercase mb-1">Low Threshold</label>
+                <label className="block text-xs font-bold uppercase mb-1">{t('lowThreshold')}</label>
                 <input 
                   type="number" 
                   className="w-full p-3 border rounded-xl" 
@@ -575,17 +595,17 @@ const StockTabContent = () => {
               </div>
             </div>
             <button type="submit" className="btn-primary w-full p-4 rounded-2xl font-bold">
-              Add Prepped Item
+              {t('addPrepped')}
             </button>
           </form>
         </Modal>
       )}
 
       {showAddIngredient && (
-        <Modal title="Add New Raw Ingredient" onClose={() => setShowAddIngredient(false)}>
+        <Modal title={t('addNewIngredient')} onClose={() => setShowAddIngredient(false)}>
           <form onSubmit={handleAddIngredient} className="space-y-4">
             <div>
-              <label className="block text-xs font-bold uppercase mb-1">Ingredient Name</label>
+              <label className="block text-xs font-bold uppercase mb-1">{t('ingredientName')}</label>
               <input 
                 type="text" 
                 className="w-full p-3 border rounded-xl" 
@@ -596,18 +616,18 @@ const StockTabContent = () => {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-bold uppercase mb-1">Unit</label>
+                <label className="block text-xs font-bold uppercase mb-1">{t('unit')}</label>
                 <input 
                   type="text" 
                   className="w-full p-3 border rounded-xl" 
-                  placeholder="e.g. kg, l, pcs"
+                  placeholder={t('exampleUnit')}
                   value={newIngredient.unit}
                   onChange={e => setNewIngredient({ ...newIngredient, unit: e.target.value })}
                   required 
                 />
               </div>
               <div>
-                <label className="block text-xs font-bold uppercase mb-1">Current Quantity</label>
+                <label className="block text-xs font-bold uppercase mb-1">{t('currentQuantity')}</label>
                 <input 
                   type="number" 
                   step="0.1"
@@ -619,7 +639,7 @@ const StockTabContent = () => {
               </div>
             </div>
             <div>
-              <label className="block text-xs font-bold uppercase mb-1">Low Stock Threshold</label>
+              <label className="block text-xs font-bold uppercase mb-1">{t('lowStockThreshold')}</label>
               <input 
                 type="number" 
                 step="0.1"
@@ -630,7 +650,7 @@ const StockTabContent = () => {
               />
             </div>
             <button type="submit" className="btn-primary w-full p-4 rounded-2xl font-bold">
-              Add Ingredient
+              {t('addIngredient')}
             </button>
           </form>
         </Modal>

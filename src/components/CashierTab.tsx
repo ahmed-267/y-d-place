@@ -1,54 +1,169 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useApp } from '../AppContext';
 import { ShoppingCart, CreditCard, Banknote, Plus, Search } from 'lucide-react';
-import { Product, Sale, SaleItem } from '../types';
+import { Order, OrderType, Product, SaleItem } from '../types';
 import { Modal } from './Modal';
+import { toSearchValue, priceMatchesQuery } from '../utils/search';
 
 export const CashierTab = () => {
   const { 
     products, 
-    setProducts, 
-    ingredients, 
-    setIngredients, 
-    preparedStock,
-    setPreparedStock,
-    sales, 
-    setSales, 
+    setOrders,
     user, 
-    shiftLogs, 
-    setShiftLogs, 
     t, 
     tp, 
+    tc,
     addToast, 
     categories, 
     formatPrice 
   } = useApp();
   const [cart, setCart] = useState<(SaleItem & { emoji: string, transKey: string, id: number })[]>([]);
-  const [filter, setFilter] = useState('All');
+  const [selectedCategory, setSelectedCategory] = useState('All');
+  const [activeCategory, setActiveCategory] = useState('All');
   const [search, setSearch] = useState('');
+  const [orderType, setOrderType] = useState<OrderType>('WalkIn');
+  const [customerName, setCustomerName] = useState('');
+  const [customerPhone, setCustomerPhone] = useState('');
+  const [scheduledDate, setScheduledDate] = useState('');
+  const [scheduledTime, setScheduledTime] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'Card'>('Card');
   const [cashReceived, setCashReceived] = useState('');
   const [extraModalItem, setExtraModalItem] = useState<Product | null>(null);
   const [selectedExtras, setSelectedExtras] = useState<Product[]>([]);
 
+  const productMap = useMemo(() => new Map(products.map(p => [p.id, p])), [products]);
+
+  const resolveProductName = (productId: number, fallback: string) => {
+    const product = productMap.get(productId);
+    return product ? tp(product) : fallback;
+  };
+
   const filteredProducts = useMemo(() => {
+    const query = search.trim().toLowerCase();
     return products.filter(p => {
-      const matchesCategory = p.active && (filter === 'All' || p.category === filter);
-      const matchesSearch = tp(p).toLowerCase().includes(search.toLowerCase()) || 
-                            p.nameEN.toLowerCase().includes(search.toLowerCase());
+      const matchesCategory = p.active && (selectedCategory === 'All' || p.category === selectedCategory);
+      if (!query) return matchesCategory;
+      const translated = toSearchValue(tp(p));
+      const name = toSearchValue(p?.nameEN);
+      const priceMatch = priceMatchesQuery(p?.price, query) || toSearchValue(p?.price).includes(query);
+      const matchesSearch = translated.includes(query) || name.includes(query) || priceMatch;
       return matchesCategory && matchesSearch;
     });
-  }, [products, filter, search, tp]);
+  }, [products, selectedCategory, search, tp]);
 
   const activeCategories = useMemo(() => {
     return Array.from(new Set(products.filter(p => p.active).map(p => p.category))).sort();
   }, [products]);
 
   const extras = products.filter(p => p.active && p.category === 'Extras');
+
+  const groupedProducts = useMemo(() => {
+    if (selectedCategory !== 'All') return [];
+    return activeCategories
+      .map(cat => ({ category: cat, items: filteredProducts.filter(p => p.category === cat) }))
+      .filter(group => group.items.length > 0);
+  }, [selectedCategory, activeCategories, filteredProducts]);
   
   const subtotal = cart.reduce((acc, item) => acc + item.lineTotal, 0);
   const change = parseFloat(cashReceived) - subtotal;
+
+  const gridRef = useRef<HTMLDivElement>(null);
+  const pillContainerRef = useRef<HTMLDivElement>(null);
+  const categoryHeadingRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const pillRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+
+  const setCategoryHeadingRef = (category: string) => (el: HTMLDivElement | null) => {
+    categoryHeadingRefs.current[category] = el;
+  };
+
+  const setPillRef = (category: string) => (el: HTMLButtonElement | null) => {
+    pillRefs.current[category] = el;
+  };
+
+  useEffect(() => {
+    if (selectedCategory !== 'All') {
+      setActiveCategory(selectedCategory);
+      return;
+    }
+    if (activeCategories.length && activeCategory === 'All') {
+      setActiveCategory(activeCategories[0]);
+    }
+  }, [selectedCategory, activeCategories, activeCategory]);
+
+  useEffect(() => {
+    const container = gridRef.current;
+    if (!container || selectedCategory !== 'All') return;
+
+    let frame: number | null = null;
+
+    const updateActive = () => {
+      const containerTop = container.getBoundingClientRect().top;
+      let nextCategory = activeCategory;
+      let closestOffset = -Infinity;
+
+      activeCategories.forEach(category => {
+        const heading = categoryHeadingRefs.current[category];
+        if (!heading) return;
+        const rect = heading.getBoundingClientRect();
+        const offset = rect.top - containerTop;
+        if (offset <= 24 && offset > closestOffset) {
+          closestOffset = offset;
+          nextCategory = category;
+        }
+      });
+
+      if (nextCategory !== activeCategory) {
+        setActiveCategory(nextCategory);
+      }
+    };
+
+    const onScroll = () => {
+      if (frame) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(updateActive);
+    };
+
+    container.addEventListener('scroll', onScroll);
+    updateActive();
+
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      container.removeEventListener('scroll', onScroll);
+    };
+  }, [selectedCategory, activeCategories, activeCategory]);
+
+  useEffect(() => {
+    const pill = pillRefs.current[selectedCategory === 'All' ? activeCategory : selectedCategory];
+    if (pill && pillContainerRef.current) {
+      pill.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+    }
+  }, [activeCategory, selectedCategory]);
+
+  const scrollToCategory = (category: string) => {
+    if (!gridRef.current) return;
+    if (category === 'All') {
+      gridRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+    const heading = categoryHeadingRefs.current[category];
+    if (heading) {
+      heading.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else {
+      gridRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
+
+  const handleCategoryClick = (category: string) => {
+    if (category === 'All') {
+      setSelectedCategory('All');
+      setActiveCategory(activeCategories[0] || 'All');
+      scrollToCategory('All');
+      return;
+    }
+    setSelectedCategory(category);
+    setActiveCategory(category);
+    scrollToCategory(category);
+  };
 
   const handleProductClick = (p: Product) => {
     // Check if there are any available extras
@@ -79,7 +194,7 @@ export const CashierTab = () => {
         };
         setCart([...cart, newItem]);
       }
-      addToast(`${tp(p)} added to cart`);
+      addToast(t('addedToCart').replace('{item}', tp(p)));
     } else {
       setExtraModalItem(p);
       setSelectedExtras([]);
@@ -145,116 +260,73 @@ export const CashierTab = () => {
     setCart(newCart);
   };
 
-    const confirmOrder = () => {
+  const confirmOrder = () => {
     if (!user) return;
     if (paymentMethod === 'Cash' && (isNaN(change) || change < 0)) {
-      addToast("Insufficient cash received", "error");
+      addToast(t('insufficientCash'), "error");
       return;
     }
-
-    // 1. Calculate total needed stock (Prepped & Ingredients)
-    const neededPrepped: Record<number, number> = {};
-    const neededIngredients: Record<number, number> = {};
-
-    const calculateNeeds = (productId: number, qty: number) => {
-      const product = products.find(p => p.id === productId);
-      if (!product) return;
-
-      // Prepped Stock
-      (product.preparedStockLinks || []).forEach(link => {
-        neededPrepped[link.preparedStockId] = (neededPrepped[link.preparedStockId] || 0) + (link.portionsPerSale * qty);
-      });
-
-      // Ingredients
-      (product.ingredientLinks || []).forEach(link => {
-        neededIngredients[link.ingredientId] = (neededIngredients[link.ingredientId] || 0) + (link.quantityUsed * qty);
-      });
-    };
-
-    cart.forEach(item => {
-      calculateNeeds(item.productId, item.qty);
-      item.extras?.forEach(extra => {
-        calculateNeeds(extra.productId, item.qty);
-      });
-    });
-
-    // 2. Check availability
-    const outOfStockItems: string[] = [];
-    
-    Object.entries(neededPrepped).forEach(([id, needed]) => {
-      const ps = preparedStock.find(p => p.id === parseFloat(id));
-      if (ps && ps.portions < needed) {
-        outOfStockItems.push(ps.name);
-      }
-    });
-
-    Object.entries(neededIngredients).forEach(([id, needed]) => {
-      const ing = ingredients.find(i => i.id === parseFloat(id));
-      if (ing && ing.qty < needed) {
-        outOfStockItems.push(ing.name);
-      }
-    });
-
-    if (outOfStockItems.length > 0) {
-      addToast(`Insufficient stock for: ${outOfStockItems.join(', ')}`, 'error');
+    if (cart.length === 0) {
+      addToast(t('addItemsFirst'), "error");
       return;
     }
+    if (orderType === 'PreOrder') {
+      if (!customerName.trim() || !customerPhone.trim() || !scheduledDate || !scheduledTime) {
+        addToast(t('preOrderRequiresDetails'), "error");
+        return;
+      }
+    }
 
-    const newSale: Sale = {
-      id: `ORD-${Date.now()}`,
-      timestamp: Date.now(),
+    const scheduledFor = orderType === 'PreOrder' ? `${scheduledDate}T${scheduledTime}` : undefined;
+    const newOrder: Order = {
+      id: `ORDER-${Date.now()}`,
+      type: orderType,
+      status: 'Preparing',
+      createdAt: Date.now(),
+      lastUpdatedAt: Date.now(),
+      scheduledFor,
+      customerName: customerName.trim() || undefined,
+      customerPhone: customerPhone.trim() || undefined,
       items: cart.map(({ productId, nameEN, qty, unitPrice, lineTotal, extras }) => ({
         productId, nameEN, qty, unitPrice, lineTotal, extras
       })),
       subtotal,
       paymentMethod,
-      cashierUsername: user.username,
-      cashierFullName: user.fullName
+      createdByUsername: user.username,
+      createdByFullName: user.fullName
     };
 
-    // 3. Deduct Stock
-    const updatedPrepped = preparedStock.map(ps => {
-      const needed = neededPrepped[ps.id] || 0;
-      return { ...ps, portions: Math.max(0, ps.portions - needed) };
-    });
-
-    const updatedIngredients = ingredients.map(ing => {
-      const needed = neededIngredients[ing.id] || 0;
-      return { ...ing, qty: Math.max(0, ing.qty - needed) };
-    });
-
-    const updatedLogs = shiftLogs.map(log => {
-      if (log.username === user.username && !log.logoutTime) {
-        return { ...log, ordersProcessed: log.ordersProcessed + 1 };
-      }
-      return log;
-    });
-
-    setPreparedStock(updatedPrepped);
-    setIngredients(updatedIngredients);
-    setSales([...sales, newSale]);
-    setShiftLogs(updatedLogs);
+    setOrders(prev => [newOrder, ...prev]);
     setCart([]);
     setCashReceived('');
-    addToast(t('orderSuccess'));
+    setOrderType('WalkIn');
+    setCustomerName('');
+    setCustomerPhone('');
+    setScheduledDate('');
+    setScheduledTime('');
+    addToast(t('orderSent'));
   };
 
   return (
     <div className="flex flex-col lg:flex-row gap-6 lg:h-[calc(100vh-160px)] animate-fade-in pb-20 lg:pb-0 max-w-full overflow-hidden">
       <div className="flex-1 flex flex-col gap-4 sm:gap-6 overflow-hidden min-h-[400px] lg:min-h-0">
         <div className="flex flex-col sm:flex-row gap-4 shrink-0">
-          <div className="flex-1 flex gap-2 overflow-x-auto pb-2 scrollbar-hide px-1">
-            {['All', ...activeCategories].map(cat => (
+          <div ref={pillContainerRef} className="flex-1 flex gap-2 overflow-x-auto pb-2 scrollbar-hide px-1">
+            {['All', ...activeCategories].map(cat => {
+              const isActive = selectedCategory === 'All' ? activeCategory === cat : selectedCategory === cat;
+              return (
               <button 
                 key={cat} 
-                onClick={() => setFilter(cat)}
+                ref={setPillRef(cat)}
+                onClick={() => handleCategoryClick(cat)}
                 className={`px-4 sm:px-6 py-2 sm:py-3 rounded-full font-bold text-xs sm:text-sm whitespace-nowrap transition-all active:scale-95 ${
-                  filter === cat ? 'bg-bakery-brown text-white shadow-md' : 'bg-white border border-bakery-beige text-bakery-brown hover:bg-bakery-beige/50'
+                  isActive ? 'bg-bakery-brown text-white shadow-md' : 'bg-white border border-bakery-beige text-bakery-brown hover:bg-bakery-beige/50'
                 }`}
               >
-                {cat === 'All' ? t('all') : cat}
+                {cat === 'All' ? t('all') : tc(cat)}
               </button>
-            ))}
+            );
+            })}
           </div>
           <div className="relative w-full sm:w-64">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-bakery-brown/40" size={18} />
@@ -267,24 +339,110 @@ export const CashierTab = () => {
             />
           </div>
         </div>
-        <div className="flex-1 overflow-y-auto pr-1 scrollbar-hide">
+        <div ref={gridRef} className="flex-1 overflow-y-auto pr-1 scrollbar-hide">
           <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3 md:gap-4">
-            {filteredProducts.map(p => (
-              <button 
-                key={p.id} 
-                onClick={() => handleProductClick(p)}
-                className="card-bakery p-3 sm:p-4 md:p-6 flex flex-col items-center text-center transition-all hover:scale-[1.02] active:scale-90 min-h-[110px] sm:min-h-[140px] md:min-h-[160px] justify-center hover:shadow-md"
-              >
-                <span className="text-2xl sm:text-3xl md:text-5xl mb-2 md:mb-3">{p.emoji}</span>
-                <p className="font-bold text-[10px] sm:text-xs md:text-base mb-1 leading-tight h-6 sm:h-8 md:h-12 flex items-center justify-center overflow-hidden line-clamp-2">{tp(p)}</p>
-                <p className="text-bakery-caramel font-black text-xs sm:text-sm md:text-lg mb-1 md:mb-2">{formatPrice(p.price)}</p>
-              </button>
-            ))}
+            {selectedCategory === 'All' ? (
+              groupedProducts.map(group => (
+                <React.Fragment key={group.category}>
+                  <div ref={setCategoryHeadingRef(group.category)} className="col-span-full flex items-center gap-3">
+                    <h4 className="text-sm sm:text-base font-black font-serif text-bakery-brown">{tc(group.category)}</h4>
+                    <div className="h-px bg-bakery-beige flex-1" />
+                  </div>
+                  {group.items.map(p => (
+                    <button 
+                      key={p.id} 
+                      onClick={() => handleProductClick(p)}
+                      className="card-bakery p-3 sm:p-4 md:p-6 flex flex-col items-center text-center transition-all hover:scale-[1.02] active:scale-90 min-h-[110px] sm:min-h-[140px] md:min-h-[160px] justify-center hover:shadow-md"
+                    >
+                      <span className="text-2xl sm:text-3xl md:text-5xl mb-2 md:mb-3">{p.emoji}</span>
+                      <p className="font-bold text-[10px] sm:text-xs md:text-base mb-1 leading-tight h-6 sm:h-8 md:h-12 flex items-center justify-center overflow-hidden line-clamp-2">{tp(p)}</p>
+                      <p className="text-bakery-caramel font-black text-xs sm:text-sm md:text-lg mb-1 md:mb-2">{formatPrice(p.price)}</p>
+                    </button>
+                  ))}
+                </React.Fragment>
+              ))
+            ) : (
+              filteredProducts.map(p => (
+                <button 
+                  key={p.id} 
+                  onClick={() => handleProductClick(p)}
+                  className="card-bakery p-3 sm:p-4 md:p-6 flex flex-col items-center text-center transition-all hover:scale-[1.02] active:scale-90 min-h-[110px] sm:min-h-[140px] md:min-h-[160px] justify-center hover:shadow-md"
+                >
+                  <span className="text-2xl sm:text-3xl md:text-5xl mb-2 md:mb-3">{p.emoji}</span>
+                  <p className="font-bold text-[10px] sm:text-xs md:text-base mb-1 leading-tight h-6 sm:h-8 md:h-12 flex items-center justify-center overflow-hidden line-clamp-2">{tp(p)}</p>
+                  <p className="text-bakery-caramel font-black text-xs sm:text-sm md:text-lg mb-1 md:mb-2">{formatPrice(p.price)}</p>
+                </button>
+              ))
+            )}
           </div>
         </div>
       </div>
 
       <div className="w-full lg:w-[400px] xl:w-[450px] flex flex-col gap-6 shrink-0">
+        <div className="card-bakery p-4 sm:p-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
+            <div>
+              <h3 className="text-lg font-bold font-serif">{t('orderDetails')}</h3>
+              <p className="text-[10px] uppercase tracking-widest text-bakery-brown/40 font-black">{t('createdInCashier')}</p>
+            </div>
+            <div className="flex items-center gap-2 bg-bakery-beige/40 p-1 rounded-2xl">
+              <button
+                onClick={() => setOrderType('WalkIn')}
+                className={`px-4 py-2 rounded-xl text-xs font-bold ${orderType === 'WalkIn' ? 'bg-bakery-brown text-white' : 'text-bakery-brown/60'}`}
+              >
+                {t('walkIn')}
+              </button>
+              <button
+                onClick={() => setOrderType('PreOrder')}
+                className={`px-4 py-2 rounded-xl text-xs font-bold ${orderType === 'PreOrder' ? 'bg-bakery-brown text-white' : 'text-bakery-brown/60'}`}
+              >
+                {t('preOrder')}
+              </button>
+            </div>
+          </div>
+
+          {orderType === 'PreOrder' && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('customerName')}</label>
+                <input
+                  type="text"
+                  className="w-full p-3 border border-bakery-beige rounded-xl outline-none focus:ring-2 focus:ring-bakery-caramel text-sm"
+                  value={customerName}
+                  onChange={e => setCustomerName(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('phoneNumber')}</label>
+                <input
+                  type="tel"
+                  className="w-full p-3 border border-bakery-beige rounded-xl outline-none focus:ring-2 focus:ring-bakery-caramel text-sm"
+                  value={customerPhone}
+                  onChange={e => setCustomerPhone(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('pickupDate')}</label>
+                <input
+                  type="date"
+                  className="w-full p-3 border border-bakery-beige rounded-xl outline-none focus:ring-2 focus:ring-bakery-caramel text-sm"
+                  value={scheduledDate}
+                  onChange={e => setScheduledDate(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('pickupTime')}</label>
+                <input
+                  type="time"
+                  className="w-full p-3 border border-bakery-beige rounded-xl outline-none focus:ring-2 focus:ring-bakery-caramel text-sm"
+                  value={scheduledTime}
+                  onChange={e => setScheduledTime(e.target.value)}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+
         <div className="card-bakery flex-1 flex flex-col overflow-hidden max-h-[600px] lg:max-h-none">
           <div className="p-4 sm:p-6 border-b border-bakery-beige flex justify-between items-center bg-bakery-cream/30">
             <div className="flex items-center gap-2">
@@ -300,7 +458,7 @@ export const CashierTab = () => {
                   <div className="flex-1 min-w-0">
                     <p className="font-bold text-xs sm:text-sm truncate">{tp(item as any)}</p>
                     {item.extras?.map(e => (
-                      <p key={e.productId} className="text-[9px] sm:text-[10px] text-bakery-caramel font-bold italic truncate">+ {e.nameEN}</p>
+                      <p key={e.productId} className="text-[9px] sm:text-[10px] text-bakery-caramel font-bold italic truncate">+ {resolveProductName(e.productId, e.nameEN)}</p>
                     ))}
                   </div>
                   <div className="flex items-center gap-2 sm:gap-3 shrink-0">

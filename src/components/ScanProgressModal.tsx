@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Loader2, Camera, Check, AlertCircle } from 'lucide-react';
+import { useApp } from '../AppContext';
 
 interface ScanProgressModalProps {
   isOpen: boolean;
@@ -20,6 +21,7 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
   onCancel,
   onRetry
 }) => {
+  const { t } = useApp();
   const [progress, setProgress] = useState(0);
 
   useEffect(() => {
@@ -56,14 +58,14 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
 
   const getStatusText = () => {
     switch (status) {
-      case 'uploading': return 'Uploading image...';
-      case 'analyzing': return 'Analysing menu structure...';
-      case 'extracting': return 'Extracting items and prices...';
-      case 'finishing': return 'Finishing up...';
-      case 'timeout': return 'Scan is taking too long';
-      case 'error': return 'Something went wrong';
-      case 'success': return 'Scan complete!';
-      default: return 'Processing...';
+      case 'uploading': return t('scanStatusUploading');
+      case 'analyzing': return t('scanStatusAnalyzing');
+      case 'extracting': return t('scanStatusExtracting');
+      case 'finishing': return t('scanStatusFinishing');
+      case 'timeout': return t('scanStatusTimeout');
+      case 'error': return t('scanStatusError');
+      case 'success': return t('scanStatusSuccess');
+      default: return t('scanStatusProcessing');
     }
   };
 
@@ -94,7 +96,7 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
               <div className="relative">
                 <div className="w-24 h-24 rounded-3xl bg-bakery-beige/30 flex items-center justify-center overflow-hidden">
                   {imageThumbnail ? (
-                    <img src={imageThumbnail} alt="Thumbnail" className="w-full h-full object-cover opacity-50" />
+                    <img src={imageThumbnail} alt={t('thumbnail')} className="w-full h-full object-cover opacity-50" />
                   ) : (
                     <Camera className="text-bakery-brown/20" size={40} />
                   )}
@@ -108,8 +110,8 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
                 <h3 className="text-xl font-black font-serif text-bakery-brown">{getStatusText()}</h3>
                 <p className="text-sm text-bakery-brown/50">
                   {status === 'timeout' 
-                    ? 'Please try again with a clearer image.' 
-                    : 'Please wait while our AI processes your request.'}
+                    ? t('scanTimeoutHint')
+                    : t('scanProcessingHint')}
                 </p>
               </div>
 
@@ -123,7 +125,7 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
                   />
                 </div>
                 <div className="flex justify-between text-[10px] font-black uppercase tracking-widest text-bakery-brown/30">
-                  <span>Progress</span>
+                  <span>{t('progress')}</span>
                   <span>{Math.round(progress)}%</span>
                 </div>
               </div>
@@ -134,7 +136,7 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
                     onClick={onRetry}
                     className="w-full py-4 bg-bakery-brown text-white rounded-2xl font-bold hover:bg-bakery-brown/90 transition-all"
                   >
-                    Retry Scan
+                    {t('retryScan')}
                   </button>
                 )}
                 
@@ -143,17 +145,22 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
                     onClick={onClose}
                     className="w-full py-4 bg-rose-50 text-rose-600 rounded-2xl font-bold hover:bg-rose-100 transition-all"
                   >
-                    Cancel
+                    {t('cancel')}
+                  </button>
+                ) : status === 'success' ? (
+                  <button
+                    onClick={onClose}
+                    className="w-full py-4 bg-emerald-500 text-white rounded-2xl font-bold hover:bg-emerald-600 transition-all"
+                  >
+                    {t('done')}
                   </button>
                 ) : (
-                  status !== 'success' && (
-                    <button 
-                      onClick={onCancel}
-                      className="w-full py-4 bg-bakery-beige/30 text-bakery-brown/60 rounded-2xl font-bold hover:bg-bakery-beige/50 transition-all"
-                    >
-                      Cancel Scan
-                    </button>
-                  )
+                  <button 
+                    onClick={onCancel}
+                    className="w-full py-4 bg-bakery-beige/30 text-bakery-brown/60 rounded-2xl font-bold hover:bg-bakery-beige/50 transition-all"
+                  >
+                    {t('cancelScan')}
+                  </button>
                 )}
               </div>
             </div>

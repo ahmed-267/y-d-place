@@ -3,10 +3,10 @@ import React, { useState } from 'react';
 import { useApp } from '../AppContext';
 import { COUNTRIES, CURRENCIES, VENUE_TYPES, CURRENCY_OPTIONS } from '../constants';
 import { BusinessSettings, Language } from '../types';
-import { Save, Building2, Globe, Coins, Languages } from 'lucide-react';
+import { Save, Building2, Globe, Coins, Languages, KeyRound } from 'lucide-react';
 
 export const SettingsTab = () => {
-  const { t, businessSettings, setBusinessSettings, addToast } = useApp();
+  const { t, businessSettings, setBusinessSettings, addToast, user, users, setUsers, setUser } = useApp();
   
   const [formData, setFormData] = useState<BusinessSettings>(businessSettings || {
     id: '',
@@ -25,7 +25,49 @@ export const SettingsTab = () => {
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
     setBusinessSettings(formData);
-    addToast("Settings updated successfully!");
+    addToast(t('settingsUpdated'));
+  };
+
+  const [passwordForm, setPasswordForm] = useState({
+    currentPassword: '',
+    newPassword: '',
+    confirmPassword: ''
+  });
+
+  const handlePasswordChange = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+
+    const current = passwordForm.currentPassword.trim();
+    const next = passwordForm.newPassword.trim();
+    const confirm = passwordForm.confirmPassword.trim();
+
+    const userRecord = users.find(u => u.id === user.id) || user;
+    if (userRecord.password !== current) {
+      addToast(t('currentPasswordIncorrect'), "error");
+      return;
+    }
+    if (!next || next.length < 4) {
+      addToast(t('passwordTooShort'), "error");
+      return;
+    }
+    if (next !== confirm) {
+      addToast(t('passwordsDontMatch'), "error");
+      return;
+    }
+
+    const updatedUsers = users.map(u => u.id === user.id ? { ...u, password: next } : u);
+    setUsers(updatedUsers);
+    setUser({ ...user, password: next });
+
+    if (user.role === 'owner' && businessSettings?.id) {
+      const registry = JSON.parse(localStorage.getItem('biz_registry') || '[]');
+      const updatedRegistry = registry.map((b: any) => b.id === businessSettings.id ? { ...b, password: next } : b);
+      localStorage.setItem('biz_registry', JSON.stringify(updatedRegistry));
+    }
+
+    setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+    addToast(t('passwordUpdated'));
   };
 
   const handleCountryChange = (countryCode: string) => {
@@ -138,10 +180,10 @@ export const SettingsTab = () => {
                     onChange={e => handleCurrencyChange(e.target.value)}
                   >
                     {CURRENCY_OPTIONS.map(c => (
-                      <option key={c.code} value={c.code}>{c.name} ({c.symbol})</option>
-                    ))}
-                  </select>
-                </div>
+                    <option key={c.code} value={c.code}>{t('currencyOptionShort').replace('{name}', c.name).replace('{symbol}', c.symbol)}</option>
+                  ))}
+                </select>
+              </div>
               </div>
 
               {/* Language */}
@@ -158,10 +200,10 @@ export const SettingsTab = () => {
                     value={formData.language}
                     onChange={e => setFormData({ ...formData, language: e.target.value as Language })}
                   >
-                    <option value="en">English</option>
-                    <option value="fr">Français</option>
-                    <option value="nl">Nederlands</option>
-                    <option value="fl">Vlaams</option>
+                    <option value="en">{t('langEnglish')}</option>
+                    <option value="fr">{t('langFrench')}</option>
+                    <option value="nl">{t('langDutch')}</option>
+                    <option value="fl">{t('langFlemish')}</option>
                   </select>
                 </div>
               </div>
@@ -178,7 +220,7 @@ export const SettingsTab = () => {
 
         <div className="space-y-6">
           <div className="card-bakery p-6 bg-bakery-accent/10 border-bakery-accent/30">
-            <h3 className="font-black uppercase tracking-widest text-xs text-bakery-brown/60 mb-4 italic">Owner Information</h3>
+            <h3 className="font-black uppercase tracking-widest text-xs text-bakery-brown/60 mb-4 italic">{t('ownerInformation')}</h3>
             <div className="space-y-4">
               <div>
                 <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40">{t('ownerFullName')}</p>
@@ -194,6 +236,45 @@ export const SettingsTab = () => {
               </div>
             </div>
           </div>
+          <form onSubmit={handlePasswordChange} className="card-bakery p-6 space-y-4">
+            <div className="flex items-center gap-2 text-bakery-caramel mb-2">
+              <KeyRound size={18} />
+              <h3 className="font-black uppercase tracking-widest text-xs">{t('changePassword')}</h3>
+            </div>
+            <div>
+              <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('currentPassword')}</label>
+              <input
+                type="password"
+                className="w-full p-3 border border-bakery-beige rounded-xl outline-none focus:ring-2 focus:ring-bakery-caramel text-sm"
+                value={passwordForm.currentPassword}
+                onChange={e => setPasswordForm({ ...passwordForm, currentPassword: e.target.value })}
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('newPassword')}</label>
+              <input
+                type="password"
+                className="w-full p-3 border border-bakery-beige rounded-xl outline-none focus:ring-2 focus:ring-bakery-caramel text-sm"
+                value={passwordForm.newPassword}
+                onChange={e => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('confirmNewPassword')}</label>
+              <input
+                type="password"
+                className="w-full p-3 border border-bakery-beige rounded-xl outline-none focus:ring-2 focus:ring-bakery-caramel text-sm"
+                value={passwordForm.confirmPassword}
+                onChange={e => setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })}
+                required
+              />
+            </div>
+            <button type="submit" className="btn-primary w-full py-3 rounded-2xl font-bold text-sm">
+              {t('updatePassword')}
+            </button>
+          </form>
         </div>
       </div>
     </div>

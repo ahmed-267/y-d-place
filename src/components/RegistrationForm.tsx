@@ -7,6 +7,22 @@ import { ArrowLeft } from 'lucide-react';
 
 export const RegistrationForm = ({ onBack }: { onBack: () => void }) => {
   const { t, registerBusiness, addToast } = useApp();
+
+  const venueLabel = (venue: string) => {
+    const map: Record<string, string> = {
+      'Restaurant': 'restaurant',
+      'Food Truck': 'foodTruck',
+      'Cafe': 'cafe',
+      'Café': 'cafe',
+      'Bar': 'bar',
+      'Bakery': 'bakery',
+      'Fast Food': 'fastFood',
+      'Other': 'otherVenue'
+    };
+    const key = map[venue] || venue;
+    const translated = t(key);
+    return translated === key ? venue : translated;
+  };
   
   const [formData, setFormData] = useState({
     businessName: '',
@@ -85,7 +101,7 @@ export const RegistrationForm = ({ onBack }: { onBack: () => void }) => {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (formData.password !== formData.confirmPassword) {
-      addToast("Passwords do not match", "error");
+      addToast(t('passwordsDontMatch'), "error");
       return;
     }
 
@@ -186,7 +202,7 @@ export const RegistrationForm = ({ onBack }: { onBack: () => void }) => {
                 onChange={e => setFormData({ ...formData, venueType: e.target.value })}
               >
                 {VENUE_TYPES.map(v => (
-                  <option key={v} value={v}>{v}</option>
+                  <option key={v} value={v}>{venueLabel(v)}</option>
                 ))}
               </select>
             </div>
@@ -232,14 +248,14 @@ export const RegistrationForm = ({ onBack }: { onBack: () => void }) => {
                 value={formData.language}
                 onChange={e => setFormData({ ...formData, language: e.target.value as Language })}
               >
-                <option value="en">English</option>
-                <option value="fr">Français</option>
-                <option value="nl">Nederlands</option>
-                <option value="fl">Vlaams</option>
-                <option value="es">Español</option>
-                <option value="it">Italiano</option>
-                <option value="de">Deutsch</option>
-                <option value="ar">العربية</option>
+                <option value="en">{t('langEnglish')}</option>
+                <option value="fr">{t('langFrench')}</option>
+                <option value="nl">{t('langDutch')}</option>
+                <option value="fl">{t('langFlemish')}</option>
+                <option value="es">{t('langSpanish')}</option>
+                <option value="it">{t('langItalian')}</option>
+                <option value="de">{t('langGerman')}</option>
+                <option value="ar">{t('langArabic')}</option>
               </select>
             </div>
           </div>

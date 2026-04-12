@@ -113,7 +113,7 @@ export const WelcomeScreen = ({ onLogin, onRegister }: { onLogin: () => void, on
               onClick={onRegister}
               className="px-6 py-2.5 bg-bakery-brown text-white rounded-full font-bold hover:bg-bakery-brown/90 transition-all active:scale-95 shadow-lg shadow-bakery-brown/10"
             >
-              Get Started
+              {t('getStarted')}
             </button>
           </div>
         </div>
@@ -128,7 +128,7 @@ export const WelcomeScreen = ({ onLogin, onRegister }: { onLogin: () => void, on
                 <span className="flex gap-1">
                   🇺🇸 🇬🇧 🇫🇷 🇩🇪 🇯🇵 🇦🇪 🇸🇦 🇧🇪 🇨🇦 🇦🇺 🇮🇹 🇪🇸
                 </span>
-                <span className="ml-2 opacity-60">Trusted by 40+ countries</span>
+                <span className="ml-2 opacity-60">{t('trustedByCountries')}</span>
               </div>
               
               <h2 className="text-6xl md:text-8xl font-black font-serif text-bakery-brown mb-8 leading-[0.9] tracking-tight">
@@ -136,7 +136,7 @@ export const WelcomeScreen = ({ onLogin, onRegister }: { onLogin: () => void, on
               </h2>
               
               <p className="text-xl md:text-2xl text-bakery-brown/60 mb-12 max-w-xl leading-relaxed">
-                The universal management solution for restaurants, food trucks, cafés, and bars. Scale your business anywhere in the world.
+                {t('welcomeSubtitle')}
               </p>
               
               <div className="flex flex-col sm:flex-row gap-4">
@@ -173,9 +173,9 @@ export const WelcomeScreen = ({ onLogin, onRegister }: { onLogin: () => void, on
         <section className="py-32 px-6 bg-white">
           <div className="max-w-7xl mx-auto">
             <div className="text-center mb-20">
-              <h2 className="text-4xl md:text-5xl font-black font-serif text-bakery-brown mb-6">Built for the modern kitchen</h2>
+              <h2 className="text-4xl md:text-5xl font-black font-serif text-bakery-brown mb-6">{t('builtForModernKitchen')}</h2>
               <p className="text-bakery-brown/60 text-lg max-w-2xl mx-auto">
-                Powerful tools designed to simplify your daily operations and help you focus on what matters: the food.
+                {t('builtForModernKitchenSub')}
               </p>
             </div>
             
@@ -184,9 +184,9 @@ export const WelcomeScreen = ({ onLogin, onRegister }: { onLogin: () => void, on
                 <div className="w-16 h-16 bg-bakery-accent/30 rounded-3xl flex items-center justify-center text-bakery-brown mb-8 group-hover:scale-110 transition-transform">
                   <BarChart3 size={32} />
                 </div>
-                <h3 className="text-2xl font-bold font-serif text-bakery-brown mb-4">Deep Analytics</h3>
+                <h3 className="text-2xl font-bold font-serif text-bakery-brown mb-4">{t('featureAnalytics')}</h3>
                 <p className="text-bakery-brown/60 leading-relaxed">
-                  Understand your sales patterns, peak hours, and best-selling items with intuitive visual reports.
+                  {t('featureAnalyticsSub')}
                 </p>
               </div>
               
@@ -194,9 +194,9 @@ export const WelcomeScreen = ({ onLogin, onRegister }: { onLogin: () => void, on
                 <div className="w-16 h-16 bg-bakery-caramel/20 rounded-3xl flex items-center justify-center text-bakery-brown mb-8 group-hover:scale-110 transition-transform">
                   <Package size={32} />
                 </div>
-                <h3 className="text-2xl font-bold font-serif text-bakery-brown mb-4">Smart Inventory</h3>
+                <h3 className="text-2xl font-bold font-serif text-bakery-brown mb-4">{t('featureInventory')}</h3>
                 <p className="text-bakery-brown/60 leading-relaxed">
-                  Never run out of ingredients. Get low-stock alerts and manage suppliers in one central place.
+                  {t('featureInventorySub')}
                 </p>
               </div>
               
@@ -204,9 +204,9 @@ export const WelcomeScreen = ({ onLogin, onRegister }: { onLogin: () => void, on
                 <div className="w-16 h-16 bg-bakery-beige rounded-3xl flex items-center justify-center text-bakery-brown mb-8 group-hover:scale-110 transition-transform">
                   <Users size={32} />
                 </div>
-                <h3 className="text-2xl font-bold font-serif text-bakery-brown mb-4">Team Management</h3>
+                <h3 className="text-2xl font-bold font-serif text-bakery-brown mb-4">{t('featureTeam')}</h3>
                 <p className="text-bakery-brown/60 leading-relaxed">
-                  Track shifts, manage roles, and monitor performance across your entire staff with ease.
+                  {t('featureTeamSub')}
                 </p>
               </div>
             </div>
@@ -220,16 +220,16 @@ export const WelcomeScreen = ({ onLogin, onRegister }: { onLogin: () => void, on
               <Globe size={40} className="text-bakery-accent" />
             </div>
             <h2 className="text-5xl md:text-7xl font-black font-serif mb-8 max-w-4xl leading-tight">
-              Ready to take your business to the next level?
+              {t('readyToScale')}
             </h2>
             <p className="text-xl text-bakery-cream/60 mb-12 max-w-2xl">
-              Join thousands of food entrepreneurs who trust Y&D Place to power their daily operations.
+              {t('readyToScaleSub')}
             </p>
             <button 
               onClick={onRegister}
               className="px-12 py-6 bg-bakery-accent text-bakery-brown rounded-2xl font-bold text-2xl hover:bg-bakery-accent/90 transition-all active:scale-95 shadow-2xl shadow-black/20"
             >
-              Start Free Trial
+              {t('startFreeTrial')}
             </button>
           </div>
           
@@ -252,13 +252,13 @@ export const WelcomeScreen = ({ onLogin, onRegister }: { onLogin: () => void, on
           </div>
           
           <div className="flex gap-8 text-sm font-bold text-bakery-brown/40 uppercase tracking-widest">
-            <a href="#" className="hover:text-bakery-brown transition-colors">Privacy</a>
-            <a href="#" className="hover:text-bakery-brown transition-colors">Terms</a>
-            <a href="#" className="hover:text-bakery-brown transition-colors">Contact</a>
+            <a href="#" className="hover:text-bakery-brown transition-colors">{t('privacy')}</a>
+            <a href="#" className="hover:text-bakery-brown transition-colors">{t('terms')}</a>
+            <a href="#" className="hover:text-bakery-brown transition-colors">{t('contact')}</a>
           </div>
           
           <p className="text-bakery-brown/40 text-xs font-bold uppercase tracking-widest">
-            &copy; {new Date().getFullYear()} Y&D Place Platform.
+            &copy; {new Date().getFullYear()} {t('platformName')}.
           </p>
         </div>
       </footer>

@@ -20,15 +20,20 @@ const EXPENSE_CATEGORIES: ExpenseCategory[] = [
   'Utilities', 'Rent', 'Supplies', 'Staff', 'Transport', 'Marketing', 'Insurance', 'Equipment', 'Other'
 ];
 
-const PLACEHOLDERS = [
-  "Electricity", "Water", "Gas", "LPG/Fuel for truck",
-  "Parking/Market pitch fee", "Food truck insurance",
-  "Packaging materials", "Cleaning products",
-  "Social security contributions", "Accountant fees"
-];
-
 export const FinanceTab = () => {
   const { t, expenses, setExpenses, taxSettings, setTaxSettings, sales, addToast, businessSettings, formatPrice } = useApp();
+  const PLACEHOLDERS = useMemo(() => [
+    t('expensePlaceholder1'),
+    t('expensePlaceholder2'),
+    t('expensePlaceholder3'),
+    t('expensePlaceholder4'),
+    t('expensePlaceholder5'),
+    t('expensePlaceholder6'),
+    t('expensePlaceholder7'),
+    t('expensePlaceholder8'),
+    t('expensePlaceholder9'),
+    t('expensePlaceholder10')
+  ], [t]);
   const [activeSection, setActiveSection] = useState<'expenses' | 'tax' | 'profit'>('expenses');
   
   // Expenses State
@@ -58,6 +63,17 @@ export const FinanceTab = () => {
   const [fullSizeImage, setFullSizeImage] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const resetScanState = (keepScannedImage = true) => {
+    setIsScanning(false);
+    setScanStatus('uploading');
+    setScanThumbnail(null);
+    setSelectedFile(null);
+    abortControllerRef.current = null;
+    if (!keepScannedImage) {
+      setScannedImage(null);
+    }
+  };
 
   // Tax Settings State (Local for editing, then synced)
   const [localTaxSettings, setLocalTaxSettings] = useState<TaxSettings>(taxSettings);
@@ -626,7 +642,7 @@ export const FinanceTab = () => {
       const apiKey = import.meta.env.VITE_OPENROUTER_API_KEY as string | undefined;
       if (!apiKey) {
         setScanStatus('error');
-        addToast("Missing API key. Set VITE_OPENROUTER_API_KEY in your environment.", "error");
+        addToast(t('missingApiKey'), "error");
         return;
       }
 
@@ -714,18 +730,15 @@ export const FinanceTab = () => {
       setScannedImage(compressed);
       setScanStatus('success');
       setSelectedFile(null);
-      addToast("Receipt scanned successfully!");
+      addToast(t('receiptScanned'));
     } catch (error) {
       if (scanStatus !== 'timeout') {
         setScanStatus('error');
         console.error("Scanning failed:", error);
-        addToast("Scanning failed. Please enter details manually.", "error");
+        addToast(t('scanReceiptFailed'), "error");
       }
     } finally {
       abortControllerRef.current = null;
-      if (scanStatus === 'success') {
-        setTimeout(() => setIsScanning(false), 1000);
-      }
     }
   };
 
@@ -733,9 +746,7 @@ export const FinanceTab = () => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
-    setIsScanning(false);
-    setScanStatus('uploading');
-    setSelectedFile(null);
+    resetScanState();
   };
 
   const handleDeleteExpense = () => {
@@ -816,14 +827,14 @@ export const FinanceTab = () => {
               <table className="w-full text-left text-sm min-w-[900px]">
                 <thead className="bg-bakery-beige/30 text-bakery-brown/40 uppercase text-[10px] font-black tracking-widest">
                   <tr>
-                    <th className="p-4">Receipt</th>
+                    <th className="p-4">{t('receipt')}</th>
                     <th className="p-4">{t('expenseName')}</th>
                     <th className="p-4">{t('category')}</th>
                     <th className="p-4">{t('amount')}</th>
                     <th className="p-4">{t('date')}</th>
                     <th className="p-4">{t('recurring')}</th>
                     <th className="p-4">{t('frequency')}</th>
-                    <th className="p-4 text-right">Actions</th>
+                    <th className="p-4 text-right">{t('actions')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-bakery-beige">
@@ -835,7 +846,7 @@ export const FinanceTab = () => {
                             onClick={() => setFullSizeImage(e.receiptImage!)}
                             className="w-10 h-10 rounded-lg overflow-hidden border border-bakery-beige hover:border-bakery-caramel transition-all group relative"
                           >
-                            <img src={e.receiptImage} alt="Receipt" className="w-full h-full object-cover" />
+                            <img src={e.receiptImage} alt={t('receipt')} className="w-full h-full object-cover" />
                             <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                               <Maximize2 size={12} className="text-white" />
                             </div>
@@ -857,7 +868,7 @@ export const FinanceTab = () => {
                       <td className="p-4">
                         {e.isRecurring ? <Check className="text-emerald-500" size={16} /> : <X className="text-rose-500" size={16} />}
                       </td>
-                      <td className="p-4 text-bakery-brown/60 whitespace-nowrap">{e.isRecurring ? t(e.frequency?.toLowerCase() || '') : '-'}</td>
+                      <td className="p-4 text-bakery-brown/60 whitespace-nowrap">{e.isRecurring ? t(e.frequency?.toLowerCase() || '') : t('dash')}</td>
                       <td className="p-4 text-right">
                         <div className="flex justify-end gap-2">
                           <button 
@@ -881,7 +892,7 @@ export const FinanceTab = () => {
             </div>
             {filteredExpenses.length === 0 && (
               <div className="p-20 text-center opacity-30 italic">
-                No expenses found.
+                {t('noExpensesFound')}
               </div>
             )}
           </div>
@@ -889,30 +900,30 @@ export const FinanceTab = () => {
             isOpen={isScanning} 
             status={scanStatus} 
             imageThumbnail={scanThumbnail}
-            onClose={() => { setIsScanning(false); setSelectedFile(null); }}
+            onClose={() => resetScanState()}
             onCancel={cancelScan}
-            onRetry={() => { setIsScanning(false); startScan(); }}
+            onRetry={() => { resetScanState(); startScan(); }}
           />
 
           {selectedFile && !isScanning && (
-            <Modal title="Preview Receipt" onClose={() => setSelectedFile(null)}>
+            <Modal title={t('previewReceipt')} onClose={() => setSelectedFile(null)}>
               <div className="space-y-6">
                 <div className="aspect-video w-full rounded-2xl overflow-hidden bg-bakery-beige/20 border-2 border-bakery-beige">
-                  <img src={selectedFile} alt="Preview" className="w-full h-full object-contain" />
+                  <img src={selectedFile} alt={t('preview')} className="w-full h-full object-contain" />
                 </div>
                 <div className="flex gap-4">
                   <button 
                     onClick={() => setSelectedFile(null)}
                     className="flex-1 py-4 bg-bakery-beige text-bakery-brown rounded-2xl font-bold hover:bg-bakery-beige/80 transition-all"
                   >
-                    Cancel
+                    {t('cancel')}
                   </button>
                   <button 
                     onClick={startScan}
                     className="flex-[2] py-4 bg-bakery-brown text-white rounded-2xl font-bold hover:bg-bakery-brown/90 transition-all flex items-center justify-center gap-2"
                   >
                     <Camera size={20} />
-                    Scan Receipt
+                    {t('scanReceipt')}
                   </button>
                 </div>
               </div>
@@ -938,7 +949,7 @@ export const FinanceTab = () => {
             <div className="card-bakery p-6 space-y-4">
               <h3 className="font-serif text-xl font-black flex items-center gap-2">
                 <Calculator className="text-bakery-caramel" />
-                Settings
+                {t('settings')}
               </h3>
               
               <div className="space-y-4">
@@ -950,7 +961,7 @@ export const FinanceTab = () => {
                     value={localTaxSettings.manualGrossRevenue ?? totalSalesRevenue}
                     onChange={e => setLocalTaxSettings({...localTaxSettings, manualGrossRevenue: parseFloat(e.target.value)})}
                   />
-                  <p className="text-[10px] text-bakery-brown/40 mt-1 italic">Auto-filled from sales records ({formatPrice(totalSalesRevenue)})</p>
+                  <p className="text-[10px] text-bakery-brown/40 mt-1 italic">{t('autoFilledSales').replace('{amount}', formatPrice(totalSalesRevenue))}</p>
                 </div>
 
                 <div>
@@ -961,7 +972,7 @@ export const FinanceTab = () => {
                     value={localTaxSettings.manualExpenses ?? expenseSummaries.yearTotal}
                     onChange={e => setLocalTaxSettings({...localTaxSettings, manualExpenses: parseFloat(e.target.value)})}
                   />
-                  <p className="text-[10px] text-bakery-brown/40 mt-1 italic">Auto-filled from logged expenses ({formatPrice(expenseSummaries.yearTotal)})</p>
+                  <p className="text-[10px] text-bakery-brown/40 mt-1 italic">{t('autoFilledExpenses').replace('{amount}', formatPrice(expenseSummaries.yearTotal))}</p>
                 </div>
 
                 <div>
@@ -972,7 +983,7 @@ export const FinanceTab = () => {
                     value={localTaxSettings.socialSecurityPaid ?? 0}
                     onChange={e => setLocalTaxSettings({...localTaxSettings, socialSecurityPaid: parseFloat(e.target.value)})}
                   />
-                  <p className="text-[10px] text-bakery-brown/40 mt-1 italic">Enter the total social security contributions paid this year.</p>
+                  <p className="text-[10px] text-bakery-brown/40 mt-1 italic">{t('socialSecurityHelp')}</p>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
@@ -988,7 +999,7 @@ export const FinanceTab = () => {
                       <div className="absolute right-3 top-1/2 -translate-y-1/2 group cursor-help">
                         <Info size={14} className="text-bakery-brown/40" />
                         <div className="absolute bottom-full right-0 mb-2 w-48 p-2 bg-bakery-brown text-white text-[10px] rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
-                          Varies by Belgian commune (typically 0% to 10%).
+                          {t('municipalTaxHelp')}
                         </div>
                       </div>
                     </div>
@@ -1009,9 +1020,9 @@ export const FinanceTab = () => {
                 {(localTaxSettings.manualGrossRevenue ?? totalSalesRevenue) < 25000 && (
                   <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-xl flex gap-3">
                     <Check className="text-emerald-500 shrink-0" size={18} />
-                    <p className="text-[10px] text-emerald-700">
-                      Eligible for <strong>Small Business Exemption</strong> (turnover under {formatPrice(25000)}/year). No VAT charged or reclaimed.
-                    </p>
+                <p className="text-[10px] text-emerald-700">
+                  {t('smallBusinessEligible').replace('{amount}', formatPrice(25000))}
+                </p>
                   </div>
                 )}
 
@@ -1103,7 +1114,7 @@ export const FinanceTab = () => {
               <div className="p-3 bg-rose-500/20 border border-rose-500/40 rounded-xl flex gap-3 items-center relative z-10">
                 <AlertTriangle className="text-rose-300 shrink-0" size={18} />
                 <p className="text-[10px] text-rose-100">
-                  Large discrepancy in Social Security. Calculated reference is <strong>{formatPrice(taxResults.ssRef)}</strong>.
+                  {t('socialSecurityDiscrepancy').replace('{amount}', formatPrice(taxResults.ssRef))}
                 </p>
               </div>
             )}
@@ -1124,7 +1135,7 @@ export const FinanceTab = () => {
                 <div className="flex justify-between items-center border-b border-bakery-beige pb-4">
                   <h3 className="font-serif text-lg font-black">{period.label}</h3>
                   <span className="px-3 py-1 bg-bakery-accent/20 rounded-full text-[10px] font-black text-bakery-brown uppercase">
-                    {period.data.margin.toFixed(1)}% Margin
+                    {t('marginLabel').replace('{value}', period.data.margin.toFixed(1))}
                   </span>
                 </div>
 
@@ -1175,9 +1186,9 @@ export const FinanceTab = () => {
                     />
                   </div>
                   <div className="flex justify-between text-[8px] font-bold uppercase text-bakery-brown/40">
-                    <span>Expenses</span>
-                    <span>Tax</span>
-                    <span>Net Profit</span>
+                    <span>{t('expenses')}</span>
+                    <span>{t('tax')}</span>
+                    <span>{t('netProfit')}</span>
                   </div>
                 </div>
               </div>
@@ -1187,10 +1198,9 @@ export const FinanceTab = () => {
           <div className="p-4 bg-bakery-accent/10 border border-bakery-accent/30 rounded-2xl flex gap-4 items-start">
             <Info className="text-bakery-caramel shrink-0 mt-1" size={20} />
             <div className="space-y-1">
-              <p className="text-xs font-bold text-bakery-brown">Note on Projections</p>
+              <p className="text-xs font-bold text-bakery-brown">{t('projectionNoteTitle')}</p>
               <p className="text-[10px] text-bakery-brown/60 leading-relaxed">
-                These figures are annualised projections based on your current data. The tax calculator assumes a consistent income throughout the year. 
-                Actual tax liability is determined at the end of the fiscal year based on total annual income and expenses.
+                {t('projectionNote')}
               </p>
             </div>
           </div>
@@ -1212,7 +1222,7 @@ export const FinanceTab = () => {
                   className="flex-1 flex items-center justify-center gap-2 p-4 bg-bakery-beige text-bakery-brown rounded-2xl font-bold hover:bg-bakery-beige/70 transition-all border-2 border-dashed border-bakery-brown/20"
                 >
                   {isScanning ? <Loader2 className="animate-spin" /> : <Camera size={20} />}
-                  Scan Receipt
+                  {t('scanReceipt')}
                 </button>
                 <input 
                   type="file" 
@@ -1226,7 +1236,7 @@ export const FinanceTab = () => {
 
             {(scannedImage || expenseForm.receiptImage) && (
               <div className="relative w-full h-32 rounded-2xl overflow-hidden border border-bakery-beige">
-                <img src={scannedImage || expenseForm.receiptImage} alt="Receipt Preview" className="w-full h-full object-cover" />
+                <img src={scannedImage || expenseForm.receiptImage} alt={t('receiptPreview')} className="w-full h-full object-cover" />
                 <button 
                   onClick={() => { setScannedImage(null); setExpenseForm({...expenseForm, receiptImage: undefined}); }}
                   className="absolute top-2 right-2 p-1 bg-rose-500 text-white rounded-full shadow-lg"
@@ -1320,9 +1330,9 @@ export const FinanceTab = () => {
       )}
 
       {fullSizeImage && (
-        <Modal title="Receipt View" onClose={() => setFullSizeImage(null)}>
+        <Modal title={t('receiptView')} onClose={() => setFullSizeImage(null)}>
           <div className="max-h-[80vh] overflow-auto">
-            <img src={fullSizeImage} alt="Full Receipt" className="w-full h-auto rounded-2xl" />
+            <img src={fullSizeImage} alt={t('receiptFull')} className="w-full h-auto rounded-2xl" />
           </div>
         </Modal>
       )}
