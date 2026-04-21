@@ -116,7 +116,7 @@ export const OrdersTab = () => {
 
       setPreparedStock(result.updatedPreparedStock || preparedStock);
       setIngredients(result.updatedIngredients || ingredients);
-      setSales([...sales, result.sale!]);
+      setSales(prev => [...prev, result.sale!]);
       setShiftLogs(result.updatedShiftLogs || shiftLogs);
 
       setOrders(prev => prev.map(o => {

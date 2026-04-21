@@ -87,7 +87,7 @@ export const Dashboard = () => {
                 <Layout size={18} />
               </div>
               <h1 className="text-lg sm:text-xl font-black font-serif hidden sm:block truncate max-w-[120px] md:max-w-none">
-                {businessSettings?.name || 'Y&D Place'}
+                {businessSettings?.name || 'PreVisio'}
               </h1>
             </div>
             <div className="hidden md:flex gap-1 overflow-x-auto scrollbar-hide py-2">

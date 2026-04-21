@@ -91,7 +91,7 @@ const StockTabContent = () => {
 
   const paginatedIngredients = useMemo(() => {
     const start = (ingredientPage - 1) * itemsPerPage;
-    return filteredIngredients.slice(start, start + ingredientPage);
+    return filteredIngredients.slice(start, start + itemsPerPage);
   }, [filteredIngredients, ingredientPage]);
 
   const totalPreppedPages = Math.ceil(filteredPrepped.length / itemsPerPage);

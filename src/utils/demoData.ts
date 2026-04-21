@@ -10,7 +10,7 @@ export const generateDemoData = () => {
   
   // 1. Generate Staff
   const users: User[] = [
-    { id: 1, username: 'owner', fullName: 'Y&D Owner', role: 'owner', password: 'keoks2024' },
+    { id: 1, username: 'owner@123.com', fullName: 'PreVisio Owner', role: 'owner', password: '123', email: 'owner@123.com' },
     { id: 2, username: 'manager', fullName: 'Y&D Manager', role: 'manager', password: 'manager123' },
     { id: 3, username: 'sarah', fullName: 'Sarah Jenkins', role: 'staff', password: 'staff123' },
     { id: 4, username: 'ahmed', fullName: 'Ahmed Mahrez', role: 'staff', password: 'staff123' },

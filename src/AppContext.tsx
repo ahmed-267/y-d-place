@@ -145,12 +145,12 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       setBusinessSettingsState(settings);
       setLang(settings.language || 'en');
     } else if (currentBizId === 'ydplace') {
-      // Legacy Y&D Place settings
+      // Legacy PreVisio settings
       const ydSettings: BusinessSettings = {
         id: 'ydplace',
-        name: 'Y&D Place',
-        ownerName: 'Y&D Owner',
-        ownerEmail: 'owner@ydplace.com',
+        name: 'PreVisio',
+        ownerName: 'PreVisio Owner',
+        ownerEmail: 'owner@123.com',
         ownerPhone: '',
         venueType: 'Food Truck',
         country: 'Belgium',
@@ -304,15 +304,22 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       return normalizeName(b.name) === normalizedRestaurant;
     });
 
-    const isYdPlace = normalizedRestaurant === normalizeName('Y&D Place') || normalizedRestaurant === 'ydplace';
+    const isYdPlace =
+      normalizedRestaurant === normalizeName('PreVisio') ||
+      normalizedRestaurant === normalizeName('Y&D Place') ||
+      normalizedRestaurant === 'ydplace';
 
     if (mode === 'owner') {
-      if (isYdPlace && (identifier === 'owner@ydplace.com' || identifier === 'owner') && password === 'keoks2024') {
+      if (
+        isYdPlace &&
+        (identifier === 'owner@123.com' || identifier === 'owner') &&
+        password === '123'
+      ) {
         const ydOwner: User = {
           id: 1,
-          username: 'owner',
-          fullName: 'Y&D Owner',
-          password: 'keoks2024',
+          username: 'owner@123.com',
+          fullName: 'PreVisio Owner',
+          password: '123',
           role: 'owner'
         };
         localStorage.setItem('ydplace_user', JSON.stringify(ydOwner));

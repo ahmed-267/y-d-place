@@ -180,8 +180,8 @@ export const SettingsTab = () => {
                     onChange={e => handleCurrencyChange(e.target.value)}
                   >
                     {CURRENCY_OPTIONS.map(c => (
-                    <option key={c.code} value={c.code}>{t('currencyOptionShort').replace('{name}', c.name).replace('{symbol}', c.symbol)}</option>
-                  ))}
+                      <option key={c.code} value={c.code}>{`${c.symbol} ${c.name}`}</option>
+                    ))}
                 </select>
               </div>
               </div>

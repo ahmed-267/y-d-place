@@ -10,6 +10,7 @@ import { toSearchValue, priceMatchesQuery } from '../utils/search';
 
 export const SalesTab = () => {
   const { sales, setSales, t, formatPrice, addToast, products, tp, lang } = useApp();
+  type SortKey = 'dateTime' | 'items' | 'total' | 'payment' | 'cashier';
   const [filter, setFilter] = useState('All');
   const [search, setSearch] = useState('');
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
@@ -18,6 +19,8 @@ export const SalesTab = () => {
   const [selectedMonth, setSelectedMonth] = useState('');
   
   const [currentPage, setCurrentPage] = useState(1);
+  const [sortKey, setSortKey] = useState<SortKey>('dateTime');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const itemsPerPage = 10;
   const [editSale, setEditSale] = useState<Sale | null>(null);
   const [deleteSaleConfirm, setDeleteSaleConfirm] = useState<Sale | null>(null);
@@ -34,6 +37,29 @@ export const SalesTab = () => {
   const resolveExtraName = (extra: { productId: number; nameEN: string }) => {
     const product = productMap.get(extra.productId);
     return product ? tp(product) : extra.nameEN;
+  };
+
+  function groupItems(items: SaleItem[]) {
+    const grouped: Record<string, SaleItem> = {};
+    items.forEach(item => {
+      const key = `${item.productId}-${JSON.stringify(item.extras?.map((e: any) => e.productId).sort() || [])}`;
+      if (grouped[key]) {
+        grouped[key].qty += item.qty;
+        grouped[key].lineTotal += item.lineTotal;
+      } else {
+        grouped[key] = { ...item };
+      }
+    });
+    return Object.values(grouped);
+  }
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDirection(prev => (prev === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+    setSortKey(key);
+    setSortDirection(key === 'dateTime' || key === 'total' ? 'desc' : 'asc');
   };
 
   const filteredSales = useMemo(() => {
@@ -91,8 +117,27 @@ export const SalesTab = () => {
       });
     }
 
-    return list.sort((a, b) => b.timestamp - a.timestamp);
-  }, [sales, filter, search, dateRange, selectedWeek, selectedMonth, formatPrice, locale, productMap, lang, tp, t]);
+    const sorted = [...list].sort((a, b) => {
+      const itemLabelA = groupItems(a.items).map(i => `${i.qty}x ${resolveItemName(i)}`).join(', ');
+      const itemLabelB = groupItems(b.items).map(i => `${i.qty}x ${resolveItemName(i)}`).join(', ');
+      if (sortKey === 'dateTime') {
+        return a.timestamp - b.timestamp;
+      }
+      if (sortKey === 'items') {
+        return itemLabelA.localeCompare(itemLabelB);
+      }
+      if (sortKey === 'total') {
+        return a.subtotal - b.subtotal;
+      }
+      if (sortKey === 'payment') {
+        return a.paymentMethod.localeCompare(b.paymentMethod);
+      }
+      const cashierA = `${a.cashierFullName} ${a.cashierUsername}`;
+      const cashierB = `${b.cashierFullName} ${b.cashierUsername}`;
+      return cashierA.localeCompare(cashierB);
+    });
+    return sortDirection === 'desc' ? sorted.reverse() : sorted;
+  }, [sales, filter, search, dateRange, selectedWeek, selectedMonth, formatPrice, locale, productMap, lang, tp, t, sortKey, sortDirection]);
 
   const paginatedSales = useMemo(() => {
     const start = (currentPage - 1) * itemsPerPage;
@@ -104,6 +149,10 @@ export const SalesTab = () => {
   useEffect(() => {
     setCurrentPage(1);
   }, [filter, search, dateRange, selectedWeek, selectedMonth]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [sales]);
 
   const totalRevenue = filteredSales.reduce((acc, s) => acc + s.subtotal, 0);
 
@@ -139,20 +188,6 @@ export const SalesTab = () => {
     a.click();
   };
 
-  const groupItems = (items: SaleItem[]) => {
-    const grouped: Record<string, SaleItem> = {};
-    items.forEach(item => {
-      const key = `${item.productId}-${JSON.stringify(item.extras?.map((e: any) => e.productId).sort() || [])}`;
-      if (grouped[key]) {
-        grouped[key].qty += item.qty;
-        grouped[key].lineTotal += item.lineTotal;
-      } else {
-        grouped[key] = { ...item };
-      }
-    });
-    return Object.values(grouped);
-  };
-
   return (
     <div className="space-y-6 animate-fade-in max-w-full overflow-hidden">
       <div className="flex flex-col gap-6">
@@ -161,11 +196,11 @@ export const SalesTab = () => {
             {[
               { id: 'All', label: t('all') },
               { id: 'Today', label: t('today') },
-              { id: 'WeekQuick', label: t('week') },
-              { id: 'MonthQuick', label: t('month') },
+              { id: 'WeekQuick', label: t('thisWeek') },
+              { id: 'MonthQuick', label: t('thisMonth') },
               { id: 'Custom', label: t('dateRange') },
-              { id: 'WeekPicker', label: t('week') },
-              { id: 'MonthPicker', label: t('month') }
+              { id: 'WeekPicker', label: t('thisWeek') },
+              { id: 'MonthPicker', label: t('thisMonth') }
             ].map(f => (
               <button 
                 key={f.id} 
@@ -257,11 +292,36 @@ export const SalesTab = () => {
           <table className="w-full text-left text-sm min-w-[700px]">
             <thead className="bg-bakery-beige/30 text-bakery-brown/40 uppercase text-[10px] font-black tracking-widest">
               <tr>
-                <th className="p-4">{t('dateTime')}</th>
-                <th className="p-4">{t('itemsSummary')}</th>
-                <th className="p-4">{t('total')}</th>
-                <th className="p-4">{t('payment')}</th>
-                <th className="p-4">{t('cashier')}</th>
+                <th className="p-4">
+                  <button onClick={() => toggleSort('dateTime')} className="inline-flex items-center gap-1">
+                    {t('dateTime')}
+                    {sortKey === 'dateTime' && (sortDirection === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />)}
+                  </button>
+                </th>
+                <th className="p-4">
+                  <button onClick={() => toggleSort('items')} className="inline-flex items-center gap-1">
+                    {t('itemsSummary')}
+                    {sortKey === 'items' && (sortDirection === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />)}
+                  </button>
+                </th>
+                <th className="p-4">
+                  <button onClick={() => toggleSort('total')} className="inline-flex items-center gap-1">
+                    {t('total')}
+                    {sortKey === 'total' && (sortDirection === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />)}
+                  </button>
+                </th>
+                <th className="p-4">
+                  <button onClick={() => toggleSort('payment')} className="inline-flex items-center gap-1">
+                    {t('payment')}
+                    {sortKey === 'payment' && (sortDirection === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />)}
+                  </button>
+                </th>
+                <th className="p-4">
+                  <button onClick={() => toggleSort('cashier')} className="inline-flex items-center gap-1">
+                    {t('cashier')}
+                    {sortKey === 'cashier' && (sortDirection === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />)}
+                  </button>
+                </th>
                 <th className="p-4"></th>
               </tr>
             </thead>

@@ -21,6 +21,8 @@ export const OverviewTab = () => {
   const revenueChartInstance = useRef<Chart | null>(null);
   const categoryChartRef = useRef<HTMLCanvasElement>(null);
   const categoryChartInstance = useRef<Chart | null>(null);
+  const busiestChartRef = useRef<HTMLCanvasElement>(null);
+  const busiestChartInstance = useRef<Chart | null>(null);
 
   const [period, setPeriod] = useState<Period>('weekly');
   const [staffPeriod, setStaffPeriod] = useState<Period | 'custom'>('weekly');
@@ -120,26 +122,33 @@ export const OverviewTab = () => {
     return { start: buckets[0].start, end: buckets[buckets.length - 1].end };
   }, [buckets]);
 
-  const staffBuckets = useMemo(() => staffPeriod === 'custom' ? [] : buildBuckets(staffPeriod), [staffPeriod]);
   const staffRange = useMemo(() => {
     if (staffPeriod === 'custom' && staffDateRange.from && staffDateRange.to) {
       const start = new Date(staffDateRange.from).getTime();
       const end = new Date(staffDateRange.to).setHours(23, 59, 59, 999);
       return { start, end };
     }
-    if (staffBuckets.length) {
-      return { start: staffBuckets[0].start, end: staffBuckets[staffBuckets.length - 1].end };
-    }
-    return { start: 0, end: 0 };
-  }, [staffPeriod, staffDateRange, staffBuckets]);
+    const now = new Date();
+    const end = now.getTime();
+    const start = new Date(now);
+    if (staffPeriod === 'daily') start.setDate(now.getDate() - 1);
+    if (staffPeriod === 'weekly') start.setDate(now.getDate() - 7);
+    if (staffPeriod === 'monthly') start.setMonth(now.getMonth() - 1);
+    if (staffPeriod === 'quarterly') start.setMonth(now.getMonth() - 3);
+    start.setHours(0, 0, 0, 0);
+    return { start: start.getTime(), end };
+  }, [staffPeriod, staffDateRange]);
 
   useEffect(() => {
     if (staffPeriod === 'custom') return;
-    if (!staffBuckets.length) return;
-    const start = new Date(staffBuckets[0].start);
-    const end = new Date(staffBuckets[staffBuckets.length - 1].end - 1);
-    setStaffDateRange({ from: toDateInput(start), to: toDateInput(end) });
-  }, [staffPeriod, staffBuckets]);
+    const now = new Date();
+    const start = new Date(now);
+    if (staffPeriod === 'daily') start.setDate(now.getDate() - 1);
+    if (staffPeriod === 'weekly') start.setDate(now.getDate() - 7);
+    if (staffPeriod === 'monthly') start.setMonth(now.getMonth() - 1);
+    if (staffPeriod === 'quarterly') start.setMonth(now.getMonth() - 3);
+    setStaffDateRange({ from: toDateInput(start), to: toDateInput(now) });
+  }, [staffPeriod]);
 
   const salesInPeriod = useMemo(() => {
     return sales.filter(s => s.timestamp >= periodRange.start && s.timestamp < periodRange.end);
@@ -165,7 +174,7 @@ export const OverviewTab = () => {
 
   const categoryStats = useMemo(() => {
     const map: Record<string, { units: number; revenue: number }> = {};
-    const productMap = new Map(products.map(p => [p.id, p]));
+    const productMap = new Map<number, (typeof products)[number]>(products.map(p => [p.id, p]));
 
     salesInPeriod.forEach(s => s.items.forEach(item => {
       const prod = productMap.get(item.productId);
@@ -232,14 +241,26 @@ export const OverviewTab = () => {
   }, [salesInPeriod]);
 
   const busiestHours = useMemo(() => {
+    const source = salesInPeriod.length > 0 ? salesInPeriod : sales;
     const hours = Array.from({ length: 24 }, () => 0);
-    salesInPeriod.forEach(sale => {
-      const hour = new Date(sale.timestamp).getHours();
-      hours[hour] += 1;
+    source.forEach(sale => {
+      const stamp = Number(sale.timestamp);
+      if (Number.isNaN(stamp)) return;
+      const date = new Date(stamp);
+      if (Number.isNaN(date.getTime())) return;
+      const hour = date.getHours();
+      if (hour >= 0 && hour < 24) {
+        hours[hour] += 1;
+      }
     });
     const max = Math.max(...hours, 1);
-    return { hours, max };
-  }, [salesInPeriod]);
+    const topHours = hours
+      .map((count, hour) => ({ hour, count }))
+      .filter(entry => entry.count > 0)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 3);
+    return { hours, max, topHours };
+  }, [salesInPeriod, sales]);
 
   const stats = useMemo(() => {
     const now = new Date();
@@ -299,8 +320,9 @@ export const OverviewTab = () => {
   useEffect(() => {
     if (revenueChartInstance.current) revenueChartInstance.current.destroy();
     if (categoryChartInstance.current) categoryChartInstance.current.destroy();
+    if (busiestChartInstance.current) busiestChartInstance.current.destroy();
 
-    if (revenueChartRef.current && categoryChartRef.current) {
+    if (revenueChartRef.current && categoryChartRef.current && busiestChartRef.current) {
       const currencySymbol = businessSettings?.currencySymbol || '€';
 
       revenueChartInstance.current = new Chart(revenueChartRef.current, {
@@ -369,13 +391,53 @@ export const OverviewTab = () => {
           }
         }
       });
+
+      busiestChartInstance.current = new Chart(busiestChartRef.current, {
+        type: 'bar',
+        data: {
+          labels: Array.from({ length: 24 }, (_, hour) => `${hour}:00`),
+          datasets: [{
+            label: t('orders'),
+            data: busiestHours.hours,
+            backgroundColor: 'rgba(212, 163, 115, 0.75)',
+            borderColor: '#d4a373',
+            borderWidth: 1,
+            borderRadius: 4,
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            datalabels: { display: false },
+            tooltip: {
+              callbacks: {
+                label: (ctx) => `${ctx.label} - ${ctx.parsed.y} ${t('orders')}`,
+              },
+            },
+          },
+          scales: {
+            x: {
+              ticks: {
+                callback: (value, index) => ([0, 6, 12, 18, 23].includes(index) ? `${index}:00` : ''),
+              },
+            },
+            y: {
+              beginAtZero: true,
+              ticks: { precision: 0 },
+            },
+          },
+        },
+      });
     }
 
     return () => {
       if (revenueChartInstance.current) revenueChartInstance.current.destroy();
       if (categoryChartInstance.current) categoryChartInstance.current.destroy();
+      if (busiestChartInstance.current) busiestChartInstance.current.destroy();
     };
-  }, [buckets, revenueByBucket, categoryStats, businessSettings, t]);
+  }, [buckets, revenueByBucket, categoryStats, businessSettings, t, busiestHours]);
 
   return (
     <div className="space-y-10 animate-fade-in max-w-full overflow-hidden">
@@ -513,23 +575,15 @@ export const OverviewTab = () => {
 
             <div className="card-bakery p-4 sm:p-6">
               <h4 className="text-sm font-black uppercase tracking-widest text-bakery-brown/50 mb-4">{t('busiestHours')}</h4>
-              <div className="flex items-end gap-1 h-24">
-                {busiestHours.hours.map((count, idx) => (
-                  <div key={idx} className="flex-1 flex flex-col items-center">
-                    <div
-                      className="w-full rounded-md bg-bakery-caramel/70"
-                      style={{ height: `${(count / busiestHours.max) * 100}%` }}
-                      title={`${idx}:00 - ${count} ${t('orders')}`}
-                    ></div>
-                  </div>
-                ))}
-              </div>
-              <div className="flex justify-between text-[10px] text-bakery-brown/50 mt-2">
-                <span>0</span>
-                <span>6</span>
-                <span>12</span>
-                <span>18</span>
-                <span>23</span>
+              {busiestHours.topHours.length > 0 ? (
+                <p className="text-xs text-bakery-brown/60 mb-3">
+                  Peak: {busiestHours.topHours.map(h => `${h.hour}:00 (${h.count})`).join(' • ')}
+                </p>
+              ) : (
+                <p className="text-xs text-bakery-brown/40 mb-3 italic">{t('noSalesData')}</p>
+              )}
+              <div className="h-28 w-full">
+                <canvas ref={busiestChartRef}></canvas>
               </div>
             </div>
           </div>

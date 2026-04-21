@@ -1,11 +1,19 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../AppContext';
-import { Plus, Trash2, ShieldAlert, Clock, Edit2, Search, Calendar, ChevronLeft, ChevronRight, Sparkles, Save, X } from 'lucide-react';
+import { Plus, Trash2, ShieldAlert, Clock, Edit2, Search, Calendar, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Sparkles, Save, X } from 'lucide-react';
 import { Modal } from './Modal';
 import { ConfirmDialog } from './ConfirmDialog';
 import { Pagination } from './Pagination';
 import { User, Role, WorkShift, RotaShift } from '../types';
 import { toSearchValue } from '../utils/search';
+
+type AvailabilityConfig = {
+  days: number[];
+  startTime: string;
+  endTime: string;
+  exceptionFrom: string;
+  exceptionTo: string;
+};
 
 export const StaffTab = () => {
   const { users, setUsers, workShifts, setWorkShifts, t, addToast, resetAllData, formatPrice, businessSettings, user, rota, setRota, staffAvailability, setStaffAvailability, lang } = useApp();
@@ -25,6 +33,7 @@ export const StaffTab = () => {
   const [rotaPreview, setRotaPreview] = useState<RotaShift[] | null>(null);
   const [pendingGenerated, setPendingGenerated] = useState<RotaShift[] | null>(null);
   const [showOverwriteConfirm, setShowOverwriteConfirm] = useState(false);
+  const [showAvailability, setShowAvailability] = useState(true);
   const [staffNeeded, setStaffNeeded] = useState<Record<number, number>>({
     0: 2,
     1: 2,
@@ -285,6 +294,33 @@ export const StaffTab = () => {
     });
   };
 
+  const dayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+  const getAvailabilityConfig = (userId: number): AvailabilityConfig => {
+    const raw = availabilityMap.get(userId) || '';
+    if (!raw) {
+      return { days: [0, 1, 2, 3, 4, 5, 6], startTime: '09:00', endTime: '17:00', exceptionFrom: '', exceptionTo: '' };
+    }
+    try {
+      const parsed = JSON.parse(raw) as Partial<AvailabilityConfig>;
+      return {
+        days: Array.isArray(parsed.days) && parsed.days.length ? parsed.days : [0, 1, 2, 3, 4, 5, 6],
+        startTime: parsed.startTime || '09:00',
+        endTime: parsed.endTime || '17:00',
+        exceptionFrom: parsed.exceptionFrom || '',
+        exceptionTo: parsed.exceptionTo || '',
+      };
+    } catch {
+      return { days: [0, 1, 2, 3, 4, 5, 6], startTime: '09:00', endTime: '17:00', exceptionFrom: '', exceptionTo: '' };
+    }
+  };
+
+  const setAvailabilityConfig = (userId: number, patch: Partial<AvailabilityConfig>) => {
+    const current = getAvailabilityConfig(userId);
+    const next = { ...current, ...patch };
+    setAvailabilityNote(userId, JSON.stringify(next));
+  };
+
   const locale = lang === 'fl' ? 'nl-BE' : lang;
   const toDateKey = (date: Date) => date.toLocaleDateString('en-CA');
 
@@ -375,53 +411,41 @@ export const StaffTab = () => {
     setEditingCell(null);
   };
 
-  const parseAvailability = (note: string) => {
-    const lower = note.toLowerCase();
-    const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
-    const mentioned = days.filter(day => lower.includes(day));
-    const availability = new Set<number>([0, 1, 2, 3, 4, 5, 6]);
-
-    if (mentioned.length && lower.includes('only')) {
-      availability.clear();
-      mentioned.forEach(day => availability.add(days.indexOf(day)));
-    }
-
-    mentioned.forEach(day => {
-      const idx = days.indexOf(day);
-      const slice = lower.slice(Math.max(0, lower.indexOf(day) - 20), lower.indexOf(day) + 20);
-      if (slice.includes('not') || slice.includes('unavailable')) {
-        availability.delete(idx);
-      }
-    });
-
-    return availability;
+  const isDateWithinException = (date: Date, config: AvailabilityConfig) => {
+    if (!config.exceptionFrom || !config.exceptionTo) return false;
+    const target = toDateKey(date);
+    return target >= config.exceptionFrom && target <= config.exceptionTo;
   };
 
-  const generateNextWeekRota = () => {
-    const baseWeekStart = startOfWeek(new Date());
-    baseWeekStart.setDate(baseWeekStart.getDate() + 7);
-    const weekDates = Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(baseWeekStart);
-      d.setDate(baseWeekStart.getDate() + i);
-      return d;
+  const generateRotaForVisibleRange = () => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const candidateDates = displayDates.filter(date => {
+      if (rotaView === 'weekly' && weekOffset === 0) return date >= today;
+      if (rotaView === 'monthly' && monthOffset === 0) return date >= today;
+      return true;
     });
 
+    if (candidateDates.length === 0) {
+      addToast(t('noShiftsFound'), 'info');
+      return;
+    }
     const staffPool = staffForRota;
     const assignmentCounts = new Map<number, number>();
     staffPool.forEach(s => assignmentCounts.set(s.id, 0));
 
     const generated: RotaShift[] = [];
 
-    weekDates.forEach(date => {
+    candidateDates.forEach(date => {
       const dayIndex = (date.getDay() + 6) % 7;
       const needed = staffNeeded[dayIndex] || 0;
       if (needed === 0) return;
 
       const availableStaff = staffPool.filter(s => {
-        const note = availabilityMap.get(s.id) || '';
-        if (!note.trim()) return true;
-        const allowedDays = parseAvailability(note);
-        return allowedDays.has(dayIndex);
+        const config = getAvailabilityConfig(s.id);
+        if (!config.days.includes(dayIndex)) return false;
+        if (isDateWithinException(date, config)) return false;
+        return true;
       });
 
       const ranked = [...availableStaff].sort((a, b) => (assignmentCounts.get(a.id) || 0) - (assignmentCounts.get(b.id) || 0));
@@ -433,8 +457,8 @@ export const StaffTab = () => {
           username: staffMember.username,
           fullName: staffMember.fullName,
           date: toDateKey(date),
-          startTime: '09:00',
-          endTime: '17:00'
+          startTime: getAvailabilityConfig(staffMember.id).startTime || '09:00',
+          endTime: getAvailabilityConfig(staffMember.id).endTime || '17:00'
         });
       });
     });
@@ -472,7 +496,7 @@ export const StaffTab = () => {
   return (
     <div className="space-y-10 animate-fade-in max-w-full overflow-hidden">
       <div className="flex flex-col gap-4">
-        <div className="flex flex-wrap gap-2 bg-bakery-beige/40 p-2 rounded-2xl">
+        <div className="flex flex-wrap gap-2">
           {[
             { id: 'staff', label: t('staffDetails') },
             { id: 'shifts', label: t('workShifts') },
@@ -481,8 +505,10 @@ export const StaffTab = () => {
             <button
               key={section.id}
               onClick={() => setActiveSection(section.id as 'staff' | 'shifts' | 'rota')}
-              className={`px-4 py-2 rounded-xl font-bold text-xs sm:text-sm transition-all whitespace-nowrap ${
-                activeSection === section.id ? 'bg-bakery-brown text-white shadow-sm' : 'text-bakery-brown/60 hover:text-bakery-brown'
+              className={`px-5 py-2 rounded-full border font-bold text-xs sm:text-sm transition-all whitespace-nowrap ${
+                activeSection === section.id
+                  ? 'bg-bakery-brown text-white border-bakery-brown shadow-sm'
+                  : 'bg-white text-bakery-brown/70 border-bakery-beige hover:text-bakery-brown hover:bg-bakery-beige/40'
               }`}
             >
               {section.label}
@@ -751,42 +777,84 @@ export const StaffTab = () => {
               >
                 <ChevronRight size={16} />
               </button>
-              {canEditRota && (
-                <button
-                  onClick={generateNextWeekRota}
-                  className="btn-primary flex items-center gap-2 h-9 px-4 rounded-xl text-xs font-bold"
-                >
-                  <Sparkles size={16} />
-                  {t('autoGenerateRota')}
-                </button>
-              )}
             </div>
           </div>
 
           <div className="card-bakery p-4 sm:p-6 space-y-4">
-            <div className="flex items-center gap-2">
-              <Calendar size={18} className="text-bakery-brown" />
-              <h4 className="font-bold">{t('availabilityExceptions')}</h4>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Calendar size={18} className="text-bakery-brown" />
+                <h4 className="font-bold">{t('availabilityExceptions')}</h4>
+              </div>
+              <button
+                onClick={() => setShowAvailability(prev => !prev)}
+                className="h-8 px-3 rounded-xl border border-bakery-beige text-bakery-brown/70 hover:bg-bakery-beige/30 text-xs font-bold inline-flex items-center gap-1"
+              >
+                {showAvailability ? 'Hide' : 'Show'}
+                {showAvailability ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+              </button>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {staffForRota.map(staffMember => (
-                <div key={staffMember.id} className="space-y-2">
-                  <p className="text-xs font-bold text-bakery-brown/60">{staffMember.fullName}</p>
-                  {canEditRota ? (
-                    <textarea
-                      className="w-full p-3 border border-bakery-beige rounded-xl outline-none focus:ring-2 focus:ring-bakery-caramel text-sm min-h-[70px]"
-                      placeholder={t('availabilityPlaceholder')}
-                      value={availabilityMap.get(staffMember.id) || ''}
-                      onChange={e => setAvailabilityNote(staffMember.id, e.target.value)}
-                    />
-                  ) : (
-                    <div className="p-3 bg-bakery-beige/30 rounded-xl text-sm text-bakery-brown/70 min-h-[70px]">
-                      {availabilityMap.get(staffMember.id) || t('noAvailability')}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
+            {showAvailability && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-fade-in">
+                {staffForRota.map(staffMember => (
+                  <div key={staffMember.id} className="space-y-2">
+                    <p className="text-xs font-bold text-bakery-brown/60">{staffMember.fullName}</p>
+                    {canEditRota ? (
+                      <div className="grid grid-cols-1 gap-2 p-3 rounded-xl border border-white/60 bg-white/50 backdrop-blur-md">
+                        <select
+                          multiple
+                          className="w-full p-2 border border-bakery-beige rounded-xl text-xs font-bold bg-white/80"
+                          value={getAvailabilityConfig(staffMember.id).days.map(String)}
+                          onChange={e => {
+                            const days = Array.from(e.target.selectedOptions).map(opt => parseInt((opt as HTMLOptionElement).value, 10));
+                            setAvailabilityConfig(staffMember.id, { days });
+                          }}
+                        >
+                          {dayLabels.map((day, idx) => (
+                            <option key={day} value={idx}>{day}</option>
+                          ))}
+                        </select>
+                        <div className="grid grid-cols-2 gap-2">
+                          <input
+                            type="time"
+                            className="p-2 border border-bakery-beige rounded-xl text-xs font-bold bg-white/80"
+                            value={getAvailabilityConfig(staffMember.id).startTime}
+                            onChange={e => setAvailabilityConfig(staffMember.id, { startTime: e.target.value })}
+                          />
+                          <input
+                            type="time"
+                            className="p-2 border border-bakery-beige rounded-xl text-xs font-bold bg-white/80"
+                            value={getAvailabilityConfig(staffMember.id).endTime}
+                            onChange={e => setAvailabilityConfig(staffMember.id, { endTime: e.target.value })}
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <input
+                            type="date"
+                            className="p-2 border border-bakery-beige rounded-xl text-xs font-bold bg-white/80"
+                            value={getAvailabilityConfig(staffMember.id).exceptionFrom}
+                            onChange={e => setAvailabilityConfig(staffMember.id, { exceptionFrom: e.target.value })}
+                          />
+                          <input
+                            type="date"
+                            className="p-2 border border-bakery-beige rounded-xl text-xs font-bold bg-white/80"
+                            value={getAvailabilityConfig(staffMember.id).exceptionTo}
+                            onChange={e => setAvailabilityConfig(staffMember.id, { exceptionTo: e.target.value })}
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="p-3 bg-bakery-beige/30 rounded-xl text-sm text-bakery-brown/70 min-h-[70px]">
+                        {(() => {
+                          const cfg = getAvailabilityConfig(staffMember.id);
+                          return `${cfg.days.map(d => dayLabels[d]).join(', ')} | ${cfg.startTime}-${cfg.endTime}`;
+                        })()}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {canEditRota && (
@@ -827,6 +895,23 @@ export const StaffTab = () => {
               </div>
             </div>
           )}
+
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <p className="text-xs font-black uppercase tracking-widest text-bakery-brown/50">
+              {displayDates[0] && displayDates[displayDates.length - 1]
+                ? `${toDateKey(displayDates[0])} → ${toDateKey(displayDates[displayDates.length - 1])}`
+                : ''}
+            </p>
+            {canEditRota && (
+              <button
+                onClick={generateRotaForVisibleRange}
+                className="btn-primary flex items-center gap-2 h-9 px-4 rounded-xl text-xs font-bold self-start sm:self-auto"
+              >
+                <Sparkles size={16} />
+                {t('autoGenerateRota')}
+              </button>
+            )}
+          </div>
 
           <div className="card-bakery overflow-hidden">
             <div className="overflow-x-auto scrollbar-hide">

@@ -20,7 +20,7 @@ import {
   ChevronUp,
   Info
 } from 'lucide-react';
-import { Role, IngredientLink, Product } from '../types';
+import { Role, IngredientLink, Product, PreparedStockLink } from '../types';
 import { getAIAssistance, scanMenu, ScanMenuResult, compressImage } from '../utils/aiHelper';
 import { Modal } from './Modal';
 import { ScanProgressModal } from './ScanProgressModal';
@@ -59,11 +59,57 @@ export const OnboardingWizard = () => {
   };
 
   // Step 3: Products
-  const [productForm, setProductForm] = useState({ name: '', category: categories[0] || 'General', price: '', emoji: '📦', translations: {} as Record<string, string> });
+  const [productForm, setProductForm] = useState({
+    name: '',
+    category: categories[0] || 'General',
+    price: '',
+    emoji: '📦',
+    translations: {} as Record<string, string>,
+    ingredientNames: [] as string[],
+    preppedNames: [] as string[],
+  });
   const [isAIProcessing, setIsAIProcessing] = useState(false);
 
   const addProduct = () => {
     if (productForm.name && productForm.price) {
+      const currentIngredients = [...ingredients];
+      const currentPrepared = [...preparedStock];
+
+      const ingredientLinks: IngredientLink[] = productForm.ingredientNames
+        .map(name => name.trim())
+        .filter(Boolean)
+        .map(name => {
+          let ing = currentIngredients.find(i => i.name.toLowerCase() === name.toLowerCase());
+          if (!ing) {
+            ing = {
+              id: Date.now() + Math.random(),
+              name,
+              unit: 'g',
+              qty: 20,
+              lowThreshold: 2,
+            };
+            currentIngredients.push(ing);
+          }
+          return { ingredientId: ing.id, quantityUsed: 1, unit: ing.unit };
+        });
+
+      const preppedLinks: PreparedStockLink[] = productForm.preppedNames
+        .map(name => name.trim())
+        .filter(Boolean)
+        .map(name => {
+          let ps = currentPrepared.find(p => p.name.toLowerCase() === name.toLowerCase());
+          if (!ps) {
+            ps = {
+              id: Date.now() + Math.random(),
+              name,
+              portions: 20,
+              lowThreshold: 5,
+            };
+            currentPrepared.push(ps);
+          }
+          return { preparedStockId: ps.id, portionsPerSale: 1 };
+        });
+
       const newProduct: Product = {
         id: Date.now(),
         nameEN: productForm.name,
@@ -73,10 +119,21 @@ export const OnboardingWizard = () => {
         emoji: productForm.emoji,
         active: true,
         transKey: '',
-        ingredientLinks: []
+        ingredientLinks,
+        preparedStockLinks: preppedLinks,
       };
+      setIngredients(currentIngredients);
+      setPreparedStock(currentPrepared);
       setProducts([...products, newProduct]);
-      setProductForm({ name: '', category: categories[0] || 'General', price: '', emoji: '📦', translations: {} });
+      setProductForm({
+        name: '',
+        category: categories[0] || 'General',
+        price: '',
+        emoji: '📦',
+        translations: {},
+        ingredientNames: [],
+        preppedNames: [],
+      });
     }
   };
 
@@ -838,6 +895,30 @@ export const OnboardingWizard = () => {
                       className="sm:col-span-3 p-3 sm:p-4 bg-bakery-cream rounded-2xl outline-none font-bold text-sm sm:text-base"
                       value={productForm.price}
                       onChange={e => setProductForm({ ...productForm, price: e.target.value })}
+                    />
+                    <input
+                      type="text"
+                      placeholder="Ingredients (comma separated)"
+                      className="sm:col-span-6 p-3 sm:p-4 bg-bakery-cream/70 border border-white/50 backdrop-blur-md rounded-2xl outline-none font-bold text-sm sm:text-base"
+                      value={productForm.ingredientNames.join(', ')}
+                      onChange={e =>
+                        setProductForm({
+                          ...productForm,
+                          ingredientNames: e.target.value.split(',').map(v => v.trim()).filter(Boolean),
+                        })
+                      }
+                    />
+                    <input
+                      type="text"
+                      placeholder="Prepped stock (comma separated)"
+                      className="sm:col-span-6 p-3 sm:p-4 bg-bakery-cream/70 border border-white/50 backdrop-blur-md rounded-2xl outline-none font-bold text-sm sm:text-base"
+                      value={productForm.preppedNames.join(', ')}
+                      onChange={e =>
+                        setProductForm({
+                          ...productForm,
+                          preppedNames: e.target.value.split(',').map(v => v.trim()).filter(Boolean),
+                        })
+                      }
                     />
                   </div>
                   <button 

@@ -7,6 +7,15 @@ import { ArrowLeft } from 'lucide-react';
 
 export const RegistrationForm = ({ onBack }: { onBack: () => void }) => {
   const { t, registerBusiness, addToast } = useApp();
+  const EMAIL_REGEX = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
+  const PHONE_LENGTH_BY_COUNTRY: Record<string, { min: number; max: number }> = {
+    US: { min: 10, max: 10 },
+    CA: { min: 10, max: 10 },
+    GB: { min: 10, max: 11 },
+    BE: { min: 9, max: 10 },
+    FR: { min: 9, max: 10 },
+    NL: { min: 9, max: 10 },
+  };
 
   const venueLabel = (venue: string) => {
     const map: Record<string, string> = {
@@ -100,6 +109,16 @@ export const RegistrationForm = ({ onBack }: { onBack: () => void }) => {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!EMAIL_REGEX.test(formData.ownerEmail.trim())) {
+      addToast(t('invalidCredentials'), "error");
+      return;
+    }
+    const phoneDigits = formData.ownerPhone.replace(/\D/g, '');
+    const phoneRule = PHONE_LENGTH_BY_COUNTRY[formData.country] || { min: 10, max: 12 };
+    if (phoneDigits.length < phoneRule.min || phoneDigits.length > phoneRule.max) {
+      addToast(`Phone number must be ${phoneRule.min}-${phoneRule.max} digits.`, "error");
+      return;
+    }
     if (formData.password !== formData.confirmPassword) {
       addToast(t('passwordsDontMatch'), "error");
       return;

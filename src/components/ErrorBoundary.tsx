@@ -16,7 +16,7 @@ export class ErrorBoundary extends React.Component<any, any> {
 
   render() {
     if ((this as any).state.hasError) {
-      const t = this.context?.t || ((key: string) => key);
+      const t = (this as any).context?.t || ((key: string) => key);
       return (
         <div className="min-h-screen bg-bakery-cream flex items-center justify-center p-4">
           <div className="max-w-md w-full bg-white rounded-[2.5rem] shadow-2xl p-8 text-center animate-fade-in">
