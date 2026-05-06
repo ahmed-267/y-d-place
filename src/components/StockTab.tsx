@@ -275,7 +275,7 @@ const StockTabContent = () => {
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-4">
           <h3 className="text-xl font-bold font-serif flex items-center gap-2">
             <span className="text-2xl">📦</span>
-            {t('preppedStock')}
+            {t('Prepped Stock')}
           </h3>
           <div className="flex items-center gap-4 w-full sm:w-auto">
             <div className="relative flex-1 sm:flex-none">
@@ -380,7 +380,7 @@ const StockTabContent = () => {
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-4">
           <h3 className="text-xl font-bold font-serif flex items-center gap-2">
             <span className="text-2xl">🥣</span>
-            {t('rawIngredients')}
+            {t('Raw Ingredients')}
           </h3>
           <div className="flex items-center gap-4 w-full sm:w-auto">
             <div className="relative flex-1 sm:flex-none">

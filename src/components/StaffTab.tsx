@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../AppContext';
-import { Plus, Trash2, ShieldAlert, Clock, Edit2, Search, Calendar, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Sparkles, Save, X } from 'lucide-react';
+import { Plus, Trash2, ShieldAlert, Clock, Edit2, Search, Calendar, ChevronLeft, ChevronRight, Sparkles, Save, X } from 'lucide-react';
 import { Modal } from './Modal';
 import { ConfirmDialog } from './ConfirmDialog';
 import { Pagination } from './Pagination';
@@ -33,7 +33,8 @@ export const StaffTab = () => {
   const [rotaPreview, setRotaPreview] = useState<RotaShift[] | null>(null);
   const [pendingGenerated, setPendingGenerated] = useState<RotaShift[] | null>(null);
   const [showOverwriteConfirm, setShowOverwriteConfirm] = useState(false);
-  const [showAvailability, setShowAvailability] = useState(true);
+  const [showAvailabilityModal, setShowAvailabilityModal] = useState(false);
+  const [draggingShiftId, setDraggingShiftId] = useState<string | null>(null);
   const [staffNeeded, setStaffNeeded] = useState<Record<number, number>>({
     0: 2,
     1: 2,
@@ -365,6 +366,7 @@ export const StaffTab = () => {
       return;
     }
     setRota(next);
+    syncRotaToWorkShifts(next);
   };
 
   const handleCellClick = (staffMember: User, dateKey: string) => {
@@ -415,6 +417,45 @@ export const StaffTab = () => {
     if (!config.exceptionFrom || !config.exceptionTo) return false;
     const target = toDateKey(date);
     return target >= config.exceptionFrom && target <= config.exceptionTo;
+  };
+
+  const hasAvailabilityConflict = (userId: number, date: Date, shift?: RotaShift) => {
+    if (!shift) return false;
+    const cfg = getAvailabilityConfig(userId);
+    const dayIndex = (date.getDay() + 6) % 7;
+    if (!cfg.days.includes(dayIndex)) return true;
+    if (isDateWithinException(date, cfg)) return true;
+    if (!shift.startTime || !shift.endTime) return false;
+    if (shift.startTime < cfg.startTime || shift.endTime > cfg.endTime) return true;
+    return false;
+  };
+
+  const computeShiftHours = (date: string, startTime?: string, endTime?: string) => {
+    if (!startTime || !endTime) return 0;
+    const start = new Date(`${date}T${startTime}`);
+    const end = new Date(`${date}T${endTime}`);
+    let diff = (end.getTime() - start.getTime()) / (1000 * 60 * 60);
+    if (diff < 0) diff += 24;
+    return parseFloat(Math.max(0, diff).toFixed(2));
+  };
+
+  const syncRotaToWorkShifts = (sourceRota: RotaShift[]) => {
+    const generated = sourceRota.map((r) => ({
+      id: `ROTA-SHIFT-${r.id}`,
+      userId: r.userId,
+      username: r.username,
+      fullName: r.fullName,
+      date: r.date,
+      startTime: r.startTime || '09:00',
+      endTime: r.endTime || '17:00',
+      breakMinutes: 0,
+      totalHours: computeShiftHours(r.date, r.startTime || '09:00', r.endTime || '17:00'),
+      notes: 'Synced from Rota',
+    })) as WorkShift[];
+    setWorkShifts(prev => {
+      const nonRota = prev.filter(s => !s.id.startsWith('ROTA-SHIFT-'));
+      return [...nonRota, ...generated];
+    });
   };
 
   const generateRotaForVisibleRange = () => {
@@ -484,7 +525,9 @@ export const StaffTab = () => {
     if (!rotaPreview) return;
     const previewDates = new Set(rotaPreview.map(r => r.date));
     const retained = rota.filter(r => !previewDates.has(r.date));
-    setRota([...retained, ...rotaPreview]);
+    const merged = [...retained, ...rotaPreview];
+    setRota(merged);
+    syncRotaToWorkShifts(merged);
     setRotaPreview(null);
     addToast(t('rotaSaved'));
   };
@@ -774,92 +817,226 @@ export const StaffTab = () => {
               <button
                 onClick={() => rotaView === 'weekly' ? setWeekOffset(weekOffset + 1) : setMonthOffset(monthOffset + 1)}
                 className="h-9 w-9 rounded-xl bg-white border border-bakery-beige text-bakery-brown hover:bg-bakery-beige/40 flex items-center justify-center"
+                >
+                  <ChevronRight size={16} />
+                </button>
+              {canEditRota && (
+                <button
+                  onClick={generateRotaForVisibleRange}
+                  className="btn-primary flex items-center gap-2 h-9 px-4 rounded-xl text-xs font-bold"
+                >
+                  <Sparkles size={16} />
+                  {t('autoGenerateRota')}
+                </button>
+              )}
+              <button
+                onClick={() => setShowAvailabilityModal(true)}
+                className="h-9 px-4 rounded-xl border border-bakery-beige bg-white text-bakery-brown/70 hover:bg-bakery-beige/30 text-xs font-bold inline-flex items-center gap-2"
               >
-                <ChevronRight size={16} />
+                <Calendar size={14} />
+                {t('availabilityExceptions')}
               </button>
             </div>
           </div>
 
-          <div className="card-bakery p-4 sm:p-6 space-y-4">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <Calendar size={18} className="text-bakery-brown" />
-                <h4 className="font-bold">{t('availabilityExceptions')}</h4>
+          <div className="card-bakery overflow-hidden">
+            <div className="p-3 border-b border-bakery-beige/70 bg-bakery-beige/20">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h4 className="text-[11px] font-black uppercase tracking-widest text-bakery-brown/50">{t('staffNeededPerDay')}</h4>
+                {canEditRota && (
+                  <div className="grid grid-cols-7 gap-2">
+                    {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((label, idx) => (
+                      <div key={label} className="flex items-center gap-1">
+                        <span className="text-[10px] font-black text-bakery-brown/50">{label}</span>
+                        <input
+                          type="number"
+                          min={0}
+                          className="w-12 h-8 p-1 border border-bakery-beige rounded-lg text-center text-xs font-bold"
+                          value={staffNeeded[idx] ?? 0}
+                          onChange={e => setStaffNeeded(prev => ({ ...prev, [idx]: Math.max(0, parseInt(e.target.value) || 0) }))}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-              <button
-                onClick={() => setShowAvailability(prev => !prev)}
-                className="h-8 px-3 rounded-xl border border-bakery-beige text-bakery-brown/70 hover:bg-bakery-beige/30 text-xs font-bold inline-flex items-center gap-1"
-              >
-                {showAvailability ? 'Hide' : 'Show'}
-                {showAvailability ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-              </button>
             </div>
-            {showAvailability && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-fade-in">
+            <div className="overflow-x-auto scrollbar-hide">
+              <table className="w-full text-left text-xs min-w-[850px]">
+                <thead className="bg-bakery-beige/30 text-bakery-brown/50 uppercase text-[10px] font-black tracking-widest">
+                  <tr>
+                    <th className="p-2 sticky left-0 bg-bakery-beige/30">{t('staffMember')}</th>
+                    {displayDates.map(date => (
+                      <th key={toDateKey(date)} className="p-2 text-center whitespace-nowrap">
+                        <div className="font-black">{date.toLocaleDateString(locale, { day: '2-digit' })}</div>
+                        <div className="text-[9px] text-bakery-brown/40">{date.toLocaleDateString(locale, { weekday: 'short' })}</div>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-bakery-beige">
+                  {staffForRota.map(staffMember => (
+                    <tr key={staffMember.id}>
+                      <td className="p-2 sticky left-0 bg-white">
+                        <div className="flex items-center gap-2">
+                          <div className="w-7 h-7 rounded-full bg-bakery-brown text-white text-[10px] font-black flex items-center justify-center shrink-0">
+                            {staffMember.fullName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+                          </div>
+                          <div className="leading-tight">
+                            <p className="font-bold text-xs">{staffMember.fullName}</p>
+                            <p className="text-[10px] text-bakery-brown/45">@{staffMember.username}</p>
+                          </div>
+                        </div>
+                      </td>
+                      {displayDates.map(date => {
+                        const dateKey = toDateKey(date);
+                        const shift = findShift(staffMember.id, dateKey);
+                        const isConflict = hasAvailabilityConflict(staffMember.id, date, shift);
+                        return (
+                          <td key={`${staffMember.id}-${dateKey}`} className="p-1">
+                            <div
+                              onClick={() => handleCellClick(staffMember, dateKey)}
+                              onDragOver={(e) => {
+                                if (canEditRota) e.preventDefault();
+                              }}
+                              onDrop={(e) => {
+                                if (!canEditRota) return;
+                                e.preventDefault();
+                                const payload = e.dataTransfer.getData('text/plain');
+                                const parts = payload.split('|');
+                                if (parts.length !== 4) return;
+                                const [shiftId, fromUserIdStr, start, end] = parts;
+                                const fromUserId = parseInt(fromUserIdStr, 10);
+                                if (!shiftId || Number.isNaN(fromUserId) || fromUserId === staffMember.id) return;
+                                const moved = effectiveRota.find(s => s.id === shiftId && s.userId === fromUserId && s.date === dateKey);
+                                if (!moved) return;
+                                const removed = effectiveRota.filter(s => s.id !== shiftId);
+                                const target = staffForRota.find(u => u.id === staffMember.id);
+                                if (!target) return;
+                                updateRotaList([
+                                  ...removed,
+                                  { ...moved, userId: target.id, username: target.username, fullName: target.fullName, startTime: start, endTime: end }
+                                ]);
+                              }}
+                              className={`relative min-h-[48px] rounded-xl border px-1 py-1 transition-all ${
+                                shift ? 'border-bakery-caramel bg-bakery-caramel/15' : 'border-bakery-beige bg-bakery-cream/20 hover:bg-bakery-beige/25'
+                              } ${isConflict ? 'ring-2 ring-rose-300 border-rose-300 bg-rose-50/70' : ''} ${!canEditRota ? 'cursor-default' : 'cursor-pointer'}`}
+                            >
+                              {shift ? (
+                                <div
+                                  draggable={canEditRota}
+                                  onDragStart={(e) => {
+                                    if (!canEditRota) return;
+                                    setDraggingShiftId(shift.id);
+                                    e.dataTransfer.setData('text/plain', `${shift.id}|${staffMember.id}|${shift.startTime || '09:00'}|${shift.endTime || '17:00'}`);
+                                  }}
+                                  onDragEnd={() => setDraggingShiftId(null)}
+                                  className={`inline-flex items-center justify-center w-full rounded-full px-2 py-1 text-[10px] font-black text-bakery-brown bg-bakery-caramel/40 border border-bakery-caramel/50 ${draggingShiftId === shift.id ? 'opacity-50' : ''}`}
+                                >
+                                  {(shift.startTime || '09:00')} - {(shift.endTime || '17:00')}
+                                </div>
+                              ) : (
+                                <div className="w-full h-full min-h-[38px] flex items-center justify-center text-bakery-brown/30 text-base font-black">+</div>
+                              )}
+                              {isConflict && (
+                                <span className="absolute -top-1 -right-1 text-[9px] font-black bg-rose-500 text-white rounded-full px-1.5 py-0.5">
+                                  Conflict
+                                </span>
+                              )}
+                              {editingCell && editingCell.userId === staffMember.id && editingCell.date === dateKey && (
+                                <div className="absolute z-20 left-1/2 top-full mt-2 -translate-x-1/2 w-48 bg-white border border-bakery-beige rounded-xl shadow-xl p-3 space-y-2">
+                                  <div>
+                                    <label className="block text-[10px] font-black uppercase text-bakery-brown/40 mb-1">{t('startTime')}</label>
+                                    <input
+                                      type="time"
+                                      className="w-full p-2 border border-bakery-beige rounded-lg text-xs"
+                                      value={cellStart}
+                                      onChange={e => setCellStart(e.target.value)}
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="block text-[10px] font-black uppercase text-bakery-brown/40 mb-1">{t('endTime')}</label>
+                                    <input
+                                      type="time"
+                                      className="w-full p-2 border border-bakery-beige rounded-lg text-xs"
+                                      value={cellEnd}
+                                      onChange={e => setCellEnd(e.target.value)}
+                                    />
+                                  </div>
+                                  <div className="flex gap-2 pt-2">
+                                    <button onClick={handleSaveCell} className="flex-1 bg-bakery-brown text-white rounded-lg py-2 text-[10px] font-bold">{t('save')}</button>
+                                    <button onClick={handleRemoveCell} className="flex-1 border border-bakery-beige rounded-lg py-2 text-[10px] font-bold text-bakery-brown/60">{t('remove')}</button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {canEditRota && showAvailabilityModal && (
+            <Modal title={t('availabilityExceptions')} onClose={() => setShowAvailabilityModal(false)}>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[70vh] overflow-y-auto pr-1">
                 {staffForRota.map(staffMember => (
-                  <div key={staffMember.id} className="space-y-2">
-                    <p className="text-xs font-bold text-bakery-brown/60">{staffMember.fullName}</p>
-                    {canEditRota ? (
-                      <div className="grid grid-cols-1 gap-2 p-3 rounded-xl border border-white/60 bg-white/50 backdrop-blur-md">
-                        <select
-                          multiple
-                          className="w-full p-2 border border-bakery-beige rounded-xl text-xs font-bold bg-white/80"
-                          value={getAvailabilityConfig(staffMember.id).days.map(String)}
-                          onChange={e => {
-                            const days = Array.from(e.target.selectedOptions).map(opt => parseInt((opt as HTMLOptionElement).value, 10));
-                            setAvailabilityConfig(staffMember.id, { days });
-                          }}
-                        >
-                          {dayLabels.map((day, idx) => (
-                            <option key={day} value={idx}>{day}</option>
-                          ))}
-                        </select>
-                        <div className="grid grid-cols-2 gap-2">
-                          <input
-                            type="time"
-                            className="p-2 border border-bakery-beige rounded-xl text-xs font-bold bg-white/80"
-                            value={getAvailabilityConfig(staffMember.id).startTime}
-                            onChange={e => setAvailabilityConfig(staffMember.id, { startTime: e.target.value })}
-                          />
-                          <input
-                            type="time"
-                            className="p-2 border border-bakery-beige rounded-xl text-xs font-bold bg-white/80"
-                            value={getAvailabilityConfig(staffMember.id).endTime}
-                            onChange={e => setAvailabilityConfig(staffMember.id, { endTime: e.target.value })}
-                          />
-                        </div>
-                        <div className="grid grid-cols-2 gap-2">
-                          <input
-                            type="date"
-                            className="p-2 border border-bakery-beige rounded-xl text-xs font-bold bg-white/80"
-                            value={getAvailabilityConfig(staffMember.id).exceptionFrom}
-                            onChange={e => setAvailabilityConfig(staffMember.id, { exceptionFrom: e.target.value })}
-                          />
-                          <input
-                            type="date"
-                            className="p-2 border border-bakery-beige rounded-xl text-xs font-bold bg-white/80"
-                            value={getAvailabilityConfig(staffMember.id).exceptionTo}
-                            onChange={e => setAvailabilityConfig(staffMember.id, { exceptionTo: e.target.value })}
-                          />
-                        </div>
+                  <div key={staffMember.id} className="p-3 rounded-xl border border-bakery-beige bg-white/80">
+                    <p className="text-xs font-black text-bakery-brown mb-2">{staffMember.fullName}</p>
+                    <div className="grid grid-cols-1 gap-2">
+                      <select
+                        multiple
+                        className="w-full p-2 border border-bakery-beige rounded-xl text-xs font-bold bg-white/80"
+                        value={getAvailabilityConfig(staffMember.id).days.map(String)}
+                        onChange={e => {
+                          const days = Array.from(e.target.selectedOptions).map(opt => parseInt((opt as HTMLOptionElement).value, 10));
+                          setAvailabilityConfig(staffMember.id, { days });
+                        }}
+                      >
+                        {dayLabels.map((day, idx) => (
+                          <option key={day} value={idx}>{day}</option>
+                        ))}
+                      </select>
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          type="time"
+                          className="p-2 border border-bakery-beige rounded-xl text-xs font-bold bg-white/80"
+                          value={getAvailabilityConfig(staffMember.id).startTime}
+                          onChange={e => setAvailabilityConfig(staffMember.id, { startTime: e.target.value })}
+                        />
+                        <input
+                          type="time"
+                          className="p-2 border border-bakery-beige rounded-xl text-xs font-bold bg-white/80"
+                          value={getAvailabilityConfig(staffMember.id).endTime}
+                          onChange={e => setAvailabilityConfig(staffMember.id, { endTime: e.target.value })}
+                        />
                       </div>
-                    ) : (
-                      <div className="p-3 bg-bakery-beige/30 rounded-xl text-sm text-bakery-brown/70 min-h-[70px]">
-                        {(() => {
-                          const cfg = getAvailabilityConfig(staffMember.id);
-                          return `${cfg.days.map(d => dayLabels[d]).join(', ')} | ${cfg.startTime}-${cfg.endTime}`;
-                        })()}
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          type="date"
+                          className="p-2 border border-bakery-beige rounded-xl text-xs font-bold bg-white/80"
+                          value={getAvailabilityConfig(staffMember.id).exceptionFrom}
+                          onChange={e => setAvailabilityConfig(staffMember.id, { exceptionFrom: e.target.value })}
+                        />
+                        <input
+                          type="date"
+                          className="p-2 border border-bakery-beige rounded-xl text-xs font-bold bg-white/80"
+                          value={getAvailabilityConfig(staffMember.id).exceptionTo}
+                          onChange={e => setAvailabilityConfig(staffMember.id, { exceptionTo: e.target.value })}
+                        />
                       </div>
-                    )}
+                    </div>
                   </div>
                 ))}
               </div>
-            )}
-          </div>
+            </Modal>
+          )}
 
           {canEditRota && (
-            <div className="card-bakery p-4 sm:p-6 space-y-4">
-              <h4 className="text-sm font-black uppercase tracking-widest text-bakery-brown/40">{t('staffNeededPerDay')}</h4>
+            <div className="hidden">
               <div className="grid grid-cols-2 md:grid-cols-7 gap-3">
                 {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((label, idx) => (
                   <div key={label} className="space-y-2">
@@ -902,92 +1079,6 @@ export const StaffTab = () => {
                 ? `${toDateKey(displayDates[0])} → ${toDateKey(displayDates[displayDates.length - 1])}`
                 : ''}
             </p>
-            {canEditRota && (
-              <button
-                onClick={generateRotaForVisibleRange}
-                className="btn-primary flex items-center gap-2 h-9 px-4 rounded-xl text-xs font-bold self-start sm:self-auto"
-              >
-                <Sparkles size={16} />
-                {t('autoGenerateRota')}
-              </button>
-            )}
-          </div>
-
-          <div className="card-bakery overflow-hidden">
-            <div className="overflow-x-auto scrollbar-hide">
-              <table className="w-full text-left text-xs min-w-[700px]">
-                <thead className="bg-bakery-beige/30 text-bakery-brown/50 uppercase text-[10px] font-black tracking-widest">
-                  <tr>
-                    <th className="p-3 sticky left-0 bg-bakery-beige/30">{t('staffMember')}</th>
-                    {displayDates.map(date => (
-                      <th key={toDateKey(date)} className="p-3 text-center whitespace-nowrap">
-                        <div className="font-black">{date.toLocaleDateString(locale, { day: '2-digit' })}</div>
-                        <div className="text-[10px] text-bakery-brown/40">{date.toLocaleDateString(locale, { weekday: 'short' })}</div>
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-bakery-beige">
-                  {staffForRota.map(staffMember => (
-                    <tr key={staffMember.id}>
-                      <td className="p-3 font-bold sticky left-0 bg-white">{staffMember.fullName}</td>
-                      {displayDates.map(date => {
-                        const dateKey = toDateKey(date);
-                        const shift = findShift(staffMember.id, dateKey);
-                        return (
-                          <td key={`${staffMember.id}-${dateKey}`} className="p-2 text-center">
-                            <div
-                              onClick={() => handleCellClick(staffMember, dateKey)}
-                              className={`relative cursor-pointer rounded-xl border px-2 py-3 text-[10px] font-bold transition-all ${
-                                shift ? 'border-bakery-brown bg-bakery-beige/40 text-bakery-brown' : 'border-bakery-beige text-bakery-brown/40 hover:bg-bakery-cream/40'
-                              } ${!canEditRota ? 'cursor-default' : ''}`}
-                            >
-                              {shift ? (
-                                <div>
-                                  <div>{t('scheduled')}</div>
-                                  {shift.startTime && shift.endTime && (
-                                    <div className="text-[9px] text-bakery-brown/60">{shift.startTime} - {shift.endTime}</div>
-                                  )}
-                                </div>
-                              ) : (
-                                <div>{t('notScheduled')}</div>
-                              )}
-
-                              {editingCell && editingCell.userId === staffMember.id && editingCell.date === dateKey && (
-                                <div className="absolute z-20 left-1/2 top-full mt-2 -translate-x-1/2 w-48 bg-white border border-bakery-beige rounded-xl shadow-xl p-3 space-y-2">
-                                  <div>
-                                    <label className="block text-[10px] font-black uppercase text-bakery-brown/40 mb-1">{t('startTime')}</label>
-                                    <input
-                                      type="time"
-                                      className="w-full p-2 border border-bakery-beige rounded-lg text-xs"
-                                      value={cellStart}
-                                      onChange={e => setCellStart(e.target.value)}
-                                    />
-                                  </div>
-                                  <div>
-                                    <label className="block text-[10px] font-black uppercase text-bakery-brown/40 mb-1">{t('endTime')}</label>
-                                    <input
-                                      type="time"
-                                      className="w-full p-2 border border-bakery-beige rounded-lg text-xs"
-                                      value={cellEnd}
-                                      onChange={e => setCellEnd(e.target.value)}
-                                    />
-                                  </div>
-                                  <div className="flex gap-2 pt-2">
-                                    <button onClick={handleSaveCell} className="flex-1 bg-bakery-brown text-white rounded-lg py-2 text-[10px] font-bold">{t('save')}</button>
-                                    <button onClick={handleRemoveCell} className="flex-1 border border-bakery-beige rounded-lg py-2 text-[10px] font-bold text-bakery-brown/60">{t('remove')}</button>
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
           </div>
         </section>
       )}
