@@ -1,8 +1,10 @@
 import React, { useMemo, useEffect, useRef, useState } from 'react';
 import { useApp } from '../AppContext';
-import { Euro, Calendar, TrendingUp, ShoppingBag, CreditCard, Banknote, Users } from 'lucide-react';
+import { Euro, TrendingUp, ShoppingBag, CreditCard, Banknote, ArrowRight, Rocket, AlertCircle, Download } from 'lucide-react';
 import Chart from 'chart.js/auto';
 import ChartDataLabels from 'chartjs-plugin-datalabels';
+import { exportPeriodReportPdf, ReportPeriod } from '../utils/pdfReport';
+import { normalizeEnabledModules } from '../types';
 
 Chart.register(ChartDataLabels);
 
@@ -14,8 +16,87 @@ type Bucket = {
   end: number;
 };
 
-export const OverviewTab = () => {
-  const { sales, products, businessSettings, formatPrice, user, loadDemoData, users, workShifts, t, tc, tp, lang } = useApp();
+interface OverviewTabProps {
+  setupRequired?: boolean;
+  onStartSetup?: () => void;
+  setupCompleted?: boolean;
+  onCompleteOnboarding?: () => void;
+}
+
+export const OverviewTab: React.FC<OverviewTabProps> = ({
+  setupRequired = false,
+  onStartSetup,
+  setupCompleted = false,
+}) => {
+  const {
+    sales, products, businessSettings, formatPrice, user, loadDemoData, users, workShifts,
+    t, tc, tp, lang, ingredients, preparedStock = [], setActiveTab, addToast,
+  } = useApp();
+
+  const lowStockItems = useMemo(() => {
+    const prepped = (preparedStock || [])
+      .filter(p => p.portions <= p.lowThreshold)
+      .map(p => ({
+        id: `p-${p.id}`,
+        name: p.name,
+        level: p.portions,
+        unit: t('portionsAbbr') || 'portions',
+        out: p.portions <= 0,
+      }));
+    const ings = (ingredients || [])
+      .filter(i => i.qty <= i.lowThreshold)
+      .map(i => ({
+        id: `i-${i.id}`,
+        name: i.name,
+        level: i.qty,
+        unit: i.unit,
+        out: i.qty <= 0,
+      }));
+    return [...prepped, ...ings]
+      .sort((a, b) => (a.out === b.out ? a.level - b.level : a.out ? -1 : 1))
+      .slice(0, 5);
+  }, [preparedStock, ingredients, t]);
+
+  const goToStockAttention = () => {
+    try {
+      sessionStorage.setItem('previsio_stock_view', 'attention');
+    } catch {
+      /* ignore */
+    }
+    setActiveTab('stock');
+  };
+
+  const nextSteps = useMemo(() => {
+    const modules = normalizeEnabledModules(businessSettings?.enabledModules);
+    return [
+      {
+        id: 'menu',
+        label: t('nextStepMenu'),
+        done: products.length >= 1,
+        action: () => setActiveTab('products'),
+      },
+      modules.stock && {
+        id: 'stock',
+        label: t('nextStepStock'),
+        done: ingredients.length > 0,
+        action: () => setActiveTab('stock'),
+      },
+      modules.staff && {
+        id: 'staff',
+        label: t('nextStepStaff'),
+        done: users.filter(u => u.role !== 'owner').length > 0,
+        action: () => setActiveTab('staff'),
+      },
+      {
+        id: 'sell',
+        label: t('nextStepSell'),
+        done: sales.length > 0,
+        action: () => setActiveTab('cashier'),
+      },
+    ].filter(Boolean) as { id: string; label: string; done: boolean; action: () => void }[];
+  }, [products.length, ingredients.length, users, sales.length, setActiveTab, businessSettings?.enabledModules, t]);
+
+  const pendingSteps = nextSteps.filter(s => !s.done);
 
   const revenueChartRef = useRef<HTMLCanvasElement>(null);
   const revenueChartInstance = useRef<Chart | null>(null);
@@ -240,6 +321,46 @@ export const OverviewTab = () => {
     return total / salesInPeriod.length;
   }, [salesInPeriod]);
 
+  const periodRevenue = useMemo(
+    () => salesInPeriod.reduce((acc, s) => acc + s.subtotal, 0),
+    [salesInPeriod]
+  );
+  const periodItemsSold = useMemo(
+    () => salesInPeriod.reduce((acc, s) => acc + s.items.reduce((n, i) => n + i.qty, 0), 0),
+    [salesInPeriod]
+  );
+
+  const handleDownloadReport = (reportPeriod: ReportPeriod) => {
+    exportPeriodReportPdf(sales, products, reportPeriod, {
+      tp,
+      tc,
+      currencySymbol: businessSettings?.currencySymbol,
+      businessName: businessSettings?.name,
+      labels: {
+        title: t('downloadReport'),
+        business: t('businessName'),
+        report: t('period'),
+        from: t('timeOffFrom'),
+        to: t('timeOffTo'),
+        allTime: t('allTime'),
+        totalSales: t('totalRevenue'),
+        orders: t('orders'),
+        itemsSold: t('units'),
+        aov: t('averageOrderValue'),
+        cash: t('cash'),
+        card: t('card'),
+        categories: t('categories'),
+        products: t('products'),
+        category: t('category'),
+        product: t('productName'),
+        units: t('units'),
+        revenue: t('revenue'),
+        total: t('total'),
+      },
+    });
+    addToast(t('reportDownloaded'), 'success');
+  };
+
   const busiestHours = useMemo(() => {
     const source = salesInPeriod.length > 0 ? salesInPeriod : sales;
     const hours = Array.from({ length: 24 }, () => 0);
@@ -261,23 +382,6 @@ export const OverviewTab = () => {
       .slice(0, 3);
     return { hours, max, topHours };
   }, [salesInPeriod, sales]);
-
-  const stats = useMemo(() => {
-    const now = new Date();
-    const todayStart = new Date(now);
-    todayStart.setHours(0, 0, 0, 0);
-    const weekStart = startOfWeek(new Date());
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const yearStart = new Date(now.getFullYear(), 0, 1);
-
-    const todayRev = sales.filter(s => s.timestamp >= todayStart.getTime()).reduce((acc, s) => acc + s.subtotal, 0);
-    const weekRev = sales.filter(s => s.timestamp >= weekStart.getTime()).reduce((acc, s) => acc + s.subtotal, 0);
-    const monthRev = sales.filter(s => s.timestamp >= monthStart.getTime()).reduce((acc, s) => acc + s.subtotal, 0);
-    const yearRev = sales.filter(s => s.timestamp >= yearStart.getTime()).reduce((acc, s) => acc + s.subtotal, 0);
-    const allRev = sales.reduce((acc, s) => acc + s.subtotal, 0);
-
-    return { todayRev, weekRev, monthRev, yearRev, allRev };
-  }, [sales]);
 
   const staffDirectory = useMemo(() => {
     const map = new Map<string, string>();
@@ -439,276 +543,261 @@ export const OverviewTab = () => {
     };
   }, [buckets, revenueByBucket, categoryStats, businessSettings, t, busiestHours]);
 
-  return (
-    <div className="space-y-10 animate-fade-in max-w-full overflow-hidden">
-      <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-black font-serif text-bakery-brown">{t('businessOverview')}</h2>
-        {user?.role === 'owner' && sales.length < 10 && (
-          <button 
-            onClick={loadDemoData}
-            className="px-4 py-2 bg-bakery-accent text-bakery-brown rounded-xl font-bold text-xs hover:bg-bakery-brown hover:text-white transition-all active:scale-95 flex items-center gap-2"
+  if (setupRequired && products.length === 0) {
+    return (
+      <div className="min-h-[60vh] flex items-center justify-center p-6">
+        <div className="max-w-lg text-center">
+          <div className="mx-auto mb-6 w-20 h-20 rounded-3xl bg-bakery-beige text-bakery-brown flex items-center justify-center">
+            <Rocket size={36} />
+          </div>
+          <h2 className="text-3xl font-black font-serif text-bakery-brown mb-3">
+            Welcome to {businessSettings?.name || 'PreVisio'}
+          </h2>
+          <p className="text-bakery-brown/60 mb-8">
+            Add your business profile and a menu to start selling. Everything else can wait.
+          </p>
+          <button
+            onClick={onStartSetup}
+            className="px-8 py-4 rounded-2xl font-bold bg-bakery-brown text-white inline-flex items-center gap-2"
           >
-            <TrendingUp size={16} />
+            <Rocket size={18} />
+            Start setup
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4 animate-fade-in max-w-full overflow-hidden">
+      {(pendingSteps.length > 0 || lowStockItems.length > 0) && user?.role === 'owner' && (
+        <section className="bg-white border border-bakery-beige rounded-2xl p-3 sm:p-4 space-y-3">
+          {pendingSteps.length > 0 && (
+            <div>
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <h3 className="text-sm font-bold font-serif text-bakery-brown">{t('whatToDoNext')}</h3>
+                {onStartSetup && !setupCompleted && (
+                  <button type="button" onClick={onStartSetup} className="text-[10px] font-bold uppercase tracking-wider text-bakery-caramel hover:underline">
+                    {t('resumeSetup')}
+                  </button>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {pendingSteps.slice(0, 4).map(step => (
+                  <button
+                    key={step.id}
+                    type="button"
+                    onClick={step.action}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-bakery-beige/50 hover:bg-bakery-beige text-xs font-bold text-bakery-brown"
+                  >
+                    <ArrowRight size={12} className="opacity-50" />
+                    {step.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {lowStockItems.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-bakery-beige/60">
+              <AlertCircle size={14} className="text-orange-500 shrink-0" />
+              <span className="text-xs font-bold text-bakery-brown">{t('lowStockOverview')}:</span>
+              {lowStockItems.slice(0, 3).map(item => (
+                <span key={item.id} className={`text-xs font-bold px-2 py-0.5 rounded-full ${item.out ? 'bg-rose-50 text-rose-700' : 'bg-orange-50 text-orange-700'}`}>
+                  {item.name}
+                </span>
+              ))}
+              <button type="button" onClick={goToStockAttention} className="text-[10px] font-bold uppercase tracking-wider text-bakery-caramel ml-auto">
+                {t('viewAllLowStock')} →
+              </button>
+            </div>
+          )}
+        </section>
+      )}
+
+      {user?.role === 'owner' && sales.length === 0 && (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={loadDemoData}
+            className="text-xs font-bold text-bakery-brown/50 hover:text-bakery-brown inline-flex items-center gap-1"
+          >
+            <TrendingUp size={12} />
             {t('loadDemoData')}
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
-      <section className="space-y-6">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <h3 className="text-xl font-black font-serif text-bakery-brown">{t('revenue')}</h3>
-          <div className="flex items-center gap-2 bg-bakery-beige/40 p-1 rounded-2xl">
-            {periodOptions.map(option => (
+      <section className="space-y-3">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-base font-bold font-serif text-bakery-brown mr-1">{t('periodKpis')}</h3>
+            <div className="flex items-center gap-1 bg-bakery-beige/40 p-1 rounded-xl">
+              {periodOptions.map(option => (
+                <button
+                  key={option.id}
+                  type="button"
+                  onClick={() => setPeriod(option.id)}
+                  className={`h-8 px-2.5 rounded-lg text-[10px] font-bold uppercase tracking-widest ${
+                    period === option.id ? 'bg-bakery-brown text-white' : 'text-bakery-brown/60'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mr-1 inline-flex items-center gap-1">
+              <Download size={12} />
+              {t('downloadReport')}
+            </span>
+            {([
+              { id: 'daily' as const, label: t('dailyReport') },
+              { id: 'weekly' as const, label: t('weeklyReport') },
+              { id: 'monthly' as const, label: t('monthlyReport') },
+              { id: 'total' as const, label: t('totalReport') },
+            ]).map(r => (
               <button
-                key={option.id}
-                onClick={() => setPeriod(option.id)}
-                className={`h-9 px-3 rounded-xl text-[10px] font-bold uppercase tracking-widest ${
-                  period === option.id ? 'bg-bakery-brown text-white' : 'text-bakery-brown/60'
-                }`}
+                key={r.id}
+                type="button"
+                onClick={() => handleDownloadReport(r.id)}
+                className="h-8 px-3 rounded-lg text-[10px] font-bold uppercase tracking-widest bg-white border border-bakery-beige text-bakery-brown hover:border-bakery-caramel"
               >
-                {option.label}
+                {r.label}
               </button>
             ))}
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 sm:gap-6">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           {[
-            { label: t('today'), val: formatPrice(stats.todayRev), icon: Euro },
-            { label: t('thisWeek'), val: formatPrice(stats.weekRev), icon: Calendar },
-            { label: t('thisMonth'), val: formatPrice(stats.monthRev), icon: TrendingUp },
-            { label: t('thisYear'), val: formatPrice(stats.yearRev), icon: Euro },
-            { label: t('allTime'), val: formatPrice(stats.allRev), icon: ShoppingBag }
+            { label: t('revenue'), val: formatPrice(periodRevenue), icon: Euro },
+            { label: t('orders'), val: String(salesInPeriod.length), icon: ShoppingBag },
+            { label: t('units'), val: String(periodItemsSold), icon: TrendingUp },
+            { label: t('averageOrderValue'), val: formatPrice(averageOrderValue), icon: CreditCard },
           ].map(s => (
-            <div key={s.label} className="card-bakery p-4 sm:p-6 flex justify-between items-center">
+            <div key={s.label} className="card-bakery p-3 sm:p-4 flex justify-between items-center">
               <div className="min-w-0">
-                <p className="text-[10px] font-bold text-bakery-brown/50 uppercase tracking-wider mb-1 truncate">{s.label}</p>
-                <p className="text-lg sm:text-xl font-black font-serif truncate">{s.val}</p>
+                <p className="text-[10px] font-bold text-bakery-brown/50 uppercase tracking-wider mb-0.5 truncate">{s.label}</p>
+                <p className="text-base sm:text-lg font-black font-serif truncate">{s.val}</p>
               </div>
               <div className="p-2 bg-bakery-beige rounded-xl text-bakery-brown shrink-0 ml-2">
-                <s.icon size={20} />
+                <s.icon size={16} />
               </div>
             </div>
           ))}
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="card-bakery p-4 sm:p-6">
-            <h4 className="text-lg font-bold font-serif mb-6">{t('revenueTrends')}</h4>
-            <div className="h-72 w-full"><canvas ref={revenueChartRef}></canvas></div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          <div className="card-bakery p-3 sm:p-4">
+            <h4 className="text-sm font-bold font-serif mb-3">{t('revenueTrends')}</h4>
+            <div className="h-44 w-full"><canvas ref={revenueChartRef}></canvas></div>
           </div>
-          <div className="card-bakery p-4 sm:p-6">
-            <h4 className="text-lg font-bold font-serif mb-6">{t('revenueByCategory')}</h4>
-            <div className="h-72 w-full"><canvas ref={categoryChartRef}></canvas></div>
+          <div className="card-bakery p-3 sm:p-4">
+            <h4 className="text-sm font-bold font-serif mb-3">{t('revenueByCategory')}</h4>
+            <div className="h-44 w-full"><canvas ref={categoryChartRef}></canvas></div>
           </div>
         </div>
       </section>
 
-      <section className="space-y-6">
-        <h3 className="text-xl font-black font-serif text-bakery-brown">{t('sales')}</h3>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="card-bakery p-4 sm:p-6 lg:col-span-2">
-            <h4 className="text-lg font-bold font-serif mb-6">{t('bestSellers')}</h4>
-            <div className="space-y-4">
-              {bestSellers.map((item, idx) => (
-                <div key={item.id} className="flex items-center justify-between p-4 bg-bakery-cream rounded-2xl">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <span className="w-7 h-7 rounded-full bg-bakery-brown text-white text-[10px] font-black flex items-center justify-center shrink-0">{idx + 1}</span>
-                    <div className="min-w-0">
-                      <p className="font-bold text-sm truncate">{item.emoji} {item.name}</p>
-                      <p className="text-[10px] text-bakery-brown/50 uppercase font-bold">{item.qty} {t('units')}</p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p className="font-black text-sm">{formatPrice(item.revenue)}</p>
-                  </div>
+      <section className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+        <div className="card-bakery p-3 sm:p-4 lg:col-span-2">
+          <h4 className="text-sm font-bold font-serif mb-3">{t('bestSellers')}</h4>
+          <div className="space-y-2">
+            {bestSellers.map((item, idx) => (
+              <div key={item.id} className="flex items-center justify-between px-3 py-2 bg-bakery-cream rounded-xl">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="w-6 h-6 rounded-full bg-bakery-brown text-white text-[10px] font-black flex items-center justify-center shrink-0">{idx + 1}</span>
+                  <p className="font-bold text-sm truncate">{item.emoji} {item.name}</p>
+                  <span className="text-[10px] text-bakery-brown/50 font-bold shrink-0">{item.qty}</span>
                 </div>
-              ))}
-              {bestSellers.length === 0 && (
-                <p className="text-center text-bakery-brown/40 py-8 italic">{t('noSalesData')}</p>
-              )}
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            <div className="card-bakery p-4 sm:p-6">
-              <h4 className="text-lg font-bold font-serif mb-6">{t('paymentBreakdown')}</h4>
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
-                      <Banknote size={16} />
-                    </div>
-                    <div>
-                      <p className="text-xs font-bold uppercase text-bakery-brown/40">{t('cash')}</p>
-                      <p className="font-black text-sm">{paymentBreakdown.cashPercent}%</p>
-                    </div>
-                  </div>
-                  <p className="font-black text-sm">{formatPrice(paymentBreakdown.totals.cash)}</p>
-                </div>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center">
-                      <CreditCard size={16} />
-                    </div>
-                    <div>
-                      <p className="text-xs font-bold uppercase text-bakery-brown/40">{t('card')}</p>
-                      <p className="font-black text-sm">{paymentBreakdown.cardPercent}%</p>
-                    </div>
-                  </div>
-                  <p className="font-black text-sm">{formatPrice(paymentBreakdown.totals.card)}</p>
-                </div>
-                <div className="w-full bg-bakery-beige rounded-full h-2 overflow-hidden flex">
-                  <div className="bg-emerald-500 h-full" style={{ width: `${paymentBreakdown.cashPercent}%` }}></div>
-                  <div className="bg-blue-500 h-full" style={{ width: `${paymentBreakdown.cardPercent}%` }}></div>
-                </div>
-                <p className="text-[10px] text-bakery-brown/50 uppercase tracking-widest font-bold">{paymentBreakdown.totalCount} {t('orders')}</p>
+                <p className="font-black text-sm shrink-0">{formatPrice(item.revenue)}</p>
               </div>
-            </div>
-
-            <div className="card-bakery p-4 sm:p-6">
-              <h4 className="text-sm font-black uppercase tracking-widest text-bakery-brown/50 mb-2">{t('averageOrderValue')}</h4>
-              <p className="text-2xl font-black font-serif text-bakery-brown">{formatPrice(averageOrderValue)}</p>
-              <p className="text-xs text-bakery-brown/50">{t('basedOnOrders').replace('{count}', String(salesInPeriod.length))}</p>
-            </div>
-
-            <div className="card-bakery p-4 sm:p-6">
-              <h4 className="text-sm font-black uppercase tracking-widest text-bakery-brown/50 mb-4">{t('busiestHours')}</h4>
-              {busiestHours.topHours.length > 0 ? (
-                <p className="text-xs text-bakery-brown/60 mb-3">
-                  Peak: {busiestHours.topHours.map(h => `${h.hour}:00 (${h.count})`).join(' • ')}
-                </p>
-              ) : (
-                <p className="text-xs text-bakery-brown/40 mb-3 italic">{t('noSalesData')}</p>
-              )}
-              <div className="h-28 w-full">
-                <canvas ref={busiestChartRef}></canvas>
-              </div>
-            </div>
+            ))}
+            {bestSellers.length === 0 && (
+              <p className="text-center text-bakery-brown/40 py-6 italic text-sm">{t('noSalesData')}</p>
+            )}
           </div>
         </div>
 
-        <div className="card-bakery p-4 sm:p-6">
-          <h4 className="text-lg font-bold font-serif mb-6">{t('whatsSelling')}</h4>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
-            {categoryStats.length > 0 ? categoryStats.map(cat => {
-              const maxUnits = Math.max(...categoryStats.map(c => c.units));
-              const percent = maxUnits ? (cat.units / maxUnits) * 100 : 0;
-              return (
-                <div key={cat.name} className="space-y-2">
-                  <div className="flex justify-between text-xs sm:text-sm">
-                    <span className="font-bold truncate mr-2">{cat.name}</span>
-                    <span className="text-bakery-brown/60 shrink-0">{cat.units} {t('units')}</span>
-                  </div>
-                  <div className="w-full bg-bakery-beige rounded-full h-1.5 overflow-hidden">
-                    <div className="bg-bakery-caramel h-full" style={{ width: `${percent}%` }}></div>
-                  </div>
-                </div>
-              );
-            }) : (
-              <p className="text-center text-bakery-brown/40 italic">{t('noSalesData')}</p>
-            )}
+        <div className="card-bakery p-3 sm:p-4 space-y-3">
+          <h4 className="text-sm font-bold font-serif">{t('salesSnapshot')}</h4>
+          <div className="flex items-center justify-between text-sm">
+            <span className="inline-flex items-center gap-1.5 font-bold text-bakery-brown/60"><Banknote size={14} />{t('cash')}</span>
+            <span className="font-black">{formatPrice(paymentBreakdown.totals.cash)} · {paymentBreakdown.cashPercent}%</span>
           </div>
+          <div className="flex items-center justify-between text-sm">
+            <span className="inline-flex items-center gap-1.5 font-bold text-bakery-brown/60"><CreditCard size={14} />{t('card')}</span>
+            <span className="font-black">{formatPrice(paymentBreakdown.totals.card)} · {paymentBreakdown.cardPercent}%</span>
+          </div>
+          <div className="w-full bg-bakery-beige rounded-full h-1.5 overflow-hidden flex">
+            <div className="bg-emerald-500 h-full" style={{ width: `${paymentBreakdown.cashPercent}%` }} />
+            <div className="bg-blue-500 h-full" style={{ width: `${paymentBreakdown.cardPercent}%` }} />
+          </div>
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('busiestHours')}</p>
+            <div className="h-20 w-full"><canvas ref={busiestChartRef}></canvas></div>
+          </div>
+          {categoryStats.length > 0 && (
+            <div className="pt-2 border-t border-bakery-beige/50 space-y-1.5">
+              {categoryStats.slice(0, 4).map(cat => (
+                <div key={cat.name} className="flex justify-between text-xs gap-2">
+                  <span className="font-bold truncate">{cat.name}</span>
+                  <span className="text-bakery-brown/60 shrink-0">{cat.units} · {formatPrice(cat.revenue)}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </section>
 
       {user?.role === 'owner' && (
-        <section className="space-y-6">
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-            <h3 className="text-xl font-black font-serif text-bakery-brown">{t('staffPerformance')}</h3>
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="flex items-center gap-2 bg-bakery-beige/40 p-1 rounded-2xl">
-                {periodOptions.map(option => (
-                  <button
-                    key={option.id}
-                    onClick={() => setStaffPeriod(option.id)}
-                    className={`h-9 px-3 rounded-xl text-[10px] font-bold uppercase tracking-widest ${
-                      staffPeriod === option.id ? 'bg-bakery-brown text-white' : 'text-bakery-brown/60'
-                    }`}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="date"
-                  value={staffDateRange.from}
-                  onChange={e => { setStaffDateRange(prev => ({ ...prev, from: e.target.value })); setStaffPeriod('custom'); }}
-                  className="h-9 px-3 border border-bakery-beige rounded-xl text-xs font-bold"
-                />
-                <input
-                  type="date"
-                  value={staffDateRange.to}
-                  onChange={e => { setStaffDateRange(prev => ({ ...prev, to: e.target.value })); setStaffPeriod('custom'); }}
-                  className="h-9 px-3 border border-bakery-beige rounded-xl text-xs font-bold"
-                />
-              </div>
+        <section className="space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <h3 className="text-base font-bold font-serif text-bakery-brown">{t('staffPerformance')}</h3>
+            <div className="flex items-center gap-1 bg-bakery-beige/40 p-1 rounded-xl">
+              {periodOptions.map(option => (
+                <button
+                  key={option.id}
+                  type="button"
+                  onClick={() => setStaffPeriod(option.id)}
+                  className={`h-8 px-2.5 rounded-lg text-[10px] font-bold uppercase tracking-widest ${
+                    staffPeriod === option.id ? 'bg-bakery-brown text-white' : 'text-bakery-brown/60'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
             </div>
           </div>
 
-          <div className="card-bakery p-4 sm:p-6 space-y-4">
-            <h4 className="text-lg font-bold font-serif">{t('staffLeaderboard')}</h4>
-            <div className="space-y-4">
-              {staffPerformance.map((staff, idx) => {
-                const rankLabel = idx === 0 ? t('rankFirst') : idx === 1 ? t('rankSecond') : idx === 2 ? t('rankThird') : `${idx + 1}`;
-                const percent = topEfficiency ? Math.min(100, (staff.revenuePerHour / topEfficiency) * 100) : 0;
-                return (
-                  <div key={staff.username} className="p-4 bg-bakery-cream rounded-2xl">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div className="flex items-center gap-3">
-                        <span className="w-8 h-8 rounded-full bg-bakery-brown text-white text-[10px] font-black flex items-center justify-center">{rankLabel}</span>
-                        <div>
-                          <p className="font-bold text-sm">{staff.fullName}</p>
-                          <p className="text-[10px] text-bakery-brown/50">@{staff.username}</p>
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap gap-4 text-xs font-bold text-bakery-brown">
-                        <span>{t('ordersProcessed')}: {staff.orders}</span>
-                        <span>{t('totalRevenue')}: {formatPrice(staff.revenue)}</span>
-                        <span>{t('revenuePerHour')}: {formatPrice(staff.revenuePerHour)}</span>
-                      </div>
+          <div className="card-bakery p-3 sm:p-4 space-y-2">
+            {staffPerformance.slice(0, 5).map((staff, idx) => {
+              const rankLabel = idx === 0 ? t('rankFirst') : idx === 1 ? t('rankSecond') : idx === 2 ? t('rankThird') : `${idx + 1}`;
+              const percent = topEfficiency ? Math.min(100, (staff.revenuePerHour / topEfficiency) * 100) : 0;
+              return (
+                <div key={staff.username} className="px-3 py-2.5 bg-bakery-cream rounded-xl">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="w-7 h-7 rounded-full bg-bakery-brown text-white text-[10px] font-black flex items-center justify-center shrink-0">{rankLabel}</span>
+                      <p className="font-bold text-sm truncate">{staff.fullName}</p>
                     </div>
-                    <div className="w-full bg-bakery-beige rounded-full h-2 mt-3">
-                      <div className="bg-bakery-caramel h-full rounded-full" style={{ width: `${percent}%` }}></div>
+                    <div className="flex flex-wrap gap-3 text-[11px] font-bold text-bakery-brown">
+                      <span>{staff.orders} {t('orders')}</span>
+                      <span>{formatPrice(staff.revenue)}</span>
+                      <span>{formatPrice(staff.revenuePerHour)}/h</span>
+                      <span>{staff.totalHours.toFixed(1)}h</span>
                     </div>
                   </div>
-                );
-              })}
-              {staffPerformance.length === 0 && (
-                <p className="text-center text-bakery-brown/40 italic">{t('noStaffData')}</p>
-              )}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {staffPerformance.map(staff => (
-              <div key={staff.username} className="card-bakery p-4 sm:p-6 space-y-3">
-                <div className="flex items-center gap-2">
-                  <Users size={16} className="text-bakery-brown" />
-                  <p className="font-bold">{staff.fullName}</p>
-                </div>
-                <div className="grid grid-cols-2 gap-3 text-xs">
-                  <div>
-                    <p className="text-bakery-brown/50 uppercase font-black text-[10px]">{t('shiftsWorked')}</p>
-                    <p className="font-bold text-sm">{staff.shiftsWorked}</p>
-                  </div>
-                  <div>
-                    <p className="text-bakery-brown/50 uppercase font-black text-[10px]">{t('totalHours')}</p>
-                    <p className="font-bold text-sm">{staff.totalHours.toFixed(2)}</p>
-                  </div>
-                  <div>
-                    <p className="text-bakery-brown/50 uppercase font-black text-[10px]">{t('avgOrdersPerShift')}</p>
-                    <p className="font-bold text-sm">{staff.avgOrdersPerShift.toFixed(1)}</p>
-                  </div>
-                  <div>
-                    <p className="text-bakery-brown/50 uppercase font-black text-[10px]">{t('avgRevenuePerShift')}</p>
-                    <p className="font-bold text-sm">{formatPrice(staff.avgRevenuePerShift)}</p>
+                  <div className="w-full bg-bakery-beige rounded-full h-1.5 mt-2">
+                    <div className="bg-bakery-caramel h-full rounded-full" style={{ width: `${percent}%` }} />
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
+            {staffPerformance.length === 0 && (
+              <p className="text-center text-bakery-brown/40 italic text-sm py-4">{t('noStaffData')}</p>
+            )}
           </div>
         </section>
       )}

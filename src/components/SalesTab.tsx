@@ -1,15 +1,16 @@
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useApp } from '../AppContext';
 import { Search, Download, ChevronDown, ChevronUp, Calendar as CalendarIcon, Edit2, Trash2, Plus } from 'lucide-react';
 import { Sale, SaleItem } from '../types';
-import { Pagination } from './Pagination';
+import { DataTablePagination, useTablePagination } from './DataTablePagination';
 import { ConfirmDialog } from './ConfirmDialog';
 import { Modal } from './Modal';
 import { toSearchValue, priceMatchesQuery } from '../utils/search';
+import { SortableTh } from '../utils/tableSort';
 
 export const SalesTab = () => {
-  const { sales, setSales, t, formatPrice, addToast, products, tp, lang } = useApp();
+  const { sales, updateSale, deleteSale, t, formatPrice, addToast, products, tp, lang } = useApp();
   type SortKey = 'dateTime' | 'items' | 'total' | 'payment' | 'cashier';
   const [filter, setFilter] = useState('All');
   const [search, setSearch] = useState('');
@@ -18,10 +19,8 @@ export const SalesTab = () => {
   const [selectedWeek, setSelectedWeek] = useState('');
   const [selectedMonth, setSelectedMonth] = useState('');
   
-  const [currentPage, setCurrentPage] = useState(1);
   const [sortKey, setSortKey] = useState<SortKey>('dateTime');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
-  const itemsPerPage = 10;
   const [editSale, setEditSale] = useState<Sale | null>(null);
   const [deleteSaleConfirm, setDeleteSaleConfirm] = useState<Sale | null>(null);
 
@@ -139,35 +138,24 @@ export const SalesTab = () => {
     return sortDirection === 'desc' ? sorted.reverse() : sorted;
   }, [sales, filter, search, dateRange, selectedWeek, selectedMonth, formatPrice, locale, productMap, lang, tp, t, sortKey, sortDirection]);
 
-  const paginatedSales = useMemo(() => {
-    const start = (currentPage - 1) * itemsPerPage;
-    return filteredSales.slice(start, start + itemsPerPage);
-  }, [filteredSales, currentPage]);
-
-  const totalPages = Math.ceil(filteredSales.length / itemsPerPage);
-
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [filter, search, dateRange, selectedWeek, selectedMonth]);
-
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [sales]);
+  const salesPaging = useTablePagination(filteredSales.length, 10, `${filter}|${search}|${dateRange.from}|${dateRange.to}|${selectedWeek}|${selectedMonth}`);
+  const paginatedSales = useMemo(
+    () => salesPaging.slice(filteredSales),
+    [filteredSales, salesPaging.page, salesPaging.pageSize, salesPaging.start]
+  );
 
   const totalRevenue = filteredSales.reduce((acc, s) => acc + s.subtotal, 0);
 
   const handleDeleteSale = () => {
     if (!deleteSaleConfirm) return;
-    setSales(sales.filter(s => s.id !== deleteSaleConfirm.id));
-    addToast(t('saleDeleted'), "info");
+    deleteSale(deleteSaleConfirm.id);
     setDeleteSaleConfirm(null);
   };
 
   const handleEditSave = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editSale) return;
-    setSales(sales.map(s => s.id === editSale.id ? editSale : s));
-    addToast(t('saleUpdated'));
+    updateSale(editSale);
     setEditSale(null);
   };
 
@@ -199,8 +187,8 @@ export const SalesTab = () => {
               { id: 'WeekQuick', label: t('thisWeek') },
               { id: 'MonthQuick', label: t('thisMonth') },
               { id: 'Custom', label: t('dateRange') },
-              { id: 'WeekPicker', label: t('thisWeek') },
-              { id: 'MonthPicker', label: t('thisMonth') }
+              { id: 'WeekPicker', label: t('pickWeek') || t('thisWeek') },
+              { id: 'MonthPicker', label: t('pickMonth') || t('thisMonth') },
             ].map(f => (
               <button 
                 key={f.id} 
@@ -292,36 +280,11 @@ export const SalesTab = () => {
           <table className="w-full text-left text-sm min-w-[700px]">
             <thead className="bg-bakery-beige/30 text-bakery-brown/40 uppercase text-[10px] font-black tracking-widest">
               <tr>
-                <th className="p-4">
-                  <button onClick={() => toggleSort('dateTime')} className="inline-flex items-center gap-1">
-                    {t('dateTime')}
-                    {sortKey === 'dateTime' && (sortDirection === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />)}
-                  </button>
-                </th>
-                <th className="p-4">
-                  <button onClick={() => toggleSort('items')} className="inline-flex items-center gap-1">
-                    {t('itemsSummary')}
-                    {sortKey === 'items' && (sortDirection === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />)}
-                  </button>
-                </th>
-                <th className="p-4">
-                  <button onClick={() => toggleSort('total')} className="inline-flex items-center gap-1">
-                    {t('total')}
-                    {sortKey === 'total' && (sortDirection === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />)}
-                  </button>
-                </th>
-                <th className="p-4">
-                  <button onClick={() => toggleSort('payment')} className="inline-flex items-center gap-1">
-                    {t('payment')}
-                    {sortKey === 'payment' && (sortDirection === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />)}
-                  </button>
-                </th>
-                <th className="p-4">
-                  <button onClick={() => toggleSort('cashier')} className="inline-flex items-center gap-1">
-                    {t('cashier')}
-                    {sortKey === 'cashier' && (sortDirection === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />)}
-                  </button>
-                </th>
+                <SortableTh label={t('dateTime')} column="dateTime" sortKey={sortKey} sortDirection={sortDirection} onSort={toggleSort} />
+                <SortableTh label={t('itemsSummary')} column="items" sortKey={sortKey} sortDirection={sortDirection} onSort={toggleSort} />
+                <SortableTh label={t('total')} column="total" sortKey={sortKey} sortDirection={sortDirection} onSort={toggleSort} />
+                <SortableTh label={t('payment')} column="payment" sortKey={sortKey} sortDirection={sortDirection} onSort={toggleSort} />
+                <SortableTh label={t('cashier')} column="cashier" sortKey={sortKey} sortDirection={sortDirection} onSort={toggleSort} />
                 <th className="p-4"></th>
               </tr>
             </thead>
@@ -403,14 +366,13 @@ export const SalesTab = () => {
         )}
       </div>
 
-      {filteredSales.length > itemsPerPage && (
-        <Pagination 
-          currentPage={currentPage}
-          totalPages={totalPages}
-          onPageChange={setCurrentPage}
-          t={t}
-        />
-      )}
+      <DataTablePagination
+        page={salesPaging.page}
+        pageSize={salesPaging.pageSize}
+        totalItems={filteredSales.length}
+        onPageChange={salesPaging.setPage}
+        onPageSizeChange={salesPaging.setPageSize}
+      />
 
       {editSale && (
         <Modal title={t('editSaleRecord')} onClose={() => setEditSale(null)}>

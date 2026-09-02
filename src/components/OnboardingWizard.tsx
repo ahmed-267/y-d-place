@@ -1,55 +1,122 @@
-
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../AppContext';
-import { 
-  Layout, 
-  Plus, 
-  Trash2, 
-  Package, 
-  Users, 
-  ChevronRight, 
-  CheckCircle2, 
-  ArrowRight,
-  UtensilsCrossed,
-  Boxes,
+import {
+  Layout,
+  Plus,
+  Trash2,
+  ChevronRight,
+  CheckCircle2,
   Loader2,
   Camera,
-  X,
   Check,
   ChevronDown,
   ChevronUp,
-  Info
+  UtensilsCrossed,
+  Boxes,
+  ClipboardList,
+  BarChart3,
+  Users,
+  Wallet,
 } from 'lucide-react';
-import { Role, IngredientLink, Product, PreparedStockLink } from '../types';
+import { IngredientLink, Product, PreparedStockLink, normalizeEnabledModules, EnabledModules } from '../types';
 import { getAIAssistance, scanMenu, ScanMenuResult, compressImage } from '../utils/aiHelper';
+import { CitySelect } from './CitySelect';
 import { Modal } from './Modal';
 import { ScanProgressModal } from './ScanProgressModal';
+import { APP_LANGUAGE_OPTIONS } from '../utils/languages';
+
+const ONBOARDING_STEP_KEY = 'previsio_onboarding_step';
 
 export const OnboardingWizard = () => {
-  const { 
-    businessSettings, 
-    categories = [], 
-    setCategories, 
-    products = [], 
-    setProducts, 
-    ingredients = [], 
-    setIngredients, 
+  const {
+    businessSettings,
+    user,
+    provisionBusinessProfile,
+    categories = [],
+    setCategories,
+    products = [],
+    setProducts,
+    ingredients = [],
+    setIngredients,
     preparedStock = [],
     setPreparedStock,
-    users = [], 
-    setUsers, 
     completeOnboarding,
+    saveBusinessSettings,
     t,
+    lang,
     tp,
     tc,
     formatPrice,
-    addToast
+    addToast,
+    setActiveTab,
   } = useApp();
 
-  const [step, setStep] = useState(1);
-  const totalSteps = 7;
+  const venueLabel = (v: string) => {
+    const keyMap: Record<string, string> = {
+      Restaurant: 'venueRestaurant',
+      'Food Truck': 'venueFoodTruck',
+      Café: 'venueCafe',
+      Bar: 'venueBar',
+      Bakery: 'venueBakery',
+      'Fast Food': 'venueFastFood',
+      Other: 'venueOther',
+    };
+    return t(keyMap[v] || v);
+  };
 
-  // Step 2: Categories
+  const totalSteps = 4;
+  const [step, setStep] = useState(() => {
+    try {
+      const stored = sessionStorage.getItem(ONBOARDING_STEP_KEY);
+      const n = stored ? parseInt(stored, 10) : NaN;
+      if (n >= 1 && n <= 4) return n;
+    } catch {
+      /* ignore */
+    }
+    return businessSettings?.id && businessSettings?.city ? 2 : 1;
+  });
+
+  const [modules, setModules] = useState(() =>
+    normalizeEnabledModules(businessSettings?.enabledModules)
+  );
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(ONBOARDING_STEP_KEY, String(step));
+    } catch {
+      /* ignore */
+    }
+  }, [step]);
+
+  const [isProvisioning, setIsProvisioning] = useState(false);
+  const [businessConfig, setBusinessConfig] = useState({
+    name: businessSettings?.name || '',
+    venueType: businessSettings?.venueType || 'Restaurant',
+    country: businessSettings?.country || 'GB',
+    city: businessSettings?.city || '',
+    currencyCode: businessSettings?.currencyCode || 'GBP',
+    currencySymbol: businessSettings?.currencySymbol || '£',
+    language: businessSettings?.language || 'en',
+  });
+
+  const currencyOptions = [
+    { code: 'EUR', symbol: '€', label: 'EUR (€)' },
+    { code: 'USD', symbol: '$', label: 'USD ($)' },
+    { code: 'GBP', symbol: '£', label: 'GBP (£)' },
+  ];
+  const countryOptions = [
+    { code: 'GB', label: 'United Kingdom' },
+    { code: 'FR', label: 'France' },
+    { code: 'DE', label: 'Germany' },
+    { code: 'BE', label: 'Belgium' },
+    { code: 'ES', label: 'Spain' },
+  ];
+  const venueOptions = ['Restaurant', 'Café', 'Bar', 'Food Truck'];
+  const languageOptions = APP_LANGUAGE_OPTIONS.map(o => ({
+    value: o.code,
+    label: `${o.flag} ${t(o.labelKey) || o.nativeLabel}`,
+  }));
+
   const [newCategory, setNewCategory] = useState('');
   const addCategory = () => {
     if (newCategory && !categories.includes(newCategory)) {
@@ -58,7 +125,6 @@ export const OnboardingWizard = () => {
     }
   };
 
-  // Step 3: Products
   const [productForm, setProductForm] = useState({
     name: '',
     category: categories[0] || 'General',
@@ -114,7 +180,7 @@ export const OnboardingWizard = () => {
         id: Date.now(),
         nameEN: productForm.name,
         translations: productForm.translations,
-        category: productForm.category,
+        category: productForm.category || 'General',
         price: parseFloat(productForm.price),
         emoji: productForm.emoji,
         active: true,
@@ -122,12 +188,15 @@ export const OnboardingWizard = () => {
         ingredientLinks,
         preparedStockLinks: preppedLinks,
       };
+      if (!categories.includes(newProduct.category)) {
+        setCategories([...categories, newProduct.category]);
+      }
       setIngredients(currentIngredients);
       setPreparedStock(currentPrepared);
       setProducts([...products, newProduct]);
       setProductForm({
         name: '',
-        category: categories[0] || 'General',
+        category: categories[0] || newProduct.category || 'General',
         price: '',
         emoji: '📦',
         translations: {},
@@ -139,18 +208,13 @@ export const OnboardingWizard = () => {
 
   const handleProductNameChange = async (name: string) => {
     setProductForm(prev => ({ ...prev, name }));
-    
     if (name.length > 2) {
       setIsAIProcessing(true);
       const result = await getAIAssistance(name);
       if (result) {
         setProductForm(prev => {
           if (prev.name === name) {
-            return {
-              ...prev,
-              emoji: result.emoji,
-              translations: result.translations
-            };
+            return { ...prev, emoji: result.emoji, translations: result.translations };
           }
           return prev;
         });
@@ -159,56 +223,10 @@ export const OnboardingWizard = () => {
     }
   };
 
-  // Step 4: Ingredients
-  const [ingredientForm, setIngredientForm] = useState({ name: '', unit: 'kg', quantity: '' });
-  const [preppedForm, setPreppedForm] = useState({ name: '', portions: '' });
-
-  const addIngredient = () => {
-    if (ingredientForm.name && ingredientForm.quantity) {
-      const newIngredient = {
-        id: Date.now(),
-        name: ingredientForm.name,
-        unit: ingredientForm.unit,
-        qty: parseFloat(ingredientForm.quantity),
-        lowThreshold: 2
-      };
-      setIngredients([...ingredients, newIngredient]);
-      setIngredientForm({ name: '', unit: 'kg', quantity: '' });
-    }
-  };
-
-  const addPreppedStock = () => {
-    if (preppedForm.name && preppedForm.portions) {
-      const newPrepped = {
-        id: Date.now(),
-        name: preppedForm.name,
-        portions: parseFloat(preppedForm.portions),
-        lowThreshold: 5,
-        linkedMenuItems: []
-      };
-      setPreparedStock([...preparedStock, newPrepped]);
-      setPreppedForm({ name: '', portions: '' });
-    }
-  };
-
-  // Step 5: Team
-  const [staffForm, setStaffForm] = useState({ fullName: '', username: '', password: '', role: 'staff' as Role });
-  const addStaff = () => {
-    if (staffForm.fullName && staffForm.username && staffForm.password) {
-      const newStaff = {
-        id: Date.now(),
-        username: staffForm.username,
-        fullName: staffForm.fullName,
-        password: staffForm.password,
-        role: staffForm.role
-      };
-      setUsers([...users, newStaff]);
-      setStaffForm({ fullName: '', username: '', password: '', role: 'staff' });
-    }
-  };
-
   const [isScanning, setIsScanning] = useState(false);
-  const [scanStatus, setScanStatus] = useState<'uploading' | 'analyzing' | 'extracting' | 'finishing' | 'error' | 'success' | 'timeout'>('uploading');
+  const [scanStatus, setScanStatus] = useState<
+    'uploading' | 'analyzing' | 'extracting' | 'finishing' | 'error' | 'success' | 'timeout'
+  >('uploading');
   const [scanThumbnail, setScanThumbnail] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [scanResults, setScanResults] = useState<ScanMenuResult | null>(null);
@@ -226,59 +244,51 @@ export const OnboardingWizard = () => {
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     const reader = new FileReader();
-    reader.onloadend = () => {
-      setSelectedFile(reader.result as string);
-    };
+    reader.onloadend = () => setSelectedFile(reader.result as string);
     reader.readAsDataURL(file);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const startScan = async () => {
     if (!selectedFile) return;
-
     setIsScanning(true);
     setScanStatus('uploading');
     setScanThumbnail(selectedFile);
-    
+    let stageTimer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const compressed = await compressImage(selectedFile);
+      const compressed = await compressImage(selectedFile, 768, 0.62);
       setScanStatus('analyzing');
-
+      stageTimer = setTimeout(() => setScanStatus('extracting'), 1500);
       const controller = new AbortController();
       abortControllerRef.current = controller;
-      
       const timeoutId = setTimeout(() => {
         controller.abort();
         setScanStatus('timeout');
-      }, 60000);
-
+      }, 45000);
       const result = await scanMenu(compressed, controller.signal);
       clearTimeout(timeoutId);
-
+      if (stageTimer) clearTimeout(stageTimer);
       if (result && result.products.length > 0) {
-        setScanStatus('success');
+        setScanStatus('finishing');
         setScanResults(result);
         setSelectedFile(null);
-      } else if (scanStatus !== 'timeout') {
+        setScanStatus('success');
+      } else {
         setScanStatus('error');
-        addToast(t('scanMenuNoItems'), "error");
+        addToast(t('scanMenuNoItems'), 'error');
       }
-    } catch (err) {
-      if (scanStatus !== 'timeout') {
-        setScanStatus('error');
-      addToast(t('scanMenuFailed'), "error");
-      }
+    } catch {
+      if (stageTimer) clearTimeout(stageTimer);
+      setScanStatus('error');
+      addToast(t('scanMenuFailed'), 'error');
     } finally {
       abortControllerRef.current = null;
     }
   };
 
   const cancelScan = () => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
+    abortControllerRef.current?.abort();
     setIsScanning(false);
     setScanStatus('uploading');
     setSelectedFile(null);
@@ -286,31 +296,17 @@ export const OnboardingWizard = () => {
 
   const saveScannedProducts = () => {
     if (!scanResults) return;
-    
     const currentIngredients = [...ingredients];
     const currentPreparedStock = [...preparedStock];
-    
     const newProducts: Product[] = scanResults.products.map(p => {
-      const productId = Date.now() + Math.random();
-      
-      // Handle Prepared Stock
       const preppedLinks = (p.preparedStockNeeds || []).map(needName => {
         let prepped = currentPreparedStock.find(ps => ps.name.toLowerCase() === needName.toLowerCase());
         if (!prepped) {
-          prepped = {
-            id: Date.now() + Math.random(),
-            name: needName,
-            portions: 20,
-            lowThreshold: 5
-          };
+          prepped = { id: Date.now() + Math.random(), name: needName, portions: 20, lowThreshold: 5 };
           currentPreparedStock.push(prepped);
         }
-        return {
-          preparedStockId: prepped.id,
-          portionsPerSale: 1
-        };
+        return { preparedStockId: prepped.id, portionsPerSale: 1 };
       });
-
       const links: IngredientLink[] = p.ingredientLinks.map(link => {
         let ingredient = currentIngredients.find(i => i.name.toLowerCase() === link.ingredientName.toLowerCase());
         if (!ingredient) {
@@ -318,20 +314,15 @@ export const OnboardingWizard = () => {
             id: Date.now() + Math.random(),
             name: link.ingredientName,
             unit: link.unit,
-            qty: 50, // Default initial stock for 10+ orders
-            lowThreshold: 2
+            qty: 50,
+            lowThreshold: 2,
           };
           currentIngredients.push(ingredient);
         }
-        return {
-          ingredientId: ingredient.id,
-          quantityUsed: link.quantityUsed,
-          unit: link.unit
-        };
+        return { ingredientId: ingredient.id, quantityUsed: link.quantityUsed, unit: link.unit };
       });
-
       return {
-        id: productId,
+        id: Date.now() + Math.random(),
         nameEN: p.name,
         translations: p.translations,
         category: p.category,
@@ -340,10 +331,9 @@ export const OnboardingWizard = () => {
         active: true,
         transKey: `p${Date.now()}_${Math.random()}`,
         ingredientLinks: links,
-        preparedStockLinks: preppedLinks
+        preparedStockLinks: preppedLinks,
       };
     });
-    
     const newCategories = [...new Set([...categories, ...scanResults.products.map(p => p.category)])];
     setCategories(newCategories);
     setIngredients(currentIngredients);
@@ -353,191 +343,265 @@ export const OnboardingWizard = () => {
     addToast(t('menuItemsAdded').replace('{count}', String(newProducts.length)), 'success');
   };
 
+  const handleCountryChange = (country: string) => {
+    setBusinessConfig(prev => ({ ...prev, country, city: '' }));
+  };
+
+  const handleCurrencyChange = (value: string) => {
+    const selected = currencyOptions.find(c => c.code === value);
+    if (!selected) return;
+    setBusinessConfig(prev => ({ ...prev, currencyCode: selected.code, currencySymbol: selected.symbol }));
+  };
+
   const nextStep = () => setStep(prev => Math.min(prev + 1, totalSteps));
   const prevStep = () => setStep(prev => Math.max(prev - 1, 1));
 
-  const ProgressIndicator = () => (
-    <div className="flex justify-center gap-2 mb-8">
-      {Array.from({ length: totalSteps }).map((_, i) => (
-        <div 
-          key={i} 
-          className={`h-2 rounded-full transition-all duration-300 ${
-            step === i + 1 ? 'w-8 bg-bakery-brown' : 'w-2 bg-bakery-brown/20'
-          }`}
-        />
-      ))}
-    </div>
-  );
+  const handleBusinessConfigContinue = async () => {
+    if (!businessConfig.name.trim() || !businessConfig.city.trim()) {
+      addToast('Business name and city are required.', 'error');
+      return;
+    }
+    if (!user) {
+      addToast('Missing account session. Please sign in again.', 'error');
+      return;
+    }
+    const settingsPayload = {
+      name: businessConfig.name.trim(),
+      ownerName: user.fullName || 'Owner',
+      ownerEmail: user.email || `${user.username}@local.previsio`,
+      ownerPhone: businessSettings?.ownerPhone || '',
+      venueType: businessConfig.venueType,
+      country: businessConfig.country,
+      city: businessConfig.city.trim(),
+      currencyCode: businessConfig.currencyCode,
+      currencySymbol: businessConfig.currencySymbol,
+      language: businessConfig.language as any,
+      openingHours: businessSettings?.openingHours || '',
+      address: businessSettings?.address || '',
+    };
+    setIsProvisioning(true);
+    const { error } = await provisionBusinessProfile(settingsPayload);
+    setIsProvisioning(false);
+    if (error) {
+      addToast(
+        typeof error === 'object' && error && 'message' in error
+          ? String((error as { message?: string }).message)
+          : 'Could not save business profile.',
+        'error'
+      );
+      return;
+    }
+    nextStep();
+  };
+
+  const canCompleteSetup = products.length >= 1;
+
+  const finishSetup = async (goCashier: boolean) => {
+    if (!canCompleteSetup) {
+      addToast(t('addOneMenuItem') || 'Add at least one menu item first.', 'error');
+      return;
+    }
+    try {
+      sessionStorage.removeItem(ONBOARDING_STEP_KEY);
+    } catch {
+      /* ignore */
+    }
+    if (businessSettings) {
+      await saveBusinessSettings({
+        ...businessSettings,
+        enabledModules: normalizeEnabledModules(modules),
+      });
+    }
+    await completeOnboarding();
+    setActiveTab(goCashier ? 'cashier' : 'overview');
+  };
+
+  const toggleModule = (key: keyof EnabledModules) => {
+    setModules(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const menuContinue = () => {
+    if (!canCompleteSetup) {
+      addToast(t('addOneMenuItem') || 'Add at least one menu item to continue.', 'error');
+      return;
+    }
+    nextStep();
+  };
+
+  const moduleOptions: {
+    key: keyof EnabledModules;
+    icon: React.ReactNode;
+    title: string;
+    hint: string;
+  }[] = [
+    { key: 'orders', icon: <ClipboardList size={18} />, title: t('moduleOrders'), hint: t('moduleOrdersHint') },
+    { key: 'sales', icon: <BarChart3 size={18} />, title: t('moduleSales'), hint: t('moduleSalesHint') },
+    { key: 'stock', icon: <Boxes size={18} />, title: t('moduleStock'), hint: t('moduleStockHint') },
+    { key: 'staff', icon: <Users size={18} />, title: t('moduleStaff'), hint: t('moduleStaffHint') },
+    { key: 'finance', icon: <Wallet size={18} />, title: t('moduleFinance'), hint: t('moduleFinanceHint') },
+  ];
 
   return (
-    <div className="min-h-screen bg-bakery-cream flex flex-col items-center justify-center p-2 sm:p-4">
-      <div className="max-w-2xl w-full bg-white rounded-[2rem] sm:rounded-[2.5rem] shadow-2xl shadow-bakery-brown/10 p-4 sm:p-8 md:p-12 animate-fade-in relative overflow-hidden flex flex-col max-h-[95vh]">
-        {/* Decorative background element */}
+    <div className="min-h-[70vh] flex flex-col items-center justify-center p-2 sm:p-4">
+      <div className="max-w-2xl w-full bg-white rounded-[2rem] shadow-2xl shadow-bakery-brown/10 p-4 sm:p-8 md:p-10 animate-fade-in relative overflow-hidden flex flex-col max-h-[90vh]">
         <div className="absolute -top-24 -right-24 w-64 h-64 bg-bakery-accent/10 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute -bottom-24 -left-24 w-64 h-64 bg-bakery-caramel/10 rounded-full blur-3xl pointer-events-none" />
-
-        <div className="relative z-10 flex flex-col h-full">
-          <div className="shrink-0">
-            <ProgressIndicator />
+        <div className="relative z-10 flex flex-col h-full min-h-0">
+          <div className="flex justify-center gap-2 mb-6 shrink-0">
+            {Array.from({ length: totalSteps }).map((_, i) => (
+              <div
+                key={i}
+                className={`h-2 rounded-full transition-all duration-300 ${
+                  step === i + 1 ? 'w-8 bg-bakery-brown' : step > i + 1 ? 'w-2 bg-bakery-brown/50' : 'w-2 bg-bakery-brown/20'
+                }`}
+              />
+            ))}
           </div>
 
-          <div className="flex-1 overflow-y-auto scrollbar-hide pr-1">
+          <div className="flex-1 overflow-y-auto scrollbar-hide pr-1 min-h-0">
             {step === 1 && (
-              <div className="text-center animate-fade-in py-4">
-                <div className="w-16 h-16 sm:w-20 sm:h-20 bg-bakery-brown rounded-3xl flex items-center justify-center text-white mx-auto mb-6 sm:mb-8 shadow-xl shadow-bakery-brown/20">
-                  <Layout size={32} className="sm:w-10 sm:h-10" />
+              <div className="animate-fade-in py-2">
+                <div className="flex items-center gap-4 mb-6">
+                  <div className="w-10 h-10 sm:w-12 sm:h-12 bg-bakery-accent/20 rounded-2xl flex items-center justify-center text-bakery-brown shrink-0">
+                    <Layout size={20} />
+                  </div>
+                  <div className="text-left">
+                    <h2 className="text-xl sm:text-2xl font-black font-serif text-bakery-brown">{t('businessProfile') || 'Business profile'}</h2>
+                    <p className="text-bakery-brown/50 text-xs sm:text-sm">{t('businessProfileSubtitle') || 'Set your core business details to get started.'}</p>
+                  </div>
                 </div>
-                <h2 className="text-2xl sm:text-4xl font-black font-serif text-bakery-brown mb-4 sm:mb-6">
-                  {t('onboardingWelcome').replace('{name}', businessSettings?.name || '')}
-                </h2>
-                <p className="text-bakery-brown/60 text-base sm:text-lg mb-8 sm:mb-10 leading-relaxed">
-                  {t('onboardingIntro')}
-                </p>
-                <button 
-                  onClick={nextStep}
-                  className="w-full py-4 sm:py-5 bg-bakery-brown text-white rounded-2xl font-bold text-lg sm:text-xl hover:bg-bakery-brown/90 transition-all active:scale-95 flex items-center justify-center gap-3"
+                <div className="space-y-3 mb-8">
+                  <input
+                    type="text"
+                    placeholder={t('businessName') || 'Business Name'}
+                    className="w-full p-3 sm:p-4 bg-white border-2 border-bakery-brown/15 focus:border-bakery-brown/50 rounded-2xl outline-none font-bold text-sm sm:text-base text-bakery-brown"
+                    value={businessConfig.name}
+                    onChange={e => setBusinessConfig(prev => ({ ...prev, name: e.target.value }))}
+                  />
+                  <div className="relative">
+                    <select
+                      className="w-full p-3 sm:p-4 pr-12 bg-white border-2 border-bakery-brown/15 focus:border-bakery-brown/50 rounded-2xl outline-none font-bold appearance-none text-sm sm:text-base text-bakery-brown"
+                      value={businessConfig.venueType}
+                      onChange={e => setBusinessConfig(prev => ({ ...prev, venueType: e.target.value }))}
+                    >
+                      {venueOptions.map(v => (
+                        <option key={v} value={v}>
+                          {venueLabel(v)}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown size={18} className="absolute right-4 top-1/2 -translate-y-1/2 text-bakery-brown/50 pointer-events-none" />
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="relative">
+                      <select
+                        className="w-full p-3 sm:p-4 pr-12 bg-white border-2 border-bakery-brown/15 focus:border-bakery-brown/50 rounded-2xl outline-none font-bold appearance-none text-sm sm:text-base text-bakery-brown"
+                        value={businessConfig.country}
+                        onChange={e => handleCountryChange(e.target.value)}
+                      >
+                        {countryOptions.map(c => (
+                          <option key={c.code} value={c.code}>
+                            {typeof Intl !== 'undefined' && (Intl as any).DisplayNames
+                              ? new Intl.DisplayNames([lang], { type: 'region' }).of(c.code) || c.label
+                              : t(`country${c.code}`) || c.label}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown size={18} className="absolute right-4 top-1/2 -translate-y-1/2 text-bakery-brown/50 pointer-events-none" />
+                    </div>
+                    <CitySelect
+                      countryCode={businessConfig.country}
+                      value={businessConfig.city}
+                      placeholder={t('city') || 'City'}
+                      onChange={(city) =>
+                        setBusinessConfig((prev) => ({ ...prev, city }))
+                      }
+                    />
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="relative">
+                      <select
+                        className="w-full p-3 sm:p-4 pr-12 bg-white border-2 border-bakery-brown/15 focus:border-bakery-brown/50 rounded-2xl outline-none font-bold appearance-none text-sm sm:text-base text-bakery-brown"
+                        value={businessConfig.currencyCode}
+                        onChange={e => handleCurrencyChange(e.target.value)}
+                      >
+                        {currencyOptions.map(c => (
+                          <option key={c.code} value={c.code}>
+                            {c.label}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown size={18} className="absolute right-4 top-1/2 -translate-y-1/2 text-bakery-brown/50 pointer-events-none" />
+                    </div>
+                    <div className="relative">
+                      <select
+                        className="w-full p-3 sm:p-4 pr-12 bg-white border-2 border-bakery-brown/15 focus:border-bakery-brown/50 rounded-2xl outline-none font-bold appearance-none text-sm sm:text-base text-bakery-brown"
+                        value={businessConfig.language}
+                        onChange={e => setBusinessConfig(prev => ({ ...prev, language: e.target.value }))}
+                      >
+                        {languageOptions.map(l => (
+                          <option key={l.value} value={l.value}>
+                            {l.label}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown size={18} className="absolute right-4 top-1/2 -translate-y-1/2 text-bakery-brown/50 pointer-events-none" />
+                    </div>
+                  </div>
+                </div>
+                <button
+                  onClick={handleBusinessConfigContinue}
+                  disabled={isProvisioning}
+                  className="w-full py-4 bg-bakery-brown text-white rounded-2xl font-bold hover:bg-bakery-brown/90 transition-all active:scale-95 flex items-center justify-center gap-2"
                 >
-                  {t('letsGetStarted')}
-                  <ArrowRight size={24} />
+                  {isProvisioning ? <Loader2 size={20} className="animate-spin" /> : null}
+                  {t('continue')}
                 </button>
               </div>
             )}
 
             {step === 2 && (
-              <div className="animate-fade-in py-2">
-                <div className="flex items-center gap-4 mb-6">
+              <div className="animate-fade-in py-2 space-y-8">
+                <div className="flex items-center gap-4">
                   <div className="w-10 h-10 sm:w-12 sm:h-12 bg-bakery-accent/20 rounded-2xl flex items-center justify-center text-bakery-brown shrink-0">
-                    <Users size={20} className="sm:w-6 sm:h-6" />
+                    <UtensilsCrossed size={20} />
                   </div>
                   <div className="text-left">
-                    <h2 className="text-xl sm:text-2xl font-black font-serif text-bakery-brown">{t('onboardingAddTeam')}</h2>
-                    <p className="text-bakery-brown/50 text-xs sm:text-sm">{t('onboardingAddTeamSubtitle')}</p>
+                    <h2 className="text-xl sm:text-2xl font-black font-serif text-bakery-brown">{t('buildYourMenu') || 'Build your menu'}</h2>
+                    <p className="text-bakery-brown/50 text-xs sm:text-sm">
+                      {t('buildYourMenuSubtitle') || 'Scan a menu photo or add items manually. One item is enough to start selling.'}
+                    </p>
                   </div>
                 </div>
 
-                <div className="space-y-4 mb-10">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                    <input 
-                      type="text" 
-                      placeholder={t('fullName')}
-                      className="sm:col-span-2 p-3 sm:p-4 bg-bakery-cream rounded-2xl outline-none font-bold text-sm sm:text-base"
-                      value={staffForm.fullName}
-                      onChange={e => setStaffForm({ ...staffForm, fullName: e.target.value })}
-                    />
-                    <input 
-                      type="text" 
-                      placeholder={t('username')}
-                      className="p-3 sm:p-4 bg-bakery-cream rounded-2xl outline-none font-bold text-sm sm:text-base"
-                      value={staffForm.username}
-                      onChange={e => setStaffForm({ ...staffForm, username: e.target.value })}
-                    />
-                    <input 
-                      type="password" 
-                      placeholder={t('password')}
-                      className="p-3 sm:p-4 bg-bakery-cream rounded-2xl outline-none font-bold text-sm sm:text-base"
-                      value={staffForm.password}
-                      onChange={e => setStaffForm({ ...staffForm, password: e.target.value })}
-                    />
-                    <select 
-                      className="sm:col-span-2 p-3 sm:p-4 bg-bakery-cream rounded-2xl outline-none font-bold appearance-none text-sm sm:text-base bg-white"
-                      value={staffForm.role}
-                      onChange={e => setStaffForm({ ...staffForm, role: e.target.value as Role })}
-                    >
-                      <option value="staff">{t('staffRole')}</option>
-                      <option value="manager">{t('manager')}</option>
-                    </select>
-                  </div>
-                  <button 
-                    onClick={addStaff}
-                    className="w-full py-3 border-2 border-dashed border-bakery-brown/20 text-bakery-brown/60 rounded-2xl font-bold hover:border-bakery-brown/40 hover:text-bakery-brown transition-all flex items-center justify-center gap-2 text-sm"
+                {/* Scan */}
+                <div className="bg-bakery-beige/20 border-2 border-dashed border-bakery-brown/10 rounded-2xl p-6 text-center">
+                  <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileUpload} />
+                  <Camera size={28} className="mx-auto text-bakery-brown mb-2" />
+                  <p className="font-bold text-bakery-brown text-sm mb-1">{t('takePhotoUpload')}</p>
+                  <p className="text-xs text-bakery-brown/40 mb-3">{t('aiExtractsMenu')}</p>
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isScanning}
+                    className="px-6 py-2.5 bg-bakery-brown text-white rounded-xl font-bold text-sm hover:bg-bakery-brown/90 disabled:opacity-50"
                   >
-                    <Plus size={18} />
-                    {t('addStaffMember')}
+                    {isScanning ? t('processing') : t('selectImage')}
                   </button>
-
-                  <div className="max-h-32 overflow-y-auto space-y-2 pr-2 scrollbar-hide">
-                    {users.filter(u => u.role !== 'owner').map(u => (
-                      <div key={u.id} className="flex justify-between items-center p-3 bg-bakery-beige/30 rounded-xl text-xs sm:text-sm">
-                        <span className="font-bold truncate max-w-[150px] sm:max-w-none">{u.fullName}</span>
-                        <div className="flex items-center gap-4 shrink-0">
-                          <span className="text-bakery-brown/60 uppercase text-[10px] font-black tracking-widest">{t(u.role === 'owner' ? 'owner' : u.role === 'manager' ? 'manager' : 'staffRole')}</span>
-                          <button onClick={() => setUsers(users.filter(user => user.id !== u.id))} className="text-rose-500">
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="flex flex-col gap-3">
-                  <div className="flex gap-4">
-                    <button onClick={nextStep} className="flex-1 py-4 bg-bakery-brown text-white rounded-2xl font-bold hover:bg-bakery-brown/90 transition-all active:scale-95 text-sm sm:text-base">
-                      {t('continue')}
-                    </button>
-                    <button onClick={nextStep} className="px-4 sm:px-8 py-4 text-bakery-brown/50 font-bold hover:text-bakery-brown transition-colors text-sm sm:text-base">
-                      {t('skip')}
-                    </button>
-                  </div>
-                  <button onClick={prevStep} className="w-full py-2 text-bakery-brown/40 font-bold hover:text-bakery-brown transition-colors text-xs uppercase tracking-widest">
-                    {t('back')}
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {step === 3 && (
-              <div className="animate-fade-in py-2">
-                <div className="flex items-center gap-4 mb-6">
-                  <div className="w-10 h-10 sm:w-12 sm:h-12 bg-bakery-accent/20 rounded-2xl flex items-center justify-center text-bakery-brown shrink-0">
-                    <Camera size={20} className="sm:w-6 sm:h-6" />
-                  </div>
-                  <div className="text-left">
-                    <h2 className="text-xl sm:text-2xl font-black font-serif text-bakery-brown">{t('scanYourMenu')}</h2>
-                    <p className="text-bakery-brown/50 text-xs sm:text-sm">{t('scanYourMenuSubtitle')}</p>
-                  </div>
-                </div>
-
-                <div className="bg-bakery-beige/20 border-2 border-dashed border-bakery-brown/10 rounded-[2rem] p-8 sm:p-12 text-center mb-8">
-                  <input 
-                    type="file" 
-                    ref={fileInputRef} 
-                    className="hidden" 
-                    accept="image/*" 
-                    onChange={handleFileUpload} 
-                  />
-                  <div className="flex flex-col items-center gap-4">
-                    <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center text-bakery-brown shadow-lg">
-                      {isScanning ? <Loader2 size={32} className="animate-spin" /> : <Camera size={32} />}
-                    </div>
-                    <div>
-                      <p className="font-bold text-bakery-brown mb-1">{t('takePhotoUpload')}</p>
-                      <p className="text-xs text-bakery-brown/40">{t('aiExtractsMenu')}</p>
-                    </div>
-                    <button 
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={isScanning}
-                      className="mt-4 px-8 py-3 bg-bakery-brown text-white rounded-xl font-bold hover:bg-bakery-brown/90 transition-all disabled:opacity-50"
-                    >
-                      {isScanning ? t('processing') : t('selectImage')}
-                    </button>
-                  </div>
                 </div>
 
                 {products.length > 0 && (
-                  <div className="mb-8 animate-fade-in">
-                    <h3 className="text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-3">{t('scannedItems').replace('{count}', String(products.length))}</h3>
-                    <div className="max-h-48 overflow-y-auto space-y-2 pr-2 scrollbar-hide">
+                  <div>
+                    <h3 className="text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">
+                      {t('menuItems')} ({products.length})
+                    </h3>
+                    <div className="max-h-36 overflow-y-auto space-y-2">
                       {products.map(p => (
-                        <div key={p.id} className="flex justify-between items-center p-3 bg-white border border-bakery-beige rounded-xl text-xs sm:text-sm">
-                          <div className="flex items-center gap-2">
-                            <span className="text-lg">{p.emoji}</span>
-                            <span className="font-bold truncate max-w-[150px]">{tp(p)}</span>
-                          </div>
-                          <div className="flex items-center gap-3">
-                            <span className="text-bakery-brown/60 text-[10px]">{tc(p.category)}</span>
+                        <div key={p.id} className="flex justify-between items-center p-3 bg-bakery-beige/30 rounded-xl text-sm">
+                          <span className="font-bold truncate">
+                            {p.emoji} {tp(p)}
+                          </span>
+                          <div className="flex items-center gap-3 shrink-0">
                             <span className="font-black">{formatPrice(p.price)}</span>
-                            <button onClick={() => setProducts(products.filter(prod => prod.id !== p.id))} className="text-rose-500">
+                            <button type="button" onClick={() => setProducts(products.filter(prod => prod.id !== p.id))} className="text-rose-500">
                               <Trash2 size={14} />
                             </button>
                           </div>
@@ -547,33 +611,109 @@ export const OnboardingWizard = () => {
                   </div>
                 )}
 
-                <ScanProgressModal 
-                  isOpen={isScanning} 
-                  status={scanStatus} 
+                {/* Categories inline */}
+                <div>
+                  <h3 className="text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('categories')}</h3>
+                  <div className="flex gap-2 mb-2">
+                    <input
+                      type="text"
+                      placeholder={t('categoryPlaceholder')}
+                      className="flex-1 p-3 bg-bakery-cream rounded-xl outline-none font-bold text-sm"
+                      value={newCategory}
+                      onChange={e => setNewCategory(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && addCategory()}
+                    />
+                    <button type="button" onClick={addCategory} className="p-3 bg-bakery-brown text-white rounded-xl">
+                      <Plus size={18} />
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {categories.map(cat => (
+                      <div key={cat} className="px-3 py-1.5 bg-bakery-beige text-bakery-brown rounded-full font-bold text-xs flex items-center gap-2">
+                        {tc(cat)}
+                        <button type="button" onClick={() => setCategories(categories.filter(c => c !== cat))} className="text-bakery-brown/30 hover:text-rose-500">
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Manual add */}
+                <div>
+                  <h3 className="text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('manualMenuItems')}</h3>
+                  <div className="grid grid-cols-6 gap-2 mb-2">
+                    <input
+                      type="text"
+                      placeholder={t('emoji')}
+                      className="col-span-1 p-3 bg-bakery-cream rounded-xl outline-none font-bold text-center"
+                      value={productForm.emoji}
+                      onChange={e => setProductForm({ ...productForm, emoji: e.target.value })}
+                    />
+                    <input
+                      type="text"
+                      placeholder={t('productName')}
+                      className="col-span-5 p-3 bg-bakery-cream rounded-xl outline-none font-bold text-sm"
+                      value={productForm.name}
+                      onChange={e => handleProductNameChange(e.target.value)}
+                    />
+                    {isAIProcessing && (
+                      <div className="col-span-6 text-[10px] text-bakery-brown/40 italic">{t('aiTranslating')}</div>
+                    )}
+                    <select
+                      className="col-span-3 p-3 bg-white border border-bakery-beige rounded-xl outline-none font-bold text-sm"
+                      value={productForm.category}
+                      onChange={e => setProductForm({ ...productForm, category: e.target.value })}
+                    >
+                      {(categories.length ? categories : ['General']).map(cat => (
+                        <option key={cat} value={cat}>
+                          {tc(cat)}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="number"
+                      placeholder={t('price')}
+                      className="col-span-3 p-3 bg-bakery-cream rounded-xl outline-none font-bold text-sm"
+                      value={productForm.price}
+                      onChange={e => setProductForm({ ...productForm, price: e.target.value })}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={addProduct}
+                    className="w-full py-3 bg-bakery-brown text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2"
+                  >
+                    <Plus size={16} />
+                    {t('addProduct')}
+                  </button>
+                </div>
+
+                <ScanProgressModal
+                  isOpen={isScanning}
+                  status={scanStatus}
                   imageThumbnail={scanThumbnail}
-                  onClose={() => { setIsScanning(false); setSelectedFile(null); }}
+                  onClose={() => {
+                    setIsScanning(false);
+                    setSelectedFile(null);
+                  }}
                   onCancel={cancelScan}
-                  onRetry={() => { setIsScanning(false); startScan(); }}
+                  onRetry={() => {
+                    setIsScanning(false);
+                    startScan();
+                  }}
                 />
 
                 {selectedFile && !isScanning && (
                   <Modal title={t('previewMenuImage')} onClose={() => setSelectedFile(null)}>
-                    <div className="space-y-6">
-                      <div className="aspect-video w-full rounded-2xl overflow-hidden bg-bakery-beige/20 border-2 border-bakery-beige">
-                        <img src={selectedFile} alt={t('preview')} className="w-full h-full object-contain" />
-                      </div>
-                      <div className="flex gap-4">
-                        <button 
-                          onClick={() => setSelectedFile(null)}
-                          className="flex-1 py-4 bg-bakery-beige text-bakery-brown rounded-2xl font-bold hover:bg-bakery-beige/80 transition-all"
-                        >
+                    <div className="space-y-4">
+                      <img src={selectedFile} alt={t('preview')} className="w-full rounded-2xl object-contain max-h-64 bg-bakery-beige/20" />
+                      <div className="flex gap-3">
+                        <button type="button" onClick={() => setSelectedFile(null)} className="flex-1 py-3 bg-bakery-beige rounded-xl font-bold">
                           {t('cancel')}
                         </button>
-                        <button 
-                          onClick={startScan}
-                          className="flex-[2] py-4 bg-bakery-brown text-white rounded-2xl font-bold hover:bg-bakery-brown/90 transition-all flex items-center justify-center gap-2"
-                        >
-                          <Camera size={20} />
+                        <button type="button" onClick={startScan} className="flex-[2] py-3 bg-bakery-brown text-white rounded-xl font-bold flex items-center justify-center gap-2">
+                          <Camera size={18} />
                           {t('scanMenu')}
                         </button>
                       </div>
@@ -584,196 +724,124 @@ export const OnboardingWizard = () => {
                 {scanResults && (
                   <Modal title={t('reviewScannedMenu')} onClose={() => setScanResults(null)}>
                     <div className="space-y-4">
-                      <p className="text-xs sm:text-sm text-bakery-brown/60">
+                      <p className="text-sm text-bakery-brown/60">
                         {t('scanReviewIntro').replace('{count}', String(scanResults.products.length))}
                       </p>
-                      <div className="max-h-[50vh] overflow-y-auto space-y-3 pr-2 scrollbar-hide">
+                      <div className="max-h-[45vh] overflow-y-auto space-y-2">
                         {scanResults.products.map((p, idx) => (
-                          <div key={idx} className="bg-bakery-beige/20 rounded-2xl overflow-hidden border border-bakery-beige/50">
-                            <div className="p-3 sm:p-4 flex items-center gap-3 sm:gap-4">
-                              <span className="text-xl sm:text-2xl shrink-0">{p.emoji}</span>
-                              <div className="flex-1 min-w-0">
-                                <input 
-                                  className="w-full bg-transparent font-bold text-bakery-brown border-b border-transparent focus:border-bakery-brown outline-none text-sm sm:text-base truncate"
-                                  value={p.name}
-                                  onChange={e => {
-                                    const newProducts = [...scanResults.products];
-                                    newProducts[idx].name = e.target.value;
-                                    setScanResults({ products: newProducts });
-                                  }}
-                                />
-                                <div className="flex flex-wrap gap-2 mt-1">
-                                  <input 
-                                    className="w-24 bg-transparent text-[10px] sm:text-xs text-bakery-brown/60 border-b border-transparent focus:border-bakery-brown outline-none"
-                                    value={p.category}
-                                    onChange={e => {
-                                      const newProducts = [...scanResults.products];
-                                      newProducts[idx].category = e.target.value;
-                                      setScanResults({ products: newProducts });
-                                    }}
-                                  />
-                                  <input 
-                                    type="number"
-                                    step="0.01"
-                                    className="w-16 bg-transparent text-[10px] sm:text-xs font-black text-bakery-brown border-b border-transparent focus:border-bakery-brown outline-none"
-                                    value={p.price}
-                                    onChange={e => {
-                                      const newProducts = [...scanResults.products];
-                                      newProducts[idx].price = parseFloat(e.target.value);
-                                      setScanResults({ products: newProducts });
-                                    }}
-                                  />
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-1">
-                                <button 
-                                  onClick={() => setExpandedScanItem(expandedScanItem === idx ? null : idx)}
-                                  className="p-2 text-bakery-brown/40 hover:text-bakery-brown transition-colors"
-                                >
-                                  {expandedScanItem === idx ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-                                </button>
-                                <button 
-                                  onClick={() => {
-                                    const newProducts = scanResults.products.filter((_, i) => i !== idx);
-                                    setScanResults({ products: newProducts });
-                                  }}
-                                  className="text-rose-500 p-2 hover:bg-rose-50 rounded-full transition-colors shrink-0"
-                                >
-                                  <Trash2 size={16} />
-                                </button>
-                              </div>
-                            </div>
-                            
-                            {expandedScanItem === idx && (
-                              <div className="px-4 pb-4 pt-2 bg-white/50 border-t border-bakery-beige/30 animate-fade-in">
-                                <label className="block text-[8px] font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('predictedIngredients')}</label>
-                                <div className="space-y-2">
-                                  {p.ingredientLinks.map((link, lIdx) => (
-                                    <div key={lIdx} className="flex items-center gap-2">
-                                      <input 
-                                        className="flex-1 bg-transparent text-[10px] sm:text-xs font-bold text-bakery-brown border-b border-bakery-beige/30 focus:border-bakery-brown outline-none"
-                                        value={link.ingredientName}
-                                        onChange={e => {
-                                          const newProducts = [...scanResults.products];
-                                          newProducts[idx].ingredientLinks[lIdx].ingredientName = e.target.value;
-                                          setScanResults({ products: newProducts });
-                                        }}
-                                      />
-                                      <input 
-                                        type="number"
-                                        className="w-12 bg-transparent text-[10px] sm:text-xs font-black text-bakery-brown border-b border-bakery-beige/30 focus:border-bakery-brown outline-none"
-                                        value={link.quantityUsed}
-                                        onChange={e => {
-                                          const newProducts = [...scanResults.products];
-                                          newProducts[idx].ingredientLinks[lIdx].quantityUsed = parseFloat(e.target.value);
-                                          setScanResults({ products: newProducts });
-                                        }}
-                                      />
-                                      <input 
-                                        className="w-12 bg-transparent text-[10px] sm:text-xs text-bakery-brown/40 border-b border-bakery-beige/30 focus:border-bakery-brown outline-none"
-                                        value={link.unit}
-                                        onChange={e => {
-                                          const newProducts = [...scanResults.products];
-                                          newProducts[idx].ingredientLinks[lIdx].unit = e.target.value;
-                                          setScanResults({ products: newProducts });
-                                        }}
-                                      />
-                                      <button 
-                                        onClick={() => {
-                                          const newProducts = [...scanResults.products];
-                                          newProducts[idx].ingredientLinks = newProducts[idx].ingredientLinks.filter((_, i) => i !== lIdx);
-                                          setScanResults({ products: newProducts });
-                                        }}
-                                        className="text-rose-400 hover:text-rose-600"
-                                      >
-                                        <X size={12} />
-                                      </button>
-                                    </div>
-                                  ))}
-                                  <button 
-                                    onClick={() => {
-                                      const newProducts = [...scanResults.products];
-                                      newProducts[idx].ingredientLinks.push({ ingredientName: '', quantityUsed: 0, unit: 'g' });
-                                      setScanResults({ products: newProducts });
-                                    }}
-                                    className="text-[10px] font-bold text-bakery-brown/60 hover:text-bakery-brown flex items-center gap-1 mt-2"
-                                  >
-                                    <Plus size={12} /> {t('addIngredient')}
-                                  </button>
-                                </div>
-
-                                <div className="mt-4">
-                                  <label className="block text-[8px] font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('predictedPreppedStock')}</label>
-                                  <div className="flex flex-wrap gap-2">
-                                    {p.preparedStockNeeds.map((need, nIdx) => (
-                                      <div key={nIdx} className="flex items-center gap-1 bg-bakery-brown/5 px-2 py-1 rounded-lg">
-                                        <input 
-                                          className="bg-transparent text-[10px] font-bold text-bakery-brown outline-none min-w-[60px]"
-                                          value={need}
-                                          onChange={e => {
-                                            const newProducts = [...scanResults.products];
-                                            newProducts[idx].preparedStockNeeds[nIdx] = e.target.value;
-                                            setScanResults({ products: newProducts });
-                                          }}
-                                        />
-                                        <button 
-                                          onClick={() => {
-                                            const newProducts = [...scanResults.products];
-                                            newProducts[idx].preparedStockNeeds = newProducts[idx].preparedStockNeeds.filter((_, i) => i !== nIdx);
-                                            setScanResults({ products: newProducts });
-                                          }}
-                                          className="text-rose-400 hover:text-rose-600"
-                                        >
-                                          <X size={10} />
-                                        </button>
-                                      </div>
-                                    ))}
-                                    <button 
-                                      onClick={() => {
-                                        const newProducts = [...scanResults.products];
-                                        newProducts[idx].preparedStockNeeds.push('');
-                                        setScanResults({ products: newProducts });
-                                      }}
-                                      className="text-[10px] font-bold text-bakery-brown/60 hover:text-bakery-brown flex items-center gap-1"
-                                    >
-                                      <Plus size={10} /> {t('addPreppedNeed')}
-                                    </button>
-                                  </div>
-                                </div>
-                              </div>
-                            )}
+                          <div key={idx} className="p-3 bg-bakery-beige/30 rounded-xl flex items-center gap-2">
+                            <span>{p.emoji}</span>
+                            <input
+                              className="flex-1 bg-transparent font-bold outline-none border-b border-transparent focus:border-bakery-brown"
+                              value={p.name}
+                              onChange={e => {
+                                const next = [...scanResults.products];
+                                next[idx].name = e.target.value;
+                                setScanResults({ products: next });
+                              }}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setScanResults({ products: scanResults.products.filter((_, i) => i !== idx) })}
+                              className="text-rose-500"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                            <button type="button" onClick={() => setExpandedScanItem(expandedScanItem === idx ? null : idx)} className="text-bakery-brown/40">
+                              {expandedScanItem === idx ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                            </button>
                           </div>
                         ))}
                       </div>
-                      <div className="flex flex-col sm:flex-row gap-3 pt-4 border-t border-bakery-beige">
-                        <button 
-                          onClick={() => setScanResults(null)}
-                          className="flex-1 p-3 sm:p-4 bg-bakery-beige text-bakery-brown rounded-2xl font-bold hover:bg-bakery-beige/80 transition-all text-sm"
-                        >
-                          {t('cancel')}
-                        </button>
-                        <button 
-                          onClick={saveScannedProducts}
-                          className="flex-[2] p-3 sm:p-4 bg-bakery-brown text-white rounded-2xl font-bold hover:bg-bakery-brown/90 transition-all flex items-center justify-center gap-2 text-sm"
-                        >
-                          <Check size={18} />
-                          {t('addMenuItems').replace('{count}', String(scanResults.products.length))}
-                        </button>
-                      </div>
+                      <button
+                        type="button"
+                        onClick={saveScannedProducts}
+                        className="w-full py-3 bg-bakery-brown text-white rounded-xl font-bold flex items-center justify-center gap-2"
+                      >
+                        <Check size={16} />
+                        {t('addMenuItems').replace('{count}', String(scanResults.products.length))}
+                      </button>
                     </div>
                   </Modal>
                 )}
 
-                <div className="flex flex-col gap-3">
-                  <div className="flex gap-4">
-                    <button onClick={nextStep} className="flex-1 py-4 bg-bakery-brown text-white rounded-2xl font-bold hover:bg-bakery-brown/90 transition-all active:scale-95 text-sm sm:text-base">
-                      {t('continue')}
+                <div className="flex flex-col gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={menuContinue}
+                    className="w-full py-4 bg-bakery-brown text-white rounded-2xl font-bold hover:bg-bakery-brown/90"
+                  >
+                    {t('continue')}
+                  </button>
+                  {canCompleteSetup && (
+                    <button
+                      type="button"
+                      onClick={menuContinue}
+                      className="w-full py-3 rounded-2xl font-bold border-2 border-bakery-brown text-bakery-brown text-sm"
+                    >
+                      {t('startSellingNow') || 'Start selling now →'}
                     </button>
-                    <button onClick={nextStep} className="px-4 sm:px-8 py-4 text-bakery-brown/50 font-bold hover:text-bakery-brown transition-colors text-sm sm:text-base">
-                      {t('skip')}
-                    </button>
+                  )}
+                  <button type="button" onClick={prevStep} className="w-full py-2 text-bakery-brown/40 font-bold text-xs uppercase tracking-widest">
+                    {t('back')}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {step === 3 && (
+              <div className="animate-fade-in py-2 space-y-6">
+                <div className="flex items-center gap-4">
+                  <div className="w-10 h-10 sm:w-12 sm:h-12 bg-bakery-accent/20 rounded-2xl flex items-center justify-center text-bakery-brown shrink-0">
+                    <Layout size={20} />
                   </div>
-                  <button onClick={prevStep} className="w-full py-2 text-bakery-brown/40 font-bold hover:text-bakery-brown transition-colors text-xs uppercase tracking-widest">
+                  <div className="text-left">
+                    <h2 className="text-xl sm:text-2xl font-black font-serif text-bakery-brown">{t('chooseModules')}</h2>
+                    <p className="text-bakery-brown/50 text-xs sm:text-sm">{t('chooseModulesSubtitle')}</p>
+                  </div>
+                </div>
+                <p className="text-[11px] text-bakery-brown/45 font-bold">{t('modulesAlwaysOn')}</p>
+                <div className="space-y-2">
+                  {moduleOptions.map(opt => {
+                    const on = modules[opt.key];
+                    return (
+                      <button
+                        key={opt.key}
+                        type="button"
+                        onClick={() => toggleModule(opt.key)}
+                        className={`w-full text-left p-4 rounded-2xl border-2 transition-all flex gap-3 items-start ${
+                          on
+                            ? 'border-bakery-brown bg-bakery-beige/40'
+                            : 'border-bakery-brown/10 bg-white hover:border-bakery-brown/25'
+                        }`}
+                      >
+                        <div className={`mt-0.5 w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                          on ? 'bg-bakery-brown text-white' : 'bg-bakery-beige text-bakery-brown/50'
+                        }`}>
+                          {opt.icon}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="font-bold text-sm text-bakery-brown">{opt.title}</p>
+                            <span className={`text-[10px] font-black uppercase tracking-widest ${on ? 'text-emerald-700' : 'text-bakery-brown/35'}`}>
+                              {on ? t('on') || 'On' : t('off') || 'Off'}
+                            </span>
+                          </div>
+                          <p className="text-xs text-bakery-brown/50 mt-0.5">{opt.hint}</p>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="flex flex-col gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={nextStep}
+                    className="w-full py-4 bg-bakery-brown text-white rounded-2xl font-bold hover:bg-bakery-brown/90"
+                  >
+                    {t('continue')}
+                  </button>
+                  <button type="button" onClick={prevStep} className="w-full py-2 text-bakery-brown/40 font-bold text-xs uppercase tracking-widest">
                     {t('back')}
                   </button>
                 </div>
@@ -781,359 +849,58 @@ export const OnboardingWizard = () => {
             )}
 
             {step === 4 && (
-              <div className="animate-fade-in py-2">
-                <div className="flex items-center gap-4 mb-6">
-                  <div className="w-10 h-10 sm:w-12 sm:h-12 bg-bakery-accent/20 rounded-2xl flex items-center justify-center text-bakery-brown shrink-0">
-                    <UtensilsCrossed size={20} className="sm:w-6 sm:h-6" />
-                  </div>
-                  <div className="text-left">
-                    <h2 className="text-xl sm:text-2xl font-black font-serif text-bakery-brown">{t('categories')}</h2>
-                    <p className="text-bakery-brown/50 text-xs sm:text-sm">
-                      {categories.length > 0 
-                        ? t('categoriesFound').replace('{count}', String(categories.length))
-                        : t('categoriesHelp')}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="space-y-6 mb-10">
-                  <div className="flex gap-2">
-                    <input 
-                      type="text" 
-                      placeholder={t('categoryPlaceholder')}
-                      className="flex-1 p-3 sm:p-4 bg-bakery-cream border-2 border-transparent focus:border-bakery-brown rounded-2xl outline-none font-bold transition-all text-sm sm:text-base"
-                      value={newCategory}
-                      onChange={e => setNewCategory(e.target.value)}
-                      onKeyPress={e => e.key === 'Enter' && addCategory()}
-                    />
-                    <button 
-                      onClick={addCategory}
-                      className="p-3 sm:p-4 bg-bakery-brown text-white rounded-2xl hover:bg-bakery-brown/90 transition-all active:scale-95"
-                    >
-                      <Plus size={24} />
-                    </button>
-                  </div>
-
-                  <div className="flex flex-wrap gap-2">
-                    {categories.map(cat => (
-                      <div key={cat} className="px-3 sm:px-4 py-2 bg-bakery-beige text-bakery-brown rounded-full font-bold text-xs sm:text-sm flex items-center gap-2 group">
-                        {tc(cat)}
-                        <button 
-                          onClick={() => setCategories(categories.filter(c => c !== cat))}
-                          className="text-bakery-brown/30 hover:text-rose-500 transition-colors"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="flex flex-col gap-3">
-                  <div className="flex gap-4">
-                    <button onClick={nextStep} className="flex-1 py-4 bg-bakery-brown text-white rounded-2xl font-bold hover:bg-bakery-brown/90 transition-all active:scale-95 text-sm sm:text-base">
-                      {t('continue')}
-                    </button>
-                    <button onClick={nextStep} className="px-4 sm:px-8 py-4 text-bakery-brown/50 font-bold hover:text-bakery-brown transition-colors text-sm sm:text-base">
-                      {t('skip')}
-                    </button>
-                  </div>
-                  <button onClick={prevStep} className="w-full py-2 text-bakery-brown/40 font-bold hover:text-bakery-brown transition-colors text-xs uppercase tracking-widest">
-                    {t('back')}
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {step === 5 && (
-              <div className="animate-fade-in py-2">
-                <div className="flex items-center gap-4 mb-6">
-                  <div className="w-10 h-10 sm:w-12 sm:h-12 bg-bakery-accent/20 rounded-2xl flex items-center justify-center text-bakery-brown shrink-0">
-                    <Package size={20} className="sm:w-6 sm:h-6" />
-                  </div>
-                  <div className="text-left">
-                    <h2 className="text-xl sm:text-2xl font-black font-serif text-bakery-brown">{t('manualMenuItems')}</h2>
-                    <p className="text-bakery-brown/50 text-xs sm:text-sm">{t('manualMenuSubtitle')}</p>
-                  </div>
-                </div>
-
-                <div className="space-y-4 mb-10">
-                  <div className="grid grid-cols-1 sm:grid-cols-6 gap-3 sm:gap-4">
-                    <div className="sm:col-span-1">
-                      <input 
-                        type="text" 
-                        placeholder={t('emoji')}
-                        className="w-full p-3 sm:p-4 bg-bakery-cream rounded-2xl outline-none font-bold text-center text-xl"
-                        value={productForm.emoji}
-                        onChange={e => setProductForm({ ...productForm, emoji: e.target.value })}
-                      />
-                    </div>
-                    <input 
-                      type="text" 
-                      placeholder={t('productName')}
-                      className="sm:col-span-5 p-3 sm:p-4 bg-bakery-cream rounded-2xl outline-none font-bold text-sm sm:text-base"
-                      value={productForm.name}
-                      onChange={e => handleProductNameChange(e.target.value)}
-                    />
-                    
-                    {isAIProcessing && (
-                      <div className="sm:col-span-6 text-[10px] sm:text-xs text-bakery-brown/40 italic flex items-center gap-2 px-2">
-                        <div className="w-2 h-2 bg-bakery-brown/40 rounded-full animate-bounce" />
-                        {t('aiTranslating')}
-                      </div>
-                    )}
-                    <select 
-                      className="sm:col-span-3 p-3 sm:p-4 bg-bakery-cream rounded-2xl outline-none font-bold appearance-none text-sm sm:text-base bg-white"
-                      value={productForm.category}
-                      onChange={e => setProductForm({ ...productForm, category: e.target.value })}
-                    >
-                      {categories.map(cat => <option key={cat} value={cat}>{tc(cat)}</option>)}
-                    </select>
-                    <input 
-                      type="number" 
-                      placeholder={t('price')}
-                      className="sm:col-span-3 p-3 sm:p-4 bg-bakery-cream rounded-2xl outline-none font-bold text-sm sm:text-base"
-                      value={productForm.price}
-                      onChange={e => setProductForm({ ...productForm, price: e.target.value })}
-                    />
-                    <input
-                      type="text"
-                      placeholder="Ingredients (comma separated)"
-                      className="sm:col-span-6 p-3 sm:p-4 bg-bakery-cream/70 border border-white/50 backdrop-blur-md rounded-2xl outline-none font-bold text-sm sm:text-base"
-                      value={productForm.ingredientNames.join(', ')}
-                      onChange={e =>
-                        setProductForm({
-                          ...productForm,
-                          ingredientNames: e.target.value.split(',').map(v => v.trim()).filter(Boolean),
-                        })
-                      }
-                    />
-                    <input
-                      type="text"
-                      placeholder="Prepped stock (comma separated)"
-                      className="sm:col-span-6 p-3 sm:p-4 bg-bakery-cream/70 border border-white/50 backdrop-blur-md rounded-2xl outline-none font-bold text-sm sm:text-base"
-                      value={productForm.preppedNames.join(', ')}
-                      onChange={e =>
-                        setProductForm({
-                          ...productForm,
-                          preppedNames: e.target.value.split(',').map(v => v.trim()).filter(Boolean),
-                        })
-                      }
-                    />
-                  </div>
-                  <button 
-                    onClick={addProduct}
-                    className="w-full py-3 bg-bakery-brown text-white rounded-2xl font-bold hover:bg-bakery-brown/90 transition-all flex items-center justify-center gap-2 text-sm"
-                  >
-                    <Plus size={18} />
-                    {t('addProduct')}
-                  </button>
-
-                  <div className="max-h-32 overflow-y-auto space-y-2 pr-2 scrollbar-hide">
-                    {products.map(p => (
-                      <div key={p.id} className="flex justify-between items-center p-3 bg-bakery-beige/30 rounded-xl text-xs sm:text-sm">
-                        <span className="font-bold truncate max-w-[120px] sm:max-w-none">{tp(p)}</span>
-                        <div className="flex items-center gap-2 sm:gap-4 shrink-0">
-                          <span className="text-bakery-brown/60 text-[10px] sm:text-xs hidden sm:inline">{tc(p.category)}</span>
-                          <span className="font-black">{formatPrice(p.price)}</span>
-                          <button onClick={() => setProducts(products.filter(prod => prod.id !== p.id))} className="text-rose-500">
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="flex flex-col gap-3">
-                  <div className="flex gap-4">
-                    <button onClick={nextStep} className="flex-1 py-4 bg-bakery-brown text-white rounded-2xl font-bold hover:bg-bakery-brown/90 transition-all active:scale-95 text-sm sm:text-base">
-                      {t('continue')}
-                    </button>
-                    <button onClick={nextStep} className="px-4 sm:px-8 py-4 text-bakery-brown/50 font-bold hover:text-bakery-brown transition-colors text-sm sm:text-base">
-                      {t('skip')}
-                    </button>
-                  </div>
-                  <button onClick={prevStep} className="w-full py-2 text-bakery-brown/40 font-bold hover:text-bakery-brown transition-colors text-xs uppercase tracking-widest">
-                    {t('back')}
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {step === 6 && (
-              <div className="animate-fade-in py-2">
-                <div className="flex items-center gap-4 mb-6">
-                  <div className="w-10 h-10 sm:w-12 sm:h-12 bg-bakery-accent/20 rounded-2xl flex items-center justify-center text-bakery-brown shrink-0">
-                    <Boxes size={20} className="sm:w-6 sm:h-6" />
-                  </div>
-                  <div className="text-left">
-                    <h2 className="text-xl sm:text-2xl font-black font-serif text-bakery-brown">{t('stockManagement')}</h2>
-                    <p className="text-bakery-brown/50 text-xs sm:text-sm">{t('stockSetupSubtitle')}</p>
-                  </div>
-                </div>
-
-                <div className="space-y-8 mb-10">
-                  {/* Prepped Stock Section */}
-                  <div className="space-y-4">
-                    <h3 className="text-sm font-black uppercase tracking-widest text-bakery-brown/40">{t('preppedStockAuto')}</h3>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-                      <input 
-                        type="text" 
-                        placeholder={t('exampleWaffleBatter')}
-                        className="sm:col-span-2 p-3 sm:p-4 bg-bakery-cream rounded-2xl outline-none font-bold text-sm sm:text-base"
-                        value={preppedForm.name}
-                        onChange={e => setPreppedForm({ ...preppedForm, name: e.target.value })}
-                      />
-                      <input 
-                        type="number" 
-                        placeholder={t('portions')}
-                        className="p-3 sm:p-4 bg-bakery-cream rounded-2xl outline-none font-bold text-sm sm:text-base"
-                        value={preppedForm.portions}
-                        onChange={e => setPreppedForm({ ...preppedForm, portions: e.target.value })}
-                      />
-                    </div>
-                    <button 
-                      onClick={addPreppedStock}
-                      className="w-full py-3 bg-bakery-brown/5 text-bakery-brown rounded-2xl font-bold hover:bg-bakery-brown/10 transition-all flex items-center justify-center gap-2 text-sm"
-                    >
-                      <Plus size={18} />
-                      {t('addPrepped')}
-                    </button>
-
-                    <div className="max-h-24 overflow-y-auto space-y-2 pr-2 scrollbar-hide">
-                      {preparedStock.map(ps => (
-                        <div key={ps.id} className="flex justify-between items-center p-3 bg-bakery-beige/30 rounded-xl text-xs sm:text-sm">
-                          <span className="font-bold truncate">{ps.name}</span>
-                          <div className="flex items-center gap-4 shrink-0">
-                            <span className="font-black">{ps.portions} {t('portions')}</span>
-                            <button onClick={() => setPreparedStock(preparedStock.filter(p => p.id !== ps.id))} className="text-rose-500">
-                              <Trash2 size={14} />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Raw Ingredients Section */}
-                  <div className="space-y-4">
-                    <h3 className="text-sm font-black uppercase tracking-widest text-bakery-brown/40">{t('rawIngredientsManual')}</h3>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-                      <input 
-                        type="text" 
-                        placeholder={t('exampleFlour')}
-                        className="sm:col-span-3 p-3 sm:p-4 bg-bakery-cream rounded-2xl outline-none font-bold text-sm sm:text-base"
-                        value={ingredientForm.name}
-                        onChange={e => setIngredientForm({ ...ingredientForm, name: e.target.value })}
-                      />
-                      <input 
-                        type="text" 
-                        placeholder={t('unitPlaceholder')}
-                        className="p-3 sm:p-4 bg-bakery-cream rounded-2xl outline-none font-bold text-sm sm:text-base"
-                        value={ingredientForm.unit}
-                        onChange={e => setIngredientForm({ ...ingredientForm, unit: e.target.value })}
-                      />
-                      <input 
-                        type="number" 
-                        placeholder={t('quantity')}
-                        className="sm:col-span-2 p-3 sm:p-4 bg-bakery-cream rounded-2xl outline-none font-bold text-sm sm:text-base"
-                        value={ingredientForm.quantity}
-                        onChange={e => setIngredientForm({ ...ingredientForm, quantity: e.target.value })}
-                      />
-                    </div>
-                    <button 
-                      onClick={addIngredient}
-                      className="w-full py-3 border-2 border-dashed border-bakery-brown/20 text-bakery-brown/60 rounded-2xl font-bold hover:border-bakery-brown/40 hover:text-bakery-brown transition-all flex items-center justify-center gap-2 text-sm"
-                    >
-                      <Plus size={18} />
-                      {t('addIngredient')}
-                    </button>
-
-                    <div className="max-h-24 overflow-y-auto space-y-2 pr-2 scrollbar-hide">
-                      {ingredients.map(ing => (
-                        <div key={ing.id} className="flex justify-between items-center p-3 bg-bakery-beige/30 rounded-xl text-xs sm:text-sm">
-                          <span className="font-bold truncate">{ing.name}</span>
-                          <div className="flex items-center gap-4 shrink-0">
-                            <span className="font-black">{ing.quantity} {ing.unit}</span>
-                            <button onClick={() => setIngredients(ingredients.filter(i => i.id !== ing.id))} className="text-rose-500">
-                              <Trash2 size={14} />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex flex-col gap-3">
-                  <div className="flex gap-4">
-                    <button onClick={nextStep} className="flex-1 py-4 bg-bakery-brown text-white rounded-2xl font-bold hover:bg-bakery-brown/90 transition-all active:scale-95 text-sm sm:text-base">
-                      {t('continue')}
-                    </button>
-                    <button onClick={nextStep} className="px-4 sm:px-8 py-4 text-bakery-brown/50 font-bold hover:text-bakery-brown transition-colors text-sm sm:text-base">
-                      {t('skip')}
-                    </button>
-                  </div>
-                  <button onClick={prevStep} className="w-full py-2 text-bakery-brown/40 font-bold hover:text-bakery-brown transition-colors text-xs uppercase tracking-widest">
-                    {t('back')}
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {step === 7 && (
               <div className="text-center animate-fade-in py-4">
-                <div className="w-16 h-16 sm:w-20 sm:h-20 bg-emerald-500 rounded-3xl flex items-center justify-center text-white mx-auto mb-6 sm:mb-8 shadow-xl shadow-emerald-500/20">
-                  <CheckCircle2 size={32} className="sm:w-10 sm:h-10" />
+                <div className="w-16 h-16 bg-emerald-500 rounded-3xl flex items-center justify-center text-white mx-auto mb-6 shadow-xl shadow-emerald-500/20">
+                  <CheckCircle2 size={32} />
                 </div>
-                <h2 className="text-2xl sm:text-4xl font-black font-serif text-bakery-brown mb-4 sm:mb-6">
-                  {t('allSet')}
+                <h2 className="text-2xl sm:text-3xl font-black font-serif text-bakery-brown mb-3">
+                  {t('readyToSell') || 'You can take orders'}
                 </h2>
-                <p className="text-bakery-brown/60 text-base sm:text-lg mb-8 sm:mb-10 leading-relaxed">
-                  {t('onboardingCompleteIntro')}
+                <p className="text-bakery-brown/60 text-sm sm:text-base mb-6 leading-relaxed max-w-md mx-auto">
+                  {t('onboardingHonestDone') ||
+                    'Your menu is ready. Finish stock, team, and finance anytime from Overview and Settings.'}
                 </p>
-
-                <div className="grid grid-cols-2 gap-3 sm:gap-4 mb-8 sm:mb-12">
-                  <div className="p-3 sm:p-4 bg-bakery-beige/30 rounded-2xl">
-                    <p className="text-xl sm:text-2xl font-black text-bakery-brown">{categories.length}</p>
-                    <p className="text-[10px] sm:text-xs font-bold uppercase tracking-widest text-bakery-brown/40">{t('categories')}</p>
-                  </div>
-                  <div className="p-3 sm:p-4 bg-bakery-beige/30 rounded-2xl">
-                    <p className="text-xl sm:text-2xl font-black text-bakery-brown">{products.length}</p>
-                    <p className="text-[10px] sm:text-xs font-bold uppercase tracking-widest text-bakery-brown/40">{t('menuItems')}</p>
-                  </div>
-                  <div className="p-3 sm:p-4 bg-bakery-beige/30 rounded-2xl">
-                    <p className="text-xl sm:text-2xl font-black text-bakery-brown">{ingredients.length}</p>
-                    <p className="text-[10px] sm:text-xs font-bold uppercase tracking-widest text-bakery-brown/40">{t('rawIngredients')}</p>
-                  </div>
-                  <div className="p-3 sm:p-4 bg-bakery-beige/30 rounded-2xl">
-                    <p className="text-xl sm:text-2xl font-black text-bakery-brown">{preparedStock.length}</p>
-                    <p className="text-[10px] sm:text-xs font-bold uppercase tracking-widest text-bakery-brown/40">{t('preppedStock')}</p>
-                  </div>
-                  <div className="p-3 sm:p-4 bg-bakery-beige/30 rounded-2xl">
-                    <p className="text-xl sm:text-2xl font-black text-bakery-brown">{users.filter(u => u.role !== 'owner').length}</p>
-                    <p className="text-[10px] sm:text-xs font-bold uppercase tracking-widest text-bakery-brown/40">{t('teamMembers')}</p>
-                  </div>
+                <div className="text-left bg-bakery-beige/30 rounded-2xl p-4 mb-6 space-y-1">
+                  <p className="text-sm font-bold text-emerald-700">
+                    {t('menuItems')}: {products.length} ✓
+                  </p>
+                  <p className="text-xs text-bakery-brown/50">
+                    {[
+                      modules.stock && t('stock'),
+                      modules.staff && t('staff'),
+                      modules.finance && t('finance'),
+                      modules.orders && t('orders'),
+                      modules.sales && t('sales'),
+                    ]
+                      .filter(Boolean)
+                      .join(' · ') || t('modulesAlwaysOn')}
+                  </p>
                 </div>
-
-                <div className="flex flex-col gap-3">
-                  <button 
-                    onClick={completeOnboarding}
-                    className="w-full py-4 sm:py-5 bg-bakery-brown text-white rounded-2xl font-bold text-lg sm:text-xl hover:bg-bakery-brown/90 transition-all active:scale-95 flex items-center justify-center gap-3"
+                <div className="flex flex-col gap-2">
+                  <button
+                    type="button"
+                    onClick={() => finishSetup(true)}
+                    className="w-full py-4 bg-bakery-brown text-white rounded-2xl font-bold flex items-center justify-center gap-2"
+                  >
+                    {t('goToCashier') || 'Go to Cashier'}
+                    <ChevronRight size={20} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => finishSetup(false)}
+                    className="w-full py-3 text-bakery-brown/60 font-bold text-sm hover:text-bakery-brown"
                   >
                     {t('goToDashboard')}
-                    <ChevronRight size={24} />
                   </button>
-                  <button onClick={prevStep} className="w-full py-2 text-bakery-brown/40 font-bold hover:text-bakery-brown transition-colors text-xs uppercase tracking-widest">
+                  <button type="button" onClick={prevStep} className="w-full py-2 text-bakery-brown/40 font-bold text-xs uppercase tracking-widest">
                     {t('back')}
                   </button>
                 </div>
               </div>
             )}
+          </div>
         </div>
       </div>
     </div>
-  </div>
-);
+  );
 };

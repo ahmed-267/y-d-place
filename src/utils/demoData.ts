@@ -10,16 +10,16 @@ export const generateDemoData = () => {
   
   // 1. Generate Staff
   const users: User[] = [
-    { id: 1, username: 'owner@123.com', fullName: 'PreVisio Owner', role: 'owner', password: '123', email: 'owner@123.com' },
-    { id: 2, username: 'manager', fullName: 'Y&D Manager', role: 'manager', password: 'manager123' },
-    { id: 3, username: 'sarah', fullName: 'Sarah Jenkins', role: 'staff', password: 'staff123' },
-    { id: 4, username: 'ahmed', fullName: 'Ahmed Mahrez', role: 'staff', password: 'staff123' },
-    { id: 5, username: 'elena', fullName: 'Elena Rodriguez', role: 'staff', password: 'staff123' },
-    { id: 6, username: 'marco', fullName: 'Marco Rossi', role: 'staff', password: 'staff123' },
-    { id: 7, username: 'sophie', fullName: 'Sophie Dubois', role: 'staff', password: 'staff123' },
-    { id: 8, username: 'lucas', fullName: 'Lucas Van Damme', role: 'staff', password: 'staff123' },
-    { id: 9, username: 'nina', fullName: 'Nina Petrov', role: 'staff', password: 'staff123' },
-    { id: 10, username: 'david', fullName: 'David Smith', role: 'staff', password: 'staff123' },
+    { id: 1, username: 'owner@123.com', fullName: 'PreVisio Owner', role: 'owner', password: 'owner123', email: 'owner@123.com' },
+    { id: 2, username: 'manager', fullName: 'PreVisio Manager', role: 'manager', password: 'manager123' },
+    { id: 3, username: 'staff1', fullName: 'Staff Member One', role: 'staff', password: 'staff123' },
+    { id: 4, username: 'sarah', fullName: 'Sarah Jenkins', role: 'staff', password: 'staff123' },
+    { id: 5, username: 'ahmed', fullName: 'Ahmed Mahrez', role: 'staff', password: 'staff123' },
+    { id: 6, username: 'elena', fullName: 'Elena Rodriguez', role: 'staff', password: 'staff123' },
+    { id: 7, username: 'marco', fullName: 'Marco Rossi', role: 'staff', password: 'staff123' },
+    { id: 8, username: 'sophie', fullName: 'Sophie Dubois', role: 'staff', password: 'staff123' },
+    { id: 9, username: 'lucas', fullName: 'Lucas Van Damme', role: 'staff', password: 'staff123' },
+    { id: 10, username: 'nina', fullName: 'Nina Petrov', role: 'staff', password: 'staff123' },
   ];
 
   // 2. Generate Ingredients

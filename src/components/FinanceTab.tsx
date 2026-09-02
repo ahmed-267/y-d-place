@@ -5,9 +5,12 @@ import { Plus, Trash2, Edit2, Calculator, TrendingUp, Receipt, Info, Check, X, A
 import { Expense, ExpenseCategory, TaxSettings } from '../types';
 import { Modal } from './Modal';
 import { ConfirmDialog } from './ConfirmDialog';
-import { Pagination } from './Pagination';
+import { DataTablePagination, useTablePagination } from './DataTablePagination';
+import { SortableTh, useColumnSort, sortByColumn } from '../utils/tableSort';
 import { ScanProgressModal } from './ScanProgressModal';
 import { compressImage } from '../utils/aiHelper';
+import { getRegionalTaxProfile, regionalTaxLines } from '../utils/taxRegions';
+import { supabase } from './supabaseClient';
 
 type ReceiptExtraction = {
   name: string;
@@ -21,7 +24,9 @@ const EXPENSE_CATEGORIES: ExpenseCategory[] = [
 ];
 
 export const FinanceTab = () => {
-  const { t, expenses, setExpenses, taxSettings, setTaxSettings, sales, addToast, businessSettings, formatPrice } = useApp();
+  const { t, expenses, addExpense, updateExpense, deleteExpense, taxSettings, setTaxSettings, sales, addToast, businessSettings, formatPrice, setActiveTab, user } = useApp();
+  const isOwner = user?.role === 'owner';
+  const taxProfile = getRegionalTaxProfile(businessSettings?.country);
   const PLACEHOLDERS = useMemo(() => [
     t('expensePlaceholder1'),
     t('expensePlaceholder2'),
@@ -51,8 +56,7 @@ export const FinanceTab = () => {
   const [expenseFilter, setExpenseFilter] = useState<ExpenseCategory | 'All'>('All');
   const [expenseDateRange, setExpenseDateRange] = useState({ from: '', to: '' });
   
-  const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 10;
+
 
   // Receipt Scanner State
   const [isScanning, setIsScanning] = useState(false);
@@ -83,13 +87,28 @@ export const FinanceTab = () => {
   }, [taxSettings]);
 
   const handleSaveTaxSettings = () => {
-    setTaxSettings(localTaxSettings);
+    if (!isOwner) {
+      addToast(t('ownerOnlyTaxSettings') || 'Only the business owner can change tax settings.', 'error');
+      return;
+    }
+    setTaxSettings(prev => ({
+      ...prev,
+      manualGrossRevenue: localTaxSettings.manualGrossRevenue,
+      manualExpenses: localTaxSettings.manualExpenses,
+      socialSecurityPaid: localTaxSettings.socialSecurityPaid,
+      vatRegime: prev.vatRegime,
+      municipalTaxRate: prev.municipalTaxRate,
+      countryCode: businessSettings?.country || prev.countryCode,
+    }));
     addToast(t('save'), 'success');
   };
 
   // Calculations
   const totalSalesRevenue = useMemo(() => sales.reduce((acc, s) => acc + s.subtotal, 0), [sales]);
   
+  type ExpenseSort = 'receipt' | 'name' | 'category' | 'amount' | 'date' | 'recurring' | 'frequency';
+  const { sortKey: expenseSortKey, sortDirection: expenseSortDir, toggleSort: toggleExpenseSort } = useColumnSort<ExpenseSort>('date', 'desc');
+
   const filteredExpenses = useMemo(() => {
     let list = expenses;
     if (expenseFilter !== 'All') {
@@ -101,19 +120,22 @@ export const FinanceTab = () => {
     if (expenseDateRange.to) {
       list = list.filter(e => e.date <= expenseDateRange.to);
     }
-    return list.sort((a, b) => b.date.localeCompare(a.date));
-  }, [expenses, expenseFilter, expenseDateRange]);
+    return sortByColumn(list, expenseSortKey, expenseSortDir, (e: Expense, key) => {
+      if (key === 'receipt') return e.receiptImage ? 1 : 0;
+      if (key === 'name') return e.name;
+      if (key === 'category') return e.category;
+      if (key === 'amount') return e.amount;
+      if (key === 'date') return e.date;
+      if (key === 'recurring') return e.isRecurring ? 1 : 0;
+      return e.frequency || '';
+    });
+  }, [expenses, expenseFilter, expenseDateRange, expenseSortKey, expenseSortDir]);
 
-  const paginatedExpenses = useMemo(() => {
-    const start = (currentPage - 1) * itemsPerPage;
-    return filteredExpenses.slice(start, start + itemsPerPage);
-  }, [filteredExpenses, currentPage]);
-
-  const totalPages = Math.ceil(filteredExpenses.length / itemsPerPage);
-
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [expenseFilter, expenseDateRange]);
+  const expensesPaging = useTablePagination(filteredExpenses.length, 10, `${expenseFilter}|${expenseDateRange.from}|${expenseDateRange.to}`);
+  const paginatedExpenses = useMemo(
+    () => expensesPaging.slice(filteredExpenses),
+    [filteredExpenses, expensesPaging.page, expensesPaging.pageSize, expensesPaging.start]
+  );
 
   const expenseSummaries = useMemo(() => {
     const now = new Date();
@@ -589,19 +611,44 @@ export const FinanceTab = () => {
     };
   }, [sales, expenseSummaries, totalSalesRevenue, localTaxSettings.municipalTaxRate]);
 
-  const handleAddExpense = () => {
-    const newExpense: Expense = {
+  const dataURLtoFile = (dataurl: string, filename: string) => {
+    const arr = dataurl.split(',');
+    const mimeMatch = arr[0].match(/:(.*?);/);
+    if (!mimeMatch) return null;
+    const mime = mimeMatch[1];
+    const bstr = atob(arr[1]);
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) {
+      u8arr[n] = bstr.charCodeAt(n);
+    }
+    return new File([u8arr], filename, { type: mime });
+  }
+
+  const handleAddExpense = async () => {
+    let receiptImageUrl = editingExpense?.receiptImage || undefined;
+
+    if (scannedImage) {
+      const file = dataURLtoFile(scannedImage, `receipt_${Date.now()}.jpg`);
+      if (file) {
+        const { data, error } = await supabase.storage.from('receipts').upload(`public/${file.name}`, file);
+        if (error) {
+          addToast(`Receipt upload failed: ${error.message}`, 'error');
+        } else {
+          receiptImageUrl = supabase.storage.from('receipts').getPublicUrl(data.path).data.publicUrl;
+        }
+      }
+    }
+
+    const expensePayload = {
       ...expenseForm as Expense,
-      id: editingExpense?.id || Math.random().toString(36).substr(2, 9),
-      receiptImage: scannedImage || expenseForm.receiptImage
+      receiptImage: receiptImageUrl,
     };
 
     if (editingExpense) {
-      setExpenses(prev => prev.map(e => e.id === editingExpense.id ? newExpense : e));
-      addToast(t('edit'), 'success');
+      await updateExpense({ ...expensePayload, id: editingExpense.id });
     } else {
-      setExpenses(prev => [...prev, newExpense]);
-      addToast(t('addExpense'), 'success');
+      await addExpense(expensePayload);
     }
     setIsExpenseModalOpen(false);
     setEditingExpense(null);
@@ -751,9 +798,8 @@ export const FinanceTab = () => {
 
   const handleDeleteExpense = () => {
     if (expenseToDelete) {
-      setExpenses(prev => prev.filter(e => e.id !== expenseToDelete.id));
+      deleteExpense(expenseToDelete.id);
       setExpenseToDelete(null);
-      addToast(t('delete'), 'success');
     }
   };
 
@@ -827,13 +873,13 @@ export const FinanceTab = () => {
               <table className="w-full text-left text-sm min-w-[900px]">
                 <thead className="bg-bakery-beige/30 text-bakery-brown/40 uppercase text-[10px] font-black tracking-widest">
                   <tr>
-                    <th className="p-4">{t('receipt')}</th>
-                    <th className="p-4">{t('expenseName')}</th>
-                    <th className="p-4">{t('category')}</th>
-                    <th className="p-4">{t('amount')}</th>
-                    <th className="p-4">{t('date')}</th>
-                    <th className="p-4">{t('recurring')}</th>
-                    <th className="p-4">{t('frequency')}</th>
+                    <SortableTh label={t('receipt')} column="receipt" sortKey={expenseSortKey} sortDirection={expenseSortDir} onSort={toggleExpenseSort} />
+                    <SortableTh label={t('expenseName')} column="name" sortKey={expenseSortKey} sortDirection={expenseSortDir} onSort={toggleExpenseSort} />
+                    <SortableTh label={t('category')} column="category" sortKey={expenseSortKey} sortDirection={expenseSortDir} onSort={toggleExpenseSort} />
+                    <SortableTh label={t('amount')} column="amount" sortKey={expenseSortKey} sortDirection={expenseSortDir} onSort={toggleExpenseSort} />
+                    <SortableTh label={t('date')} column="date" sortKey={expenseSortKey} sortDirection={expenseSortDir} onSort={toggleExpenseSort} />
+                    <SortableTh label={t('recurring')} column="recurring" sortKey={expenseSortKey} sortDirection={expenseSortDir} onSort={toggleExpenseSort} />
+                    <SortableTh label={t('frequency')} column="frequency" sortKey={expenseSortKey} sortDirection={expenseSortDir} onSort={toggleExpenseSort} />
                     <th className="p-4 text-right">{t('actions')}</th>
                   </tr>
                 </thead>
@@ -843,7 +889,7 @@ export const FinanceTab = () => {
                       <td className="p-4">
                         {e.receiptImage ? (
                           <button 
-                            onClick={() => setFullSizeImage(e.receiptImage!)}
+                            onClick={() => setFullSizeImage(e.receiptImage)}
                             className="w-10 h-10 rounded-lg overflow-hidden border border-bakery-beige hover:border-bakery-caramel transition-all group relative"
                           >
                             <img src={e.receiptImage} alt={t('receipt')} className="w-full h-full object-cover" />
@@ -930,14 +976,13 @@ export const FinanceTab = () => {
             </Modal>
           )}
 
-          {filteredExpenses.length > itemsPerPage && (
-            <Pagination 
-              currentPage={currentPage}
-              totalPages={totalPages}
-              onPageChange={setCurrentPage}
-              t={t}
-            />
-          )}
+          <DataTablePagination
+            page={expensesPaging.page}
+            pageSize={expensesPaging.pageSize}
+            totalItems={filteredExpenses.length}
+            onPageChange={expensesPaging.setPage}
+            onPageSizeChange={expensesPaging.setPageSize}
+          />
         </div>
       )}
 
@@ -947,10 +992,30 @@ export const FinanceTab = () => {
           {/* Inputs */}
           <div className="space-y-6">
             <div className="card-bakery p-6 space-y-4">
-              <h3 className="font-serif text-xl font-black flex items-center gap-2">
+              <h3 className="font-serif text-base font-bold flex items-center gap-2">
                 <Calculator className="text-bakery-caramel" />
                 {t('settings')}
               </h3>
+
+              <div className="rounded-2xl border border-bakery-beige/60 bg-bakery-beige/20 p-4 space-y-2">
+                <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40">
+                  {t('taxForRegion')} — {taxProfile.countryName} ({taxProfile.currencyHint})
+                </p>
+                <p className="text-sm font-black text-bakery-brown">
+                  {t('regionalVatRate')}: {taxProfile.vatLabel} {taxProfile.standardVatPercent}%
+                  {taxProfile.reducedVatPercent != null
+                    ? ` / reduced ${taxProfile.reducedVatPercent}%`
+                    : ''}
+                </p>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-bakery-brown/40 pt-1">
+                  {t('taxesYouPay')}
+                </p>
+                <ul className="space-y-1 text-xs text-bakery-brown/80 list-disc pl-4">
+                  {regionalTaxLines(taxProfile).map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+              </div>
               
               <div className="space-y-4">
                 <div>
@@ -987,35 +1052,29 @@ export const FinanceTab = () => {
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-xs font-bold uppercase text-bakery-brown/40 mb-1 block">{t('municipalTaxRate')} (%)</label>
-                    <div className="relative">
-                      <input 
-                        type="number" 
-                        className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-bakery-caramel"
-                        value={localTaxSettings.municipalTaxRate}
-                        onChange={e => setLocalTaxSettings({...localTaxSettings, municipalTaxRate: parseFloat(e.target.value)})}
-                      />
-                      <div className="absolute right-3 top-1/2 -translate-y-1/2 group cursor-help">
-                        <Info size={14} className="text-bakery-brown/40" />
-                        <div className="absolute bottom-full right-0 mb-2 w-48 p-2 bg-bakery-brown text-white text-[10px] rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
-                          {t('municipalTaxHelp')}
-                        </div>
-                      </div>
-                    </div>
+                  <div className="p-3 bg-bakery-beige/30 rounded-xl">
+                    <p className="text-[10px] font-bold uppercase text-bakery-brown/40 mb-1">{t('municipalTaxRate')}</p>
+                    <p className="font-black text-bakery-brown">{localTaxSettings.municipalTaxRate}%</p>
                   </div>
-                  <div>
-                    <label className="text-xs font-bold uppercase text-bakery-brown/40 mb-1 block">{t('vatRegime')}</label>
-                    <select 
-                      className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-bakery-caramel"
-                      value={localTaxSettings.vatRegime}
-                      onChange={e => setLocalTaxSettings({...localTaxSettings, vatRegime: e.target.value as any})}
-                    >
-                      <option value="SmallBusiness">{t('smallBusinessExemption')}</option>
-                      <option value="Standard">{t('standardVAT')}</option>
-                    </select>
+                  <div className="p-3 bg-bakery-beige/30 rounded-xl">
+                    <p className="text-[10px] font-bold uppercase text-bakery-brown/40 mb-1">{t('vatRegime')}</p>
+                    <p className="font-black text-bakery-brown text-sm">
+                      {localTaxSettings.vatRegime === 'SmallBusiness'
+                        ? t('smallBusinessExemption')
+                        : t('standardVAT')}
+                    </p>
                   </div>
                 </div>
+                <p className="text-[10px] text-bakery-brown/50">
+                  {t('fiscalDefaultsInSettings')}{' '}
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('settings')}
+                    className="font-bold text-bakery-caramel underline underline-offset-2"
+                  >
+                    {t('openSettings')}
+                  </button>
+                </p>
 
                 {(localTaxSettings.manualGrossRevenue ?? totalSalesRevenue) < 25000 && (
                   <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-xl flex gap-3">
@@ -1028,16 +1087,17 @@ export const FinanceTab = () => {
 
                 <button 
                   onClick={handleSaveTaxSettings}
-                  className="w-full py-3 bg-bakery-brown text-white rounded-xl font-bold hover:bg-bakery-brown/90 transition-all"
+                  disabled={!isOwner}
+                  className="w-full py-3 bg-bakery-brown text-white rounded-xl font-bold hover:bg-bakery-brown/90 transition-all disabled:opacity-50"
                 >
-                  {t('save')}
+                  {isOwner ? t('save') : (t('ownerOnlyTaxSettings') || 'Owner only')}
                 </button>
               </div>
             </div>
 
             <div className="p-4 bg-bakery-beige/10 rounded-2xl border border-bakery-beige/30">
               <p className="text-[10px] text-bakery-brown/60 leading-relaxed italic">
-                {t('taxDisclaimer')}
+                {taxProfile.disclaimer}
               </p>
             </div>
           </div>

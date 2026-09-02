@@ -1,312 +1,200 @@
-
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { Loader2 } from 'lucide-react';
 import { useApp } from '../AppContext';
-import { COUNTRIES, CURRENCIES, VENUE_TYPES } from '../constants';
-import { BusinessSettings, User, Language } from '../types';
-import { ArrowLeft } from 'lucide-react';
+import { supabase } from './supabaseClient';
+import { AuthShell, authFieldClassName, authPrimaryButtonClassName } from './AuthShell';
+import { AuthDestination, resolvePostAuthDestination } from '../utils/authRouting';
+import { isNetworkAuthError } from '../utils/localAccounts';
 
-export const RegistrationForm = ({ onBack }: { onBack: () => void }) => {
-  const { t, registerBusiness, addToast } = useApp();
-  const EMAIL_REGEX = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
-  const PHONE_LENGTH_BY_COUNTRY: Record<string, { min: number; max: number }> = {
-    US: { min: 10, max: 10 },
-    CA: { min: 10, max: 10 },
-    GB: { min: 10, max: 11 },
-    BE: { min: 9, max: 10 },
-    FR: { min: 9, max: 10 },
-    NL: { min: 9, max: 10 },
-  };
+type RegistrationFormProps = {
+  onBack: () => void;
+  onGoLogin: () => void;
+  onAuthenticated: (destination: AuthDestination) => void;
+};
 
-  const venueLabel = (venue: string) => {
-    const map: Record<string, string> = {
-      'Restaurant': 'restaurant',
-      'Food Truck': 'foodTruck',
-      'Cafe': 'cafe',
-      'Café': 'cafe',
-      'Bar': 'bar',
-      'Bakery': 'bakery',
-      'Fast Food': 'fastFood',
-      'Other': 'otherVenue'
-    };
-    const key = map[venue] || venue;
-    const translated = t(key);
-    return translated === key ? venue : translated;
-  };
-  
-  const [formData, setFormData] = useState({
-    businessName: '',
-    ownerFullName: '',
-    username: '',
-    ownerEmail: '',
-    ownerPhone: '',
-    venueType: 'Restaurant',
-    country: 'US',
-    city: '',
-    currencyCode: 'USD',
-    currencySymbol: '$',
-    language: 'en' as Language,
-    password: '',
-    confirmPassword: ''
-  });
+const deriveProfileFromEmail = (email: string) => {
+  const local = email.split('@')[0] || 'owner';
+  const username = local.replace(/[^a-zA-Z0-9._-]/g, '').slice(0, 24) || 'owner';
+  const fullName =
+    local
+      .replace(/[._-]+/g, ' ')
+      .replace(/\b\w/g, c => c.toUpperCase())
+      .trim() || 'Owner';
+  return { username, fullName };
+};
 
-  const CURRENCY_OPTIONS = [
-    { label: 'Euro (€) — EUR', code: 'EUR', symbol: '€' },
-    { label: 'British Pound (£) — GBP', code: 'GBP', symbol: '£' },
-    { label: 'US Dollar ($) — USD', code: 'USD', symbol: '$' },
-    { label: 'Swiss Franc (CHF) — CHF', code: 'CHF', symbol: 'CHF' },
-    { label: 'Canadian Dollar (CA$) — CAD', code: 'CAD', symbol: 'CA$' },
-    { label: 'Australian Dollar (A$) — AUD', code: 'AUD', symbol: 'A$' },
-    { label: 'UAE Dirham (AED) — AED', code: 'AED', symbol: 'AED' },
-    { label: 'Saudi Riyal (SAR) — SAR', code: 'SAR', symbol: 'SAR' },
-    { label: 'Egyptian Pound (EGP) — EGP', code: 'EGP', symbol: 'EGP' },
-    { label: 'Moroccan Dirham (MAD) — MAD', code: 'MAD', symbol: 'MAD' },
-    { label: 'Jordanian Dinar (JOD) — JOD', code: 'JOD', symbol: 'JOD' },
-    { label: 'Polish Złoty (zł) — PLN', code: 'PLN', symbol: 'zł' },
-    { label: 'Romanian Leu (lei) — RON', code: 'RON', symbol: 'lei' },
-    { label: 'Turkish Lira (₺) — TRY', code: 'TRY', symbol: '₺' },
-    { label: 'Japanese Yen (¥) — JPY', code: 'JPY', symbol: '¥' },
-    { label: 'Chinese Yuan (¥) — CNY', code: 'CNY', symbol: '¥' },
-    { label: 'Brazilian Real (R$) — BRL', code: 'BRL', symbol: 'R$' },
-    { label: 'South African Rand (R) — ZAR', code: 'ZAR', symbol: 'R' },
-  ];
+export const RegistrationForm = ({ onBack, onGoLogin, onAuthenticated }: RegistrationFormProps) => {
+  const { addToast, registerAccount } = useApp();
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const COUNTRY_CURRENCY_MAP: Record<string, string> = {
-    'BE': 'EUR', 'FR': 'EUR', 'NL': 'EUR', 'DE': 'EUR', 'ES': 'EUR', 'IT': 'EUR', 'PT': 'EUR', 'LU': 'EUR', 'AT': 'EUR',
-    'GB': 'GBP', 'US': 'USD', 'CA': 'CAD', 'AU': 'AUD', 'CH': 'CHF', 'AE': 'AED', 'SA': 'SAR', 'EG': 'EGP', 'MA': 'MAD',
-    'JO': 'JOD', 'PL': 'PLN', 'RO': 'RON', 'TR': 'TRY', 'JP': 'JPY', 'CN': 'CNY', 'BR': 'BRL', 'ZA': 'ZAR'
-  };
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
 
-  const handleCountryChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const countryCode = e.target.value;
-    const currencyCode = COUNTRY_CURRENCY_MAP[countryCode];
-    
-    if (currencyCode) {
-      const option = CURRENCY_OPTIONS.find(o => o.code === currencyCode);
-      if (option) {
-        setFormData({
-          ...formData,
-          country: countryCode,
-          currencyCode: option.code,
-          currencySymbol: option.symbol
+    if (password.length < 6) {
+      const message = 'Password must be at least 6 characters.';
+      setError(message);
+      addToast(message, 'error');
+      return;
+    }
+
+    setIsSubmitting(true);
+    const trimmedEmail = email.trim().toLowerCase();
+    const { username, fullName } = deriveProfileFromEmail(trimmedEmail);
+
+    try {
+      const { data, error: authError } = await supabase.auth.signUp({
+        email: trimmedEmail,
+        password,
+        options: {
+          data: {
+            full_name: fullName,
+            username,
+          },
+        },
+      });
+
+      if (!authError) {
+        if (data.session?.user) {
+          addToast('Account created successfully.', 'success');
+          const destination = await resolvePostAuthDestination(data.session.user.id);
+          onAuthenticated(destination);
+          return;
+        }
+
+        // Email confirmation required — try immediate sign-in, else tell user
+        const signIn = await supabase.auth.signInWithPassword({
+          email: trimmedEmail,
+          password,
         });
+        if (!signIn.error && signIn.data.user) {
+          addToast('Account created successfully.', 'success');
+          const destination = await resolvePostAuthDestination(signIn.data.user.id);
+          onAuthenticated(destination);
+          return;
+        }
+
+        addToast('Account created. Please confirm your email, then sign in.', 'info');
+        onGoLogin();
         return;
       }
-    }
-    
-    setFormData({ ...formData, country: countryCode });
-  };
 
-  const handleCurrencyChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const option = CURRENCY_OPTIONS.find(o => o.code === e.target.value);
-    if (option) {
-      setFormData({
-        ...formData,
-        currencyCode: option.code,
-        currencySymbol: option.symbol
-      });
-    }
-  };
+      if (isNetworkAuthError(authError)) {
+        const { error: localError } = await registerAccount({
+          fullName,
+          username,
+          email: trimmedEmail,
+          password,
+        });
+        if (!localError) {
+          onAuthenticated('onboarding');
+        } else {
+          const message =
+            typeof localError === 'object' && localError && 'message' in localError
+              ? String((localError as { message?: string }).message)
+              : 'Registration failed.';
+          setError(message);
+        }
+        return;
+      }
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!EMAIL_REGEX.test(formData.ownerEmail.trim())) {
-      addToast(t('invalidCredentials'), "error");
-      return;
+      const message = authError.message || 'Registration failed.';
+      setError(message);
+      addToast(message, 'error');
+    } catch (err) {
+      if (isNetworkAuthError(err)) {
+        const { error: localError } = await registerAccount({
+          fullName,
+          username,
+          email: trimmedEmail,
+          password,
+        });
+        if (!localError) {
+          onAuthenticated('onboarding');
+          return;
+        }
+      }
+      const message = err instanceof Error ? err.message : 'Registration failed.';
+      setError(message);
+      addToast(message, 'error');
+    } finally {
+      setIsSubmitting(false);
     }
-    const phoneDigits = formData.ownerPhone.replace(/\D/g, '');
-    const phoneRule = PHONE_LENGTH_BY_COUNTRY[formData.country] || { min: 10, max: 12 };
-    if (phoneDigits.length < phoneRule.min || phoneDigits.length > phoneRule.max) {
-      addToast(`Phone number must be ${phoneRule.min}-${phoneRule.max} digits.`, "error");
-      return;
-    }
-    if (formData.password !== formData.confirmPassword) {
-      addToast(t('passwordsDontMatch'), "error");
-      return;
-    }
-
-    const bizId = formData.businessName.toLowerCase().replace(/\s+/g, '-') + '-' + Date.now();
-    
-    const settings: BusinessSettings = {
-      id: bizId,
-      name: formData.businessName,
-      ownerName: formData.ownerFullName,
-      ownerEmail: formData.ownerEmail,
-      ownerPhone: formData.ownerPhone,
-      venueType: formData.venueType,
-      country: formData.country,
-      city: formData.city,
-      currencyCode: formData.currencyCode,
-      currencySymbol: formData.currencySymbol,
-      language: formData.language
-    };
-
-    const owner: User = {
-      id: 1,
-      username: formData.username,
-      fullName: formData.ownerFullName,
-      password: formData.password,
-      role: 'owner'
-    };
-
-    registerBusiness(settings, owner);
   };
 
   return (
-    <div className="min-h-screen bg-bakery-beige/30 p-2 sm:p-4 flex items-center justify-center">
-      <div className="card-bakery w-full max-w-xl p-4 sm:p-6 md:p-10 animate-fade-in overflow-y-auto max-h-[95vh] scrollbar-hide">
-        <button onClick={onBack} className="text-bakery-brown/50 hover:text-bakery-brown mb-4 sm:mb-6 flex items-center gap-2 transition-colors">
-          <ArrowLeft size={18} />
-          <span className="font-bold text-sm sm:text-base">{t('cancel')}</span>
-        </button>
-        
-        <h2 className="text-xl sm:text-2xl md:text-3xl font-black font-serif mb-6 sm:mb-8 text-center">{t('registerBusiness')}</h2>
-        
-        <form onSubmit={handleSubmit} className="space-y-4 sm:space-y-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="sm:col-span-2">
-              <label className="block text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-1 sm:mb-2">{t('businessName')}</label>
-              <input 
-                type="text" 
-                className="w-full p-3 sm:p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel font-bold text-sm sm:text-base"
-                value={formData.businessName}
-                onChange={e => setFormData({ ...formData, businessName: e.target.value })}
-                required 
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-1 sm:mb-2">{t('ownerFullName')}</label>
-              <input 
-                type="text" 
-                className="w-full p-3 sm:p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel font-bold text-sm sm:text-base"
-                value={formData.ownerFullName}
-                onChange={e => setFormData({ ...formData, ownerFullName: e.target.value })}
-                required 
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-1 sm:mb-2">{t('username')}</label>
-              <input 
-                type="text" 
-                className="w-full p-3 sm:p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel font-bold text-sm sm:text-base"
-                value={formData.username}
-                onChange={e => setFormData({ ...formData, username: e.target.value })}
-                required 
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-1 sm:mb-2">{t('ownerEmail')}</label>
-              <input 
-                type="email" 
-                className="w-full p-3 sm:p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel font-bold text-sm sm:text-base"
-                value={formData.ownerEmail}
-                onChange={e => setFormData({ ...formData, ownerEmail: e.target.value })}
-                required 
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-1 sm:mb-2">{t('ownerPhone')}</label>
-              <input 
-                type="tel" 
-                className="w-full p-3 sm:p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel font-bold text-sm sm:text-base"
-                value={formData.ownerPhone}
-                onChange={e => setFormData({ ...formData, ownerPhone: e.target.value })}
-                required 
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-1 sm:mb-2">{t('venueType')}</label>
-              <select 
-                className="w-full p-3 sm:p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel font-bold bg-white text-sm sm:text-base"
-                value={formData.venueType}
-                onChange={e => setFormData({ ...formData, venueType: e.target.value })}
-              >
-                {VENUE_TYPES.map(v => (
-                  <option key={v} value={v}>{venueLabel(v)}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-1 sm:mb-2">{t('country')}</label>
-              <select 
-                className="w-full p-3 sm:p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel font-bold bg-white text-sm sm:text-base"
-                value={formData.country}
-                onChange={handleCountryChange}
-              >
-                {COUNTRIES.map(c => (
-                  <option key={c.code} value={c.code}>{c.name}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-1 sm:mb-2">{t('city')}</label>
-              <input 
-                type="text" 
-                className="w-full p-3 sm:p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel font-bold text-sm sm:text-base"
-                value={formData.city}
-                onChange={e => setFormData({ ...formData, city: e.target.value })}
-                required 
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-1 sm:mb-2">{t('currency')}</label>
-              <select 
-                className="w-full p-3 sm:p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel font-bold bg-white text-sm sm:text-base"
-                value={formData.currencyCode}
-                onChange={handleCurrencyChange}
-                required
-              >
-                {CURRENCY_OPTIONS.map(o => (
-                  <option key={o.code} value={o.code}>{o.label}</option>
-                ))}
-              </select>
-            </div>
-            <div className="sm:col-span-2">
-              <label className="block text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-1 sm:mb-2">{t('preferredLanguage')}</label>
-              <select 
-                className="w-full p-3 sm:p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel font-bold bg-white text-sm sm:text-base"
-                value={formData.language}
-                onChange={e => setFormData({ ...formData, language: e.target.value as Language })}
-              >
-                <option value="en">{t('langEnglish')}</option>
-                <option value="fr">{t('langFrench')}</option>
-                <option value="nl">{t('langDutch')}</option>
-                <option value="fl">{t('langFlemish')}</option>
-                <option value="es">{t('langSpanish')}</option>
-                <option value="it">{t('langItalian')}</option>
-                <option value="de">{t('langGerman')}</option>
-                <option value="ar">{t('langArabic')}</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4 border-t border-bakery-beige">
-            <div>
-              <label className="block text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-1 sm:mb-2">{t('password')}</label>
-              <input 
-                type="password" 
-                className="w-full p-3 sm:p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel font-bold text-sm sm:text-base"
-                value={formData.password}
-                onChange={e => setFormData({ ...formData, password: e.target.value })}
-                required 
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-1 sm:mb-2">{t('confirmPassword')}</label>
-              <input 
-                type="password" 
-                className="w-full p-3 sm:p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel font-bold text-sm sm:text-base"
-                value={formData.confirmPassword}
-                onChange={e => setFormData({ ...formData, confirmPassword: e.target.value })}
-                required 
-              />
-            </div>
-          </div>
-
-          <button type="submit" className="btn-primary w-full p-4 sm:p-5 rounded-2xl font-bold text-lg sm:text-xl shadow-lg active:scale-95 transition-all">
-            {t('register')}
-          </button>
-        </form>
+    <AuthShell onBackHome={onBack}>
+      <div className="mb-7">
+        <h1 className="text-2xl sm:text-[1.75rem] font-black font-serif tracking-tight text-bakery-brown">
+          Create an account
+        </h1>
+        <p className="mt-2 text-sm text-bakery-brown/55 leading-relaxed">
+          Get started with your PreVisio management portal
+        </p>
       </div>
-    </div>
+
+      {error && (
+        <div
+          role="alert"
+          className="mb-5 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-3 text-sm text-rose-600"
+        >
+          {error}
+        </div>
+      )}
+
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label htmlFor="register-email" className="mb-1.5 block text-sm font-bold text-bakery-brown">
+            Email
+          </label>
+          <input
+            id="register-email"
+            type="email"
+            autoComplete="email"
+            required
+            value={email}
+            onChange={e => setEmail(e.target.value)}
+            className={authFieldClassName}
+            placeholder="you@restaurant.com"
+          />
+        </div>
+
+        <div>
+          <label htmlFor="register-password" className="mb-1.5 block text-sm font-bold text-bakery-brown">
+            Password
+          </label>
+          <input
+            id="register-password"
+            type="password"
+            autoComplete="new-password"
+            required
+            minLength={6}
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+            className={authFieldClassName}
+            placeholder="At least 6 characters"
+          />
+        </div>
+
+        <button type="submit" disabled={isSubmitting} className={`${authPrimaryButtonClassName} mt-2`}>
+          {isSubmitting ? <Loader2 size={18} className="animate-spin" /> : null}
+          Create account
+        </button>
+      </form>
+
+      <p className="mt-6 text-center text-sm text-bakery-brown/50">
+        Already have an account?{' '}
+        <button
+          type="button"
+          onClick={onGoLogin}
+          className="font-bold text-bakery-brown hover:text-bakery-caramel transition-colors"
+        >
+          Sign in
+        </button>
+      </p>
+    </AuthShell>
   );
 };

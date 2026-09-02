@@ -30,30 +30,38 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
       return;
     }
 
-    let interval: NodeJS.Timeout;
-    
+    let interval: ReturnType<typeof setInterval> | undefined;
+
     if (status === 'uploading') {
       interval = setInterval(() => {
-        setProgress(prev => Math.min(prev + 5, 30));
-      }, 100);
+        setProgress((prev) => Math.min(prev + 8, 25));
+      }, 80);
     } else if (status === 'analyzing') {
+      // Keep moving past 60% while the model works — previously capped at 60 and looked stuck.
       interval = setInterval(() => {
-        setProgress(prev => Math.min(prev + 2, 60));
-      }, 200);
-    } else if (status === 'extracting') {
-      interval = setInterval(() => {
-        setProgress(prev => {
-          if (prev < 85) return prev + 1;
-          // Slowly animate from 85% to 95% over 10 seconds if still extracting
-          if (prev < 95) return prev + 0.1;
+        setProgress((prev) => {
+          if (prev < 55) return prev + 3;
+          if (prev < 78) return prev + 0.8;
+          if (prev < 88) return prev + 0.25;
           return prev;
         });
-      }, 300);
+      }, 220);
+    } else if (status === 'extracting') {
+      interval = setInterval(() => {
+        setProgress((prev) => {
+          if (prev < 70) return 70;
+          if (prev < 92) return prev + 0.6;
+          if (prev < 96) return prev + 0.15;
+          return prev;
+        });
+      }, 280);
     } else if (status === 'finishing' || status === 'success') {
       setProgress(100);
     }
 
-    return () => clearInterval(interval);
+    return () => {
+      if (interval) clearInterval(interval);
+    };
   }, [isOpen, status]);
 
   const getStatusText = () => {
@@ -165,7 +173,6 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
               </div>
             </div>
 
-            {/* Decorative elements */}
             <div className="absolute -top-12 -right-12 w-32 h-32 bg-bakery-accent/10 rounded-full blur-2xl pointer-events-none" />
             <div className="absolute -bottom-12 -left-12 w-32 h-32 bg-bakery-caramel/10 rounded-full blur-2xl pointer-events-none" />
           </motion.div>

@@ -1,6 +1,29 @@
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
+/** Prefer the Vite /api/ai proxy so keys stay server-side in dev. */
+const requestViaProxy = async (
+  prompt: string,
+  mode: 'json' | 'text',
+  schema?: Record<string, unknown>,
+  imageBase64?: string,
+  signal?: AbortSignal
+): Promise<string | null> => {
+  try {
+    const res = await fetch('/api/ai', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal,
+      body: JSON.stringify({ prompt, schema, imageBase64, mode }),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { content?: string | null };
+    return data.content ?? null;
+  } catch {
+    return null;
+  }
+};
+
 const getOpenRouterConfig = () => {
   const apiKey = import.meta.env.VITE_OPENROUTER_API_KEY as string | undefined;
   if (!apiKey) return null;
@@ -27,9 +50,18 @@ const requestOpenRouterJSON = async (
   imageBase64?: string,
   signal?: AbortSignal
 ) => {
+  const proxied = await requestViaProxy(prompt, 'json', schema, imageBase64, signal);
+  if (proxied) {
+    try {
+      return JSON.parse(proxied);
+    } catch {
+      /* fall through */
+    }
+  }
+
   const config = getOpenRouterConfig();
   if (!config) {
-    console.error("Missing OpenRouter API key. Set VITE_OPENROUTER_API_KEY.");
+    console.error("Missing OpenRouter API key. Set OPENROUTER_API_KEY (server) or VITE_OPENROUTER_API_KEY.");
     return null;
   }
 
@@ -74,9 +106,12 @@ const requestOpenRouterText = async (
   imageBase64?: string,
   signal?: AbortSignal
 ) => {
+  const proxied = await requestViaProxy(prompt, 'text', undefined, imageBase64, signal);
+  if (proxied != null) return proxied;
+
   const config = getOpenRouterConfig();
   if (!config) {
-    console.error("Missing OpenRouter API key. Set VITE_OPENROUTER_API_KEY.");
+    console.error("Missing OpenRouter API key. Set OPENROUTER_API_KEY (server) or VITE_OPENROUTER_API_KEY.");
     return null;
   }
 
@@ -286,6 +321,8 @@ export interface ScanMenuResult {
 }
 
 export const scanMenu = async (base64Image: string, signal?: AbortSignal): Promise<ScanMenuResult | null> => {
+  // Lean schema: name/price/category/emoji only. Translations & stock links
+  // used to force huge structured outputs and stall progress ~60% for a long time.
   const schema = {
     type: "object",
     properties: {
@@ -298,44 +335,8 @@ export const scanMenu = async (base64Image: string, signal?: AbortSignal): Promi
             price: { type: "number" },
             category: { type: "string" },
             emoji: { type: "string" },
-            translations: {
-              type: "object",
-              properties: {
-                fr: { type: "string" },
-                nl: { type: "string" },
-                es: { type: "string" },
-                it: { type: "string" },
-                de: { type: "string" },
-                ar: { type: "string" },
-                pt: { type: "string" },
-                tr: { type: "string" },
-                pl: { type: "string" },
-                ro: { type: "string" },
-                zh: { type: "string" },
-                ja: { type: "string" },
-              },
-              required: ["fr", "nl", "es", "it", "de", "ar", "pt", "tr", "pl", "ro", "zh", "ja"],
-              additionalProperties: false,
-            },
-            preparedStockNeeds: {
-              type: "array",
-              items: { type: "string" },
-            },
-            ingredientLinks: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  ingredientName: { type: "string" },
-                  quantityUsed: { type: "number" },
-                  unit: { type: "string" },
-                },
-                required: ["ingredientName", "quantityUsed", "unit"],
-                additionalProperties: false,
-              },
-            },
           },
-          required: ["name", "price", "category", "emoji", "translations", "preparedStockNeeds", "ingredientLinks"],
+          required: ["name", "price", "category", "emoji"],
           additionalProperties: false,
         },
       },
@@ -344,8 +345,17 @@ export const scanMenu = async (base64Image: string, signal?: AbortSignal): Promi
     additionalProperties: false,
   };
 
-  const primaryPrompt =
-    "Extract products from this menu image. For each item, provide: name (in English), price (as a number), category, a relevant emoji, translations (fr, nl, es, it, de, ar, pt, tr, pl, ro, zh, ja), typical ingredients (name, quantity, unit), and any prepped stock items needed. Return the results as a JSON object with a 'products' array.";
+  const primaryPrompt = [
+    "You are extracting a restaurant/café menu from a photo.",
+    "Return every clearly readable menu item with its price.",
+    "Rules:",
+    "- Do NOT invent items that are not visible.",
+    "- Prices must be numbers only (no currency symbols).",
+    "- Prefer the menu language for name if English is not printed; otherwise English.",
+    "- category must be one of: Starters, Mains, Sides, Desserts, Drinks, Other.",
+    "- emoji: a single relevant food/drink emoji.",
+    "Return JSON with a top-level products array.",
+  ].join("\n");
 
   try {
     const result = await requestOpenRouterJSON(primaryPrompt, schema, base64Image, signal);
@@ -363,7 +373,7 @@ export const scanMenu = async (base64Image: string, signal?: AbortSignal): Promi
 
   try {
     const fallbackPrompt =
-      "Extract products from this menu image. Return ONLY valid JSON with a top-level object containing a 'products' array. Each product must include: name (English), price (number), category, emoji, translations (fr, nl, es, it, de, ar, pt, tr, pl, ro, zh, ja), preparedStockNeeds (string array), ingredientLinks (array of {ingredientName, quantityUsed, unit}).";
+      "Extract menu items from this image. Return ONLY JSON: {\"products\":[{\"name\":\"...\",\"price\":0,\"category\":\"Mains\",\"emoji\":\"🍽️\"}]}. Include every readable priced item; do not invent items.";
     const raw = await requestOpenRouterText(fallbackPrompt, base64Image, signal);
     if (!raw) return null;
     const parsed = extractFirstJSONObject(raw);
@@ -379,7 +389,7 @@ export const scanMenu = async (base64Image: string, signal?: AbortSignal): Promi
   return null;
 };
 
-export const compressImage = (base64: string, maxWidth = 1024, quality = 0.7): Promise<string> => {
+export const compressImage = (base64: string, maxWidth = 768, quality = 0.62): Promise<string> => {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.src = base64;
@@ -412,4 +422,41 @@ export const compressImage = (base64: string, maxWidth = 1024, quality = 0.7): P
     };
     img.onerror = (err) => reject(err);
   });
+};
+
+export const refineBrandStory = async (
+  rawNotes: string,
+  restaurantName: string,
+  cuisineType: string,
+  colorTheme: string
+): Promise<string | null> => {
+  if (!rawNotes.trim()) return null;
+  const prompt = [
+    'Act as a professional copywriter.',
+    `Restaurant name: ${restaurantName}`,
+    `Cuisine type: ${cuisineType}`,
+    `Color theme: ${colorTheme}`,
+    `Turn these notes into a compelling 3-paragraph brand narrative: ${rawNotes}`,
+    'Return ONLY the narrative body text.',
+    'Do NOT include titles, headers, markdown, "About Us", or bold formatting.'
+  ].join('\n');
+  try {
+    const response = await requestOpenRouterText(prompt);
+    const cleaned = (response || '')
+      .replace(/\*\*/g, '')
+      .split('\n')
+      .filter(line => {
+        const trimmed = line.trim().toLowerCase();
+        if (!trimmed) return false;
+        if (trimmed.includes('about us')) return false;
+        if (/^#{1,6}\s*/.test(trimmed)) return false;
+        return true;
+      })
+      .join('\n')
+      .trim();
+    return cleaned || null;
+  } catch (error) {
+    console.error('Refine brand story error:', error);
+    return null;
+  }
 };

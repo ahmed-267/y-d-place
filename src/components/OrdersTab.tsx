@@ -1,19 +1,19 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { useApp } from '../AppContext';
-import { ArrowLeftRight, Calendar, Check, Loader2, Search, User, Phone } from 'lucide-react';
+import { ArrowLeftRight, Calendar, Check, Loader2, Search, User, Phone, XCircle, ShoppingBag } from 'lucide-react';
 import { Order, OrderStatus } from '../types';
 import { finalizeSale } from '../utils/sales';
+import { restoreStock } from '../utils/stock';
 import { toSearchValue, priceMatchesQuery } from '../utils/search';
 
 const ORDER_STATUSES: OrderStatus[] = ['Preparing', 'Ready', 'Completed'];
-const DISPLAY_STATUSES: OrderStatus[] = ['Preparing', 'Ready', 'Completed'];
+const BOARD_STATUSES: OrderStatus[] = ['Preparing', 'Ready', 'Completed'];
 
 export const OrdersTab = () => {
   const {
     orders,
     setOrders,
     products,
-    sales,
     setSales,
     ingredients,
     setIngredients,
@@ -26,7 +26,8 @@ export const OrdersTab = () => {
     tp,
     addToast,
     formatPrice,
-    lang
+    lang,
+    setActiveTab,
   } = useApp();
 
   const statusLabels: Record<OrderStatus, string> = {
@@ -37,18 +38,37 @@ export const OrdersTab = () => {
 
   const [search, setSearch] = useState('');
   const [now, setNow] = useState(Date.now());
+  const prevPreparing = useRef(0);
 
   useEffect(() => {
     const interval = setInterval(() => setNow(Date.now()), 60000);
     return () => clearInterval(interval);
   }, []);
 
+  const preparingCount = orders.filter(o => o.status === 'Preparing').length;
+  useEffect(() => {
+    if (preparingCount > prevPreparing.current) {
+      try {
+        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.frequency.value = 880;
+        gain.gain.value = 0.04;
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.12);
+      } catch {
+        /* audio optional */
+      }
+    }
+    prevPreparing.current = preparingCount;
+  }, [preparingCount]);
+
   const getDateKey = (ts: number) => new Date(ts).toISOString().split('T')[0];
   const todayKey = getDateKey(Date.now());
 
-  const productMap = useMemo(() => {
-    return new Map(products.map(p => [p.id, p]));
-  }, [products]);
+  const productMap = useMemo(() => new Map(products.map(p => [p.id, p])), [products]);
 
   const visibleOrders = useMemo(() => {
     return orders.filter(o => {
@@ -61,7 +81,6 @@ export const OrdersTab = () => {
   const filteredOrders = useMemo(() => {
     const query = search.trim().toLowerCase();
     if (!query) return visibleOrders;
-
     return visibleOrders.filter(order => {
       const itemMatch = order.items?.some(i => {
         const product = productMap.get(i.productId);
@@ -74,7 +93,7 @@ export const OrdersTab = () => {
       const statusMatch = toSearchValue(order?.status).includes(query) || toSearchValue(statusLabels[order.status]).includes(query);
       return itemMatch || nameMatch || phoneMatch || totalMatch || statusMatch;
     });
-  }, [visibleOrders, search, productMap, tp, t, lang]);
+  }, [visibleOrders, search, productMap, tp, lang]);
 
   const upcomingPreOrders = useMemo(() => {
     return filteredOrders.filter(
@@ -84,11 +103,55 @@ export const OrdersTab = () => {
 
   const groupedOrders = useMemo(() => {
     const activeDisplay = filteredOrders.filter(o => !(o.type === 'PreOrder' && o.scheduledFor && o.scheduledFor.slice(0, 10) > todayKey));
-    return DISPLAY_STATUSES.reduce((acc, status) => {
+    return BOARD_STATUSES.reduce((acc, status) => {
       acc[status] = activeDisplay.filter(o => o.status === status);
       return acc;
     }, {} as Record<OrderStatus, Order[]>);
   }, [filteredOrders, todayKey]);
+
+  const completeOrder = (order: Order) => {
+    if (!user) return;
+    if (order.saleId) {
+      setOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: 'Completed', completedAt: o.completedAt || Date.now(), lastUpdatedAt: Date.now() } : o));
+      return;
+    }
+
+    const result = finalizeSale({
+      items: order.items,
+      products,
+      ingredients,
+      preparedStock,
+      shiftLogs,
+      cashier: user,
+      paymentMethod: order.paymentMethod,
+      timestamp: Date.now(),
+      existingSaleId: order.saleId,
+    });
+
+    if (!result.ok) {
+      addToast(t('insufficientStock').replace('{items}', result.outOfStockItems?.join(', ') || t('items')), 'error');
+      return;
+    }
+
+    setPreparedStock(result.updatedPreparedStock || preparedStock);
+    setIngredients(result.updatedIngredients || ingredients);
+    setSales(prev => {
+      if (prev.some(s => s.id === result.sale!.id)) return prev;
+      return [...prev, result.sale!];
+    });
+    setShiftLogs(result.updatedShiftLogs || shiftLogs);
+    setOrders(prev => prev.map(o => {
+      if (o.id !== order.id) return o;
+      return {
+        ...o,
+        status: 'Completed' as const,
+        completedAt: Date.now(),
+        saleId: result.sale?.id,
+        lastUpdatedAt: Date.now()
+      };
+    }));
+    addToast(t('orderCompleted'));
+  };
 
   const moveOrderStatus = (order: Order, direction: 'back' | 'forward') => {
     if (!user) return;
@@ -97,39 +160,22 @@ export const OrdersTab = () => {
     if (nextIndex < 0 || nextIndex >= ORDER_STATUSES.length) return;
     const nextStatus = ORDER_STATUSES[nextIndex];
 
-    if (nextStatus === 'Completed' && !order.saleId) {
-      const result = finalizeSale({
-        items: order.items,
-        products,
-        ingredients,
-        preparedStock,
-        shiftLogs,
-        cashier: user,
-        paymentMethod: order.paymentMethod,
-        timestamp: Date.now()
-      });
+    if (nextStatus === 'Completed') {
+      completeOrder(order);
+      return;
+    }
 
-      if (!result.ok) {
-        addToast(t('insufficientStock').replace('{items}', result.outOfStockItems?.join(', ') || t('items')), 'error');
-        return;
-      }
-
-      setPreparedStock(result.updatedPreparedStock || preparedStock);
-      setIngredients(result.updatedIngredients || ingredients);
-      setSales(prev => [...prev, result.sale!]);
-      setShiftLogs(result.updatedShiftLogs || shiftLogs);
-
+    // Moving back from Completed after sale: restore stock once
+    if (order.status === 'Completed' && direction === 'back' && order.saleId) {
+      const restored = restoreStock(order.items, products, ingredients, preparedStock);
+      setIngredients(restored.ingredients);
+      setPreparedStock(restored.preparedStock);
+      setSales(prev => prev.filter(s => s.id !== order.saleId));
       setOrders(prev => prev.map(o => {
         if (o.id !== order.id) return o;
-        return {
-          ...o,
-          status: 'Completed',
-          completedAt: Date.now(),
-          saleId: result.sale?.id,
-          lastUpdatedAt: Date.now()
-        };
+        return { ...o, status: nextStatus, saleId: undefined, completedAt: undefined, lastUpdatedAt: Date.now() };
       }));
-      addToast(t('orderCompleted'));
+      addToast('Order reopened — stock restored.', 'info');
       return;
     }
 
@@ -137,6 +183,17 @@ export const OrdersTab = () => {
       if (o.id !== order.id) return o;
       return { ...o, status: nextStatus, lastUpdatedAt: Date.now() };
     }));
+  };
+
+  const voidOrder = (order: Order) => {
+    if (order.status === 'Completed' && order.saleId) {
+      const restored = restoreStock(order.items, products, ingredients, preparedStock);
+      setIngredients(restored.ingredients);
+      setPreparedStock(restored.preparedStock);
+      setSales(prev => prev.filter(s => s.id !== order.saleId));
+    }
+    setOrders(prev => prev.filter(o => o.id !== order.id));
+    addToast('Order cancelled.', 'info');
   };
 
   const formatDuration = (ms: number) => {
@@ -158,97 +215,67 @@ export const OrdersTab = () => {
     return { label: t('waiting'), value: formatDuration(now - order.createdAt) };
   };
 
-  const isWalkInLate = (order: Order) => {
-    return order.type === 'WalkIn' && now - order.createdAt > 15 * 60 * 1000;
-  };
-
-  const isPreOrderToday = (order: Order) => {
-    return order.type === 'PreOrder' && order.scheduledFor?.slice(0, 10) === todayKey;
-  };
+  const isWalkInLate = (order: Order) =>
+    order.type === 'WalkIn' && now - order.createdAt > 15 * 60 * 1000;
 
   const OrderCard: React.FC<{ order: Order }> = ({ order }) => {
     const timing = getOrderTiming(order);
     const isLate = isWalkInLate(order);
-    const highlightToday = isPreOrderToday(order);
 
     return (
-      <div className={`card-bakery p-4 sm:p-5 space-y-4 border ${
-        isLate ? 'border-rose-400 bg-rose-50/50' : highlightToday ? 'border-emerald-300 bg-emerald-50/50' : 'border-bakery-beige'
+      <div className={`rounded-2xl border p-3 space-y-3 bg-white ${
+        isLate ? 'border-rose-400 bg-rose-50/40' : 'border-bakery-beige'
       }`}>
-        <div className="flex items-start justify-between gap-3">
+        <div className="flex items-start justify-between gap-2">
           <div>
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs font-black uppercase tracking-widest text-bakery-brown/40">{order.type === 'WalkIn' ? t('walkIn') : t('preOrder')}</span>
-              <span className={`text-[10px] font-black uppercase px-2 py-1 rounded-full ${
-                order.status === 'Completed' ? 'bg-emerald-100 text-emerald-600' : order.status === 'Ready' ? 'bg-blue-100 text-blue-600' : 'bg-amber-100 text-amber-700'
-              }`}>
-                {statusLabels[order.status]}
+              <span className="text-[10px] font-black uppercase tracking-wider text-bakery-brown/40">
+                {order.type === 'WalkIn' ? t('walkIn') : t('preOrder')}
               </span>
-              {order.saleId && (
-                <span className="text-[10px] font-black uppercase px-2 py-1 rounded-full bg-slate-100 text-slate-500">{t('recorded')}</span>
-              )}
+              <span className="text-xs font-bold text-bakery-brown">#{order.id.slice(-6)}</span>
             </div>
-            <p className="text-sm font-bold mt-1">#{order.id.slice(-6)}</p>
+            <p className={`text-sm font-bold mt-1 ${isLate ? 'text-rose-600' : 'text-bakery-brown'}`}>
+              {timing.label}: {timing.value}
+            </p>
           </div>
-          <div className="text-right">
-            <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40">{timing.label}</p>
-            <p className={`text-sm font-bold ${isLate ? 'text-rose-600' : 'text-bakery-brown'}`}>{timing.value}</p>
-          </div>
+          <button
+            type="button"
+            onClick={() => voidOrder(order)}
+            className="p-1.5 text-bakery-brown/40 hover:text-rose-600"
+            title="Cancel"
+          >
+            <XCircle size={16} />
+          </button>
         </div>
 
         {order.type === 'PreOrder' && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-bakery-brown/70">
-            <div className="flex items-center gap-2">
-              <User size={14} />
-              <span className="font-bold">{order.customerName}</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Phone size={14} />
-              <span className="font-bold">{order.customerPhone}</span>
-            </div>
+          <div className="space-y-1 text-xs text-bakery-brown/70">
+            <div className="flex items-center gap-2"><User size={12} /><span className="font-semibold">{order.customerName}</span></div>
+            <div className="flex items-center gap-2"><Phone size={12} /><span>{order.customerPhone}</span></div>
             {order.scheduledFor && (
-              <div className="flex items-center gap-2 sm:col-span-2">
-                <Calendar size={14} />
-                <span className="font-bold">
-                  {order.scheduledFor.replace('T', ' ')}
-                </span>
-              </div>
+              <div className="flex items-center gap-2"><Calendar size={12} /><span>{order.scheduledFor.replace('T', ' ')}</span></div>
             )}
           </div>
         )}
 
-        <div className="space-y-2">
+        <div className="space-y-1 border-t border-bakery-beige/50 pt-2">
           {order.items.map((item, idx) => {
             const product = productMap.get(item.productId);
             const name = product ? tp(product) : item.translations?.[lang] || item.nameEN;
             return (
-              <div key={`${order.id}-${idx}`} className="flex items-start justify-between text-sm">
-                <div className="min-w-0">
-                  <p className="font-bold truncate">{item.qty}× {name}</p>
-                  {item.extras?.map(extra => {
-                    const extraProduct = productMap.get(extra.productId);
-                    const extraName = extraProduct ? tp(extraProduct) : extra.nameEN;
-                    return (
-                      <p key={`${order.id}-${idx}-${extra.productId}`} className="text-[10px] text-bakery-caramel font-bold italic">+ {extraName}</p>
-                    );
-                  })}
-                </div>
-                <span className="font-bold">{formatPrice(item.lineTotal)}</span>
+              <div key={`${order.id}-${idx}`} className="flex justify-between text-sm">
+                <span className="font-semibold truncate">{item.qty}× {name}</span>
+                <span className="font-bold shrink-0 ml-2">{formatPrice(item.lineTotal)}</span>
               </div>
             );
           })}
         </div>
 
-        <div className="flex items-center justify-between text-sm font-bold">
-          <span>{t('orderTotal')}</span>
-          <span>{formatPrice(order.subtotal)}</span>
-        </div>
-
-        <div className="flex flex-col sm:flex-row gap-2">
+        <div className="flex gap-2">
           {order.status !== 'Preparing' && (
             <button
               onClick={() => moveOrderStatus(order, 'back')}
-              className="flex-1 py-2 rounded-xl font-bold text-xs bg-bakery-beige/40 text-bakery-brown/70 hover:bg-bakery-beige/70 transition-all flex items-center justify-center gap-2"
+              className="flex-1 py-2.5 rounded-xl text-xs font-bold bg-bakery-beige text-bakery-brown/70 hover:bg-bakery-beige/80 flex items-center justify-center gap-1"
             >
               <ArrowLeftRight size={14} />
               {t('moveBack')}
@@ -257,7 +284,7 @@ export const OrdersTab = () => {
           {order.status !== 'Completed' && (
             <button
               onClick={() => moveOrderStatus(order, 'forward')}
-              className="flex-1 py-2 rounded-xl font-bold text-xs bg-bakery-brown text-white hover:bg-bakery-brown/90 transition-all flex items-center justify-center gap-2"
+              className="flex-1 py-2.5 rounded-xl text-xs font-bold bg-bakery-brown text-white hover:bg-bakery-brown/90 flex items-center justify-center gap-1"
             >
               {order.status === 'Ready' ? <Check size={14} /> : <Loader2 size={14} />}
               {order.status === 'Ready' ? t('completeOrder') : t('moveForward')}
@@ -268,62 +295,75 @@ export const OrdersTab = () => {
     );
   };
 
+  const columnStyles: Record<OrderStatus, string> = {
+    Preparing: 'bg-amber-50/80 border-amber-200',
+    Ready: 'bg-sky-50/80 border-sky-200',
+    Completed: 'bg-emerald-50/50 border-emerald-200',
+  };
+
+  if (orders.length === 0) {
+    return (
+      <div className="min-h-[50vh] flex flex-col items-center justify-center text-center gap-4">
+        <ShoppingBag className="text-bakery-brown/30" size={48} />
+        <h2 className="text-xl font-bold text-bakery-brown">{t('activeOrders')}</h2>
+        <p className="text-bakery-brown/50 text-sm max-w-sm">No active kitchen orders. Open Cashier to send the first one.</p>
+        <button
+          onClick={() => setActiveTab('cashier')}
+          className="px-6 py-3 rounded-2xl bg-bakery-brown text-white font-bold text-sm"
+        >
+          Open cashier
+        </button>
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-8 animate-fade-in max-w-full overflow-hidden">
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+    <div className="space-y-4 max-w-full overflow-hidden">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-black font-serif text-bakery-brown">{t('activeOrders')}</h2>
+          <h2 className="text-xl font-bold text-bakery-brown">{t('activeOrders')}</h2>
           <p className="text-sm text-bakery-brown/50">{t('ordersFlowHint')}</p>
         </div>
-        <div className="relative w-full lg:w-72">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-bakery-brown/40" size={18} />
+        <div className="relative w-full sm:w-64">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-bakery-brown/40" size={16} />
           <input
             type="text"
             placeholder={t('search')}
             value={search}
             onChange={e => setSearch(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 border border-bakery-beige rounded-full outline-none focus:ring-2 focus:ring-bakery-caramel text-sm bg-white shadow-sm"
+            className="w-full pl-9 pr-3 py-2 border border-bakery-beige rounded-xl outline-none focus:ring-2 focus:ring-bakery-caramel text-sm bg-white"
           />
         </div>
       </div>
 
-      <section className="space-y-6">
-        <div className="space-y-6">
-          {DISPLAY_STATUSES.map(status => (
-            <div key={status} className="space-y-4">
-              <div className="flex items-center gap-3">
-                <span className="text-xl sm:text-2xl font-black font-serif text-bakery-brown">{statusLabels[status]}</span>
-                <div className="h-px bg-bakery-beige flex-1" />
-              </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 min-h-[60vh]">
+        {BOARD_STATUSES.map(status => (
+          <section key={status} className={`rounded-2xl border p-3 flex flex-col ${columnStyles[status]}`}>
+            <header className="flex items-center justify-between mb-3 pb-2 border-b border-black/5">
+              <h3 className="text-sm font-black uppercase tracking-wider text-bakery-brown">{statusLabels[status]}</h3>
+              <span className="text-xs font-bold px-2 py-0.5 rounded bg-white/80 text-bakery-brown">
+                {groupedOrders[status].length}
+              </span>
+            </header>
+            <div className="flex-1 space-y-3 overflow-y-auto max-h-[70vh] pr-1">
               {groupedOrders[status].length > 0 ? (
-                <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
-                  {groupedOrders[status].map(order => (
-                    <OrderCard key={order.id} order={order} />
-                  ))}
-                </div>
+                groupedOrders[status].map(order => <OrderCard key={order.id} order={order} />)
               ) : (
-                <p className="text-sm text-bakery-brown/40 italic">{t('noOrdersStage')}</p>
+                <p className="text-xs text-bakery-brown/40 italic py-6 text-center">{t('noOrdersStage')}</p>
               )}
             </div>
-          ))}
-        </div>
-      </section>
+          </section>
+        ))}
+      </div>
 
-      <section className="space-y-4">
-        <div className="flex items-center gap-3">
-          <span className="text-xl sm:text-2xl font-black font-serif text-bakery-brown">{t('upcomingPreOrders')}</span>
-          <div className="h-px bg-bakery-beige flex-1" />
-        </div>
-        {upcomingPreOrders.length > 0 ? (
-          <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
-            {upcomingPreOrders.map(order => (
-              <OrderCard key={order.id} order={order} />
-            ))}
+      {upcomingPreOrders.length > 0 && (
+        <section className="space-y-3 pt-2">
+          <h3 className="text-sm font-black uppercase tracking-wider text-bakery-brown/70">{t('upcomingPreOrders')}</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {upcomingPreOrders.map(order => <OrderCard key={order.id} order={order} />)}
           </div>
-        ) : (
-          <p className="text-sm text-bakery-brown/40 italic">{t('noUpcomingPreOrders')}</p>
-        )}
-      </section>
+        </section>
+      )}
     </div>
   );
 };

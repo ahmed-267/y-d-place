@@ -20,12 +20,13 @@ import {
 } from 'lucide-react';
 import { Modal } from './Modal';
 import { ConfirmDialog } from './ConfirmDialog';
-import { Pagination } from './Pagination';
+import { DataTablePagination, useTablePagination } from './DataTablePagination';
 import { ScanProgressModal } from './ScanProgressModal';
 import { Product, Ingredient, IngredientLink } from '../types';
 import { getAIAssistance, scanMenu, ScanMenuResult, compressImage } from '../utils/aiHelper';
 import { motion, AnimatePresence } from 'motion/react';
 import { toSearchValue, priceMatchesQuery } from '../utils/search';
+import { SortableTh, useColumnSort, sortByColumn } from '../utils/tableSort';
 
 export const ProductsTab = () => {
   const { 
@@ -58,33 +59,38 @@ export const ProductsTab = () => {
   const [expandedScanItem, setExpandedScanItem] = useState<number | null>(null);
   const [showLinkedPopover, setShowLinkedPopover] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [currentPage, setCurrentPage] = useState(1);
+  type ProductSort = 'emoji' | 'name' | 'category' | 'price' | 'ingredients' | 'active';
+  const { sortKey, sortDirection, toggleSort } = useColumnSort<ProductSort>('name');
   const abortControllerRef = useRef<AbortController | null>(null);
-  const itemsPerPage = 10;
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const filteredProducts = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
-    if (!query) return products;
-    return products.filter(p => {
-      const nameMatch = toSearchValue(p?.nameEN).includes(query);
-      const categoryMatch = toSearchValue(p?.category).includes(query);
-      const priceMatch = priceMatchesQuery(p?.price, query) || toSearchValue(p?.price).includes(query);
-      const translationMatch = p?.translations ? Object.values(p.translations).some(t => toSearchValue(t).includes(query)) : false;
-      return nameMatch || categoryMatch || priceMatch || translationMatch;
+    let list = products;
+    if (query) {
+      list = products.filter(p => {
+        const nameMatch = toSearchValue(p?.nameEN).includes(query);
+        const categoryMatch = toSearchValue(p?.category).includes(query);
+        const priceMatch = priceMatchesQuery(p?.price, query) || toSearchValue(p?.price).includes(query);
+        const translationMatch = p?.translations ? Object.values(p.translations).some(tr => toSearchValue(tr).includes(query)) : false;
+        return nameMatch || categoryMatch || priceMatch || translationMatch;
+      });
+    }
+    return sortByColumn(list, sortKey, sortDirection, (prod: Product, key) => {
+      if (key === 'emoji') return prod.emoji || '';
+      if (key === 'name') return tp(prod);
+      if (key === 'category') return tc(prod.category);
+      if (key === 'price') return prod.price;
+      if (key === 'ingredients') return (prod.ingredientLinks?.length || 0) + (prod.preparedStockLinks?.length || 0);
+      return prod.active ? 1 : 0;
     });
-  }, [products, searchQuery, formatPrice]);
+  }, [products, searchQuery, formatPrice, sortKey, sortDirection, tp, tc]);
 
-  const paginatedProducts = useMemo(() => {
-    const start = (currentPage - 1) * itemsPerPage;
-    return filteredProducts.slice(start, start + itemsPerPage);
-  }, [filteredProducts, currentPage]);
-
-  const totalPages = Math.ceil(filteredProducts.length / itemsPerPage);
-
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [searchQuery]);
+  const productsPaging = useTablePagination(filteredProducts.length, 10, searchQuery);
+  const paginatedProducts = useMemo(
+    () => productsPaging.slice(filteredProducts),
+    [filteredProducts, productsPaging.page, productsPaging.pageSize, productsPaging.start]
+  );
 
   useEffect(() => {
     if (scanStatus === 'success') {
@@ -111,37 +117,38 @@ export const ProductsTab = () => {
     setIsScanning(true);
     setScanStatus('uploading');
     setScanThumbnail(selectedFile);
-    
-    try {
-      // Compress image before sending
-      const compressed = await compressImage(selectedFile);
-      setScanStatus('analyzing');
+    let stageTimer: ReturnType<typeof setTimeout> | undefined;
 
-      // Setup AbortController and Timeout
+    try {
+      const compressed = await compressImage(selectedFile, 768, 0.62);
+      setScanStatus('analyzing');
+      stageTimer = setTimeout(() => setScanStatus('extracting'), 1500);
+
       const controller = new AbortController();
       abortControllerRef.current = controller;
-      
+
       const timeoutId = setTimeout(() => {
         controller.abort();
         setScanStatus('timeout');
-      }, 60000);
+      }, 45000);
 
       const result = await scanMenu(compressed, controller.signal);
       clearTimeout(timeoutId);
+      if (stageTimer) clearTimeout(stageTimer);
 
       if (result && result.products.length > 0) {
-        setScanStatus('success');
+        setScanStatus('finishing');
         setScanResults(result);
         setSelectedFile(null);
-      } else if (scanStatus !== 'timeout') {
+        setScanStatus('success');
+      } else {
         setScanStatus('error');
         addToast(t('scanMenuNoItems'), "error");
       }
     } catch (err) {
-      if (scanStatus !== 'timeout') {
-        setScanStatus('error');
-        addToast(t('scanMenuFailed'), "error");
-      }
+      if (stageTimer) clearTimeout(stageTimer);
+      setScanStatus('error');
+      addToast(t('scanMenuFailed'), "error");
     } finally {
       abortControllerRef.current = null;
     }
@@ -311,10 +318,8 @@ export const ProductsTab = () => {
   };
 
   return (
-    <div className="space-y-6 animate-fade-in max-w-full overflow-hidden">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <h3 className="text-xl sm:text-2xl font-bold font-serif">{t('products')}</h3>
-        <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+    <div className="space-y-5 animate-fade-in max-w-full overflow-hidden">
+      <div className="flex flex-wrap justify-end gap-2">
           <input 
             type="file" 
             ref={fileInputRef} 
@@ -325,7 +330,7 @@ export const ProductsTab = () => {
           <button 
             onClick={() => fileInputRef.current?.click()}
             disabled={isScanning}
-            className="flex-1 sm:flex-none p-3 md:p-4 bg-bakery-accent text-bakery-brown rounded-xl hover:bg-bakery-brown hover:text-white transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2 font-bold text-[10px] sm:text-xs md:text-sm whitespace-nowrap"
+            className="flex-1 sm:flex-none p-2.5 md:px-4 md:py-2.5 bg-bakery-accent text-bakery-brown rounded-xl hover:bg-bakery-brown hover:text-white transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2 font-bold text-xs whitespace-nowrap"
             title={t('scanMenuFromImage')}
           >
             {isScanning ? <Loader2 size={16} className="animate-spin" /> : <Camera size={16} />}
@@ -333,16 +338,15 @@ export const ProductsTab = () => {
           </button>
           <button 
             onClick={() => setShowCategoryModal(true)} 
-            className="flex-1 sm:flex-none p-3 md:p-4 bg-bakery-beige text-bakery-brown rounded-xl hover:bg-bakery-brown hover:text-white transition-all active:scale-95 flex items-center justify-center gap-2 font-bold text-[10px] sm:text-xs md:text-sm whitespace-nowrap"
+            className="flex-1 sm:flex-none p-2.5 md:px-4 md:py-2.5 bg-bakery-beige text-bakery-brown rounded-xl hover:bg-bakery-brown hover:text-white transition-all active:scale-95 flex items-center justify-center gap-2 font-bold text-xs whitespace-nowrap"
           >
             <Plus size={16} />
             <span>{t('addCategory')}</span>
           </button>
-          <button onClick={() => setEditItem({})} className="flex-1 sm:flex-none btn-primary flex items-center justify-center gap-2 px-4 md:px-6 py-3 md:py-4 rounded-xl font-bold active:scale-95 text-[10px] sm:text-xs md:text-sm whitespace-nowrap">
+          <button onClick={() => setEditItem({})} className="flex-1 sm:flex-none btn-primary flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold active:scale-95 text-xs whitespace-nowrap">
             <Plus size={18} />
             {t('addMenuProduct')}
           </button>
-        </div>
       </div>
 
       <div className="relative">
@@ -576,12 +580,12 @@ export const ProductsTab = () => {
           <table className="w-full text-left text-sm min-w-[700px]">
             <thead className="bg-bakery-beige/30 text-bakery-brown/40 uppercase text-[10px] font-black tracking-widest">
               <tr>
-                <th className="p-4">{t('emoji')}</th>
-                <th className="p-4">{t('nameEN')}</th>
-                <th className="p-4">{t('category')}</th>
-                <th className="p-4">{t('price')}</th>
-                <th className="p-4">{t('ingredients')}</th>
-                <th className="p-4">{t('active')}</th>
+                <SortableTh label={t('emoji')} column="emoji" sortKey={sortKey} sortDirection={sortDirection} onSort={toggleSort} />
+                <SortableTh label={t('nameEN')} column="name" sortKey={sortKey} sortDirection={sortDirection} onSort={toggleSort} />
+                <SortableTh label={t('category')} column="category" sortKey={sortKey} sortDirection={sortDirection} onSort={toggleSort} />
+                <SortableTh label={t('price')} column="price" sortKey={sortKey} sortDirection={sortDirection} onSort={toggleSort} />
+                <SortableTh label={t('ingredients')} column="ingredients" sortKey={sortKey} sortDirection={sortDirection} onSort={toggleSort} />
+                <SortableTh label={t('active')} column="active" sortKey={sortKey} sortDirection={sortDirection} onSort={toggleSort} />
                 <th className="p-4 text-right">{t('actions')}</th>
               </tr>
             </thead>
@@ -665,14 +669,13 @@ export const ProductsTab = () => {
         </div>
       </div>
 
-      {filteredProducts.length > itemsPerPage && (
-        <Pagination 
-          currentPage={currentPage}
-          totalPages={totalPages}
-          onPageChange={setCurrentPage}
-          t={t}
-        />
-      )}
+      <DataTablePagination
+        page={productsPaging.page}
+        pageSize={productsPaging.pageSize}
+        totalItems={filteredProducts.length}
+        onPageChange={productsPaging.setPage}
+        onPageSizeChange={productsPaging.setPageSize}
+      />
 
       {editItem && (
         <Modal title={editItem.id ? t('editMenuItem') : t('addMenuProduct')} onClose={() => setEditItem(null)}>

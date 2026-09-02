@@ -5,6 +5,7 @@ import { Clock, Plus, Trash2, Calendar } from 'lucide-react';
 import { Modal } from './Modal';
 import { ConfirmDialog } from './ConfirmDialog';
 import { WorkShift } from '../types';
+import { SortableTh, useColumnSort, sortByColumn } from '../utils/tableSort';
 
 export const MyShiftsTab = () => {
   const { user, workShifts, setWorkShifts, t, addToast } = useApp();
@@ -19,6 +20,9 @@ export const MyShiftsTab = () => {
     breakMinutes: '30',
     notes: ''
   });
+
+  type MyShiftSort = 'date' | 'start' | 'end' | 'break' | 'total' | 'notes';
+  const { sortKey, sortDirection, toggleSort } = useColumnSort<MyShiftSort>('date', 'desc');
 
   const calculatedHours = useMemo(() => {
     const { date, startTime, endTime, breakMinutes } = formData;
@@ -35,9 +39,17 @@ export const MyShiftsTab = () => {
     return parseFloat(actualHours.toFixed(2));
   }, [formData]);
 
-  const myShifts = workShifts
-    .filter(s => s.userId === user?.id)
-    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  const myShifts = useMemo(() => {
+    const list = workShifts.filter(s => s.userId === user?.id);
+    return sortByColumn(list, sortKey, sortDirection, (s: WorkShift, key) => {
+      if (key === 'date') return s.date;
+      if (key === 'start') return s.startTime;
+      if (key === 'end') return s.endTime;
+      if (key === 'break') return s.breakMinutes ?? 0;
+      if (key === 'total') return s.totalHours;
+      return s.notes || '';
+    });
+  }, [workShifts, user?.id, sortKey, sortDirection]);
 
   const totalHours = myShifts.reduce((acc, s) => acc + s.totalHours, 0);
 
@@ -78,14 +90,13 @@ export const MyShiftsTab = () => {
   };
 
   return (
-    <div className="space-y-8 animate-fade-in pb-10 max-w-full overflow-hidden">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <h2 className="text-xl sm:text-2xl font-black font-serif text-bakery-brown">{t('myShifts')}</h2>
+    <div className="space-y-5 animate-fade-in pb-8 max-w-full overflow-hidden">
+      <div className="flex justify-end">
         <button 
           onClick={() => setShowAddModal(true)}
-          className="btn-primary flex items-center justify-center gap-2 px-6 py-4 rounded-xl font-bold active:scale-95 w-full sm:w-auto text-sm"
+          className="btn-primary flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold active:scale-95 text-sm"
         >
-          <Plus size={20} />
+          <Plus size={18} />
           {t('addShift')}
         </button>
       </div>
@@ -116,12 +127,12 @@ export const MyShiftsTab = () => {
           <table className="w-full text-left text-sm min-w-[700px]">
             <thead className="bg-bakery-beige/30 text-bakery-brown/40 uppercase text-[10px] font-black tracking-widest">
               <tr>
-                <th className="p-4">{t('date')}</th>
-                <th className="p-4">{t('startTime')}</th>
-                <th className="p-4">{t('endTime')}</th>
-                <th className="p-4">{t('break')}</th>
-                <th className="p-4">{t('totalHours')}</th>
-                <th className="p-4">{t('notes')}</th>
+                <SortableTh label={t('date')} column="date" sortKey={sortKey} sortDirection={sortDirection} onSort={toggleSort} />
+                <SortableTh label={t('startTime')} column="start" sortKey={sortKey} sortDirection={sortDirection} onSort={toggleSort} />
+                <SortableTh label={t('endTime')} column="end" sortKey={sortKey} sortDirection={sortDirection} onSort={toggleSort} />
+                <SortableTh label={t('break')} column="break" sortKey={sortKey} sortDirection={sortDirection} onSort={toggleSort} />
+                <SortableTh label={t('totalHours')} column="total" sortKey={sortKey} sortDirection={sortDirection} onSort={toggleSort} />
+                <SortableTh label={t('notes')} column="notes" sortKey={sortKey} sortDirection={sortDirection} onSort={toggleSort} />
                 <th className="p-4 text-right">{t('actions')}</th>
               </tr>
             </thead>

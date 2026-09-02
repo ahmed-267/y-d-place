@@ -94,6 +94,34 @@ export interface Expense {
   receiptImage?: string;
 }
 
+export interface EnabledModules {
+  /** Kitchen order flow (Orders tab) */
+  orders: boolean;
+  /** Sales history & reports */
+  sales: boolean;
+  /** Stock / inventory */
+  stock: boolean;
+  /** Team, rota, timesheets (and My Shifts for staff) */
+  staff: boolean;
+  /** Expenses & tax */
+  finance: boolean;
+}
+
+export const DEFAULT_ENABLED_MODULES: EnabledModules = {
+  orders: true,
+  sales: true,
+  stock: true,
+  staff: true,
+  finance: true,
+};
+
+export const normalizeEnabledModules = (
+  value?: Partial<EnabledModules> | null
+): EnabledModules => ({
+  ...DEFAULT_ENABLED_MODULES,
+  ...(value || {}),
+});
+
 export interface BusinessSettings {
   id: string;
   name: string;
@@ -103,9 +131,12 @@ export interface BusinessSettings {
   venueType: string;
   country: string;
   city: string;
+  address?: string;
+  openingHours?: string;
   currencyCode: string;
   currencySymbol: string;
   language: Language;
+  enabledModules?: EnabledModules;
 }
 
 export interface TaxSettings {
@@ -167,6 +198,18 @@ export interface RotaShift {
 export interface StaffAvailability {
   userId: number;
   note: string;
+}
+
+export interface LandingPageConfig {
+  cuisineType: string;
+  colorTheme: 'Elegant Dark' | 'Vibrant Street' | 'Minimalist Cream' | 'Rustic Wood' | 'Neon Night' | 'Pastel Sweet';
+  address?: string;
+  openingHours: string;
+  brandStoryRaw: string;
+  refinedStory: string;
+  logoImage?: string;
+  galleryImages: string[];
+  generatedAt: number;
 }
 
 export type Language = 'en' | 'fr' | 'nl' | 'fl' | 'es' | 'it' | 'de' | 'ar' | 'pt' | 'tr' | 'pl' | 'ro' | 'zh' | 'ja';

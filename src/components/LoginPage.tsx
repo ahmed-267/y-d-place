@@ -1,122 +1,202 @@
-
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { Loader2 } from 'lucide-react';
 import { useApp } from '../AppContext';
-import { ArrowLeft, Lock, Mail, Store, User } from 'lucide-react';
-import { ShiftLog } from '../types';
+import { supabase } from './supabaseClient';
+import { AuthShell, authFieldClassName, authPrimaryButtonClassName } from './AuthShell';
+import { AuthDestination, resolvePostAuthDestination } from '../utils/authRouting';
+import { isNetworkAuthError } from '../utils/localAccounts';
 
-export const LoginPage = ({ onBack }: { onBack: () => void }) => {
-  const { t, users, setUser, setShiftLogs, shiftLogs, addToast, loginToBusiness } = useApp();
-  const [mode, setMode] = useState<'owner' | 'staff'>('staff');
-  const [restaurantName, setRestaurantName] = useState('');
-  const [identifier, setIdentifier] = useState('');
+const REMEMBER_EMAIL_KEY = 'previsio_remember_email';
+
+type LoginPageProps = {
+  onBack: () => void;
+  onGoRegister: () => void;
+  onAuthenticated: (destination: AuthDestination) => void;
+};
+
+export const LoginPage = ({ onBack, onGoRegister, onAuthenticated }: LoginPageProps) => {
+  const { addToast, login } = useApp();
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [rememberMe, setRememberMe] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleLogin = (e: React.FormEvent) => {
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(REMEMBER_EMAIL_KEY);
+      if (saved) {
+        setEmail(saved);
+        setRememberMe(true);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const finishAuth = async (userId: string | null | undefined) => {
+    const destination = userId ? await resolvePostAuthDestination(userId) : 'onboarding';
+    onAuthenticated(destination);
+  };
+
+  const handleForgotPassword = async () => {
+    setError(null);
+    if (!email.trim()) {
+      setError('Enter your email above, then click Forgot password.');
+      addToast('Enter your email to reset your password.', 'error');
+      return;
+    }
+    try {
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: `${window.location.origin}/login`,
+      });
+      if (resetError) {
+        if (isNetworkAuthError(resetError)) {
+          addToast('Password reset is unavailable offline. Try again when connected.', 'error');
+        } else {
+          addToast(resetError.message, 'error');
+        }
+        return;
+      }
+      addToast('Check your email for a password reset link.', 'success');
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : 'Could not send reset email.', 'error');
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
+    setIsSubmitting(true);
 
-    const bizLoginSuccess = loginToBusiness({
-      mode,
-      restaurantName: restaurantName.trim(),
-      identifier: identifier.trim(),
-      password
-    });
+    const trimmedEmail = email.trim();
 
-    if (bizLoginSuccess) return;
+    try {
+      if (rememberMe) {
+        localStorage.setItem(REMEMBER_EMAIL_KEY, trimmedEmail);
+      } else {
+        localStorage.removeItem(REMEMBER_EMAIL_KEY);
+      }
 
-    const foundUser = users.find(u => u.username === identifier && u.password === password);
-    if (foundUser) {
-      const newLog: ShiftLog = {
-        id: Date.now(),
-        username: foundUser.username,
-        fullName: foundUser.fullName,
-        role: foundUser.role,
-        loginTime: Date.now(),
-        logoutTime: null,
-        ordersProcessed: 0
-      };
-      setShiftLogs([...shiftLogs, newLog]);
-      setUser(foundUser);
-      addToast(t('welcomeBack').replace('{name}', foundUser.username));
-    } else {
-      addToast(t('invalidCredentials'), "error");
+      const { data, error: authError } = await supabase.auth.signInWithPassword({
+        email: trimmedEmail,
+        password,
+      });
+
+      if (!authError && data.user) {
+        addToast('Welcome back.', 'success');
+        await finishAuth(data.user.id);
+        return;
+      }
+
+      // Cloud rejected or unreachable — try local / demo owner accounts
+      try {
+        await login({ identifier: trimmedEmail, password, mode: 'owner' });
+        addToast('Welcome back.', 'success');
+        // Local/demo hydrate synchronously; App routing effect sends them onward.
+      } catch (localErr) {
+        const message =
+          localErr instanceof Error
+            ? localErr.message
+            : authError?.message || 'Invalid email or password.';
+        setError(message);
+        addToast(message, 'error');
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Sign in failed.';
+      setError(message);
+      addToast(message, 'error');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-bakery-beige/30 p-4 sm:p-6">
-      <div className="card-bakery w-full max-w-md p-6 sm:p-10 animate-fade-in">
-        <button onClick={onBack} className="text-bakery-brown/50 hover:text-bakery-brown mb-6 sm:mb-8 flex items-center gap-2 transition-colors">
-          <ArrowLeft size={18} />
-          <span className="font-bold text-sm sm:text-base">{t('cancel')}</span>
-        </button>
-        <div className="text-center mb-6 sm:mb-8">
-          <div className="w-12 h-12 sm:w-16 sm:h-16 bg-bakery-brown rounded-2xl flex items-center justify-center text-white mx-auto mb-4">
-            <Lock size={28} className="sm:w-8 sm:h-8" />
-          </div>
-          <h2 className="text-2xl sm:text-3xl font-black font-serif">{t('loginTitle')}</h2>
-        </div>
-        <div className="flex items-center gap-2 bg-bakery-beige/40 p-1 rounded-2xl mb-6">
-          <button
-            onClick={() => setMode('owner')}
-            className={`flex-1 py-2 rounded-xl text-xs font-bold ${mode === 'owner' ? 'bg-bakery-brown text-white' : 'text-bakery-brown/60'}`}
-            type="button"
-          >
-            {t('ownerLogin')}
-          </button>
-          <button
-            onClick={() => setMode('staff')}
-            className={`flex-1 py-2 rounded-xl text-xs font-bold ${mode === 'staff' ? 'bg-bakery-brown text-white' : 'text-bakery-brown/60'}`}
-            type="button"
-          >
-            {t('staffLogin')}
-          </button>
-        </div>
-        <form onSubmit={handleLogin} className="space-y-4 sm:space-y-6">
-          <div>
-            <label className="block text-sm font-bold mb-2">{t('restaurantName')}</label>
-            <div className="relative">
-              <Store size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-bakery-brown/40" />
-              <input 
-                type="text"
-                className="w-full pl-10 pr-4 py-3 sm:py-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel transition-all text-sm sm:text-base"
-                value={restaurantName}
-                onChange={e => setRestaurantName(e.target.value)}
-                required
-              />
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm font-bold mb-2">{mode === 'owner' ? t('ownerEmail') : t('staffUsername')}</label>
-            <div className="relative">
-              {mode === 'owner' ? (
-                <Mail size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-bakery-brown/40" />
-              ) : (
-                <User size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-bakery-brown/40" />
-              )}
-              <input 
-                type={mode === 'owner' ? 'email' : 'text'}
-                className="w-full pl-10 pr-4 py-3 sm:py-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel transition-all text-sm sm:text-base"
-                value={identifier}
-                onChange={e => setIdentifier(e.target.value)}
-                required
-              />
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm font-bold mb-2">{t('password')}</label>
-            <input 
-              type="password" 
-              className="w-full p-3 sm:p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel transition-all text-sm sm:text-base"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              required
-            />
-          </div>
-          <button type="submit" className="btn-primary w-full p-3 sm:p-4 rounded-2xl font-bold text-base sm:text-lg shadow-lg active:scale-95">
-            {t('loginBtn')}
-          </button>
-        </form>
+    <AuthShell onBackHome={onBack}>
+      <div className="mb-7">
+        <h1 className="text-2xl sm:text-[1.75rem] font-black font-serif tracking-tight text-bakery-brown">Welcome back</h1>
+        <p className="mt-2 text-sm text-bakery-brown/55 leading-relaxed">
+          Sign in to your PreVisio management portal
+        </p>
       </div>
-    </div>
+
+      {error && (
+        <div
+          role="alert"
+          className="mb-5 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-3 text-sm text-rose-600"
+        >
+          {error}
+        </div>
+      )}
+
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label htmlFor="login-email" className="mb-1.5 block text-sm font-bold text-bakery-brown">
+            Email
+          </label>
+          <input
+            id="login-email"
+            type="email"
+            autoComplete="email"
+            required
+            value={email}
+            onChange={e => setEmail(e.target.value)}
+            className={authFieldClassName}
+            placeholder="you@restaurant.com"
+          />
+        </div>
+
+        <div>
+          <label htmlFor="login-password" className="mb-1.5 block text-sm font-bold text-bakery-brown">
+            Password
+          </label>
+          <input
+            id="login-password"
+            type="password"
+            autoComplete="current-password"
+            required
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+            className={authFieldClassName}
+            placeholder="••••••••"
+          />
+        </div>
+
+        <div className="flex items-center justify-between gap-3 pt-0.5">
+          <label className="inline-flex items-center gap-2 text-sm text-bakery-brown/60 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={rememberMe}
+              onChange={e => setRememberMe(e.target.checked)}
+              className="h-4 w-4 rounded border-bakery-beige text-bakery-brown focus:ring-bakery-caramel/40"
+            />
+            Remember me
+          </label>
+          <button
+            type="button"
+            onClick={handleForgotPassword}
+            className="text-sm font-bold text-bakery-caramel hover:text-bakery-brown transition-colors"
+          >
+            Forgot password?
+          </button>
+        </div>
+
+        <button type="submit" disabled={isSubmitting} className={`${authPrimaryButtonClassName} mt-2`}>
+          {isSubmitting ? <Loader2 size={18} className="animate-spin" /> : null}
+          Sign in
+        </button>
+      </form>
+
+      <p className="mt-6 text-center text-sm text-bakery-brown/50">
+        Don&apos;t have an account?{' '}
+        <button
+          type="button"
+          onClick={onGoRegister}
+          className="font-bold text-bakery-brown hover:text-bakery-caramel transition-colors"
+        >
+          Create account
+        </button>
+      </p>
+    </AuthShell>
   );
 };
