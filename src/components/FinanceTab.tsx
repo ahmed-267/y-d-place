@@ -26,6 +26,7 @@ const EXPENSE_CATEGORIES: ExpenseCategory[] = [
 export const FinanceTab = () => {
   const { t, expenses, addExpense, updateExpense, deleteExpense, taxSettings, setTaxSettings, sales, addToast, businessSettings, formatPrice, setActiveTab, user } = useApp();
   const isOwner = user?.role === 'owner';
+  const priceStr = (n: number) => `${businessSettings?.currencySymbol || '€'}${n.toFixed(2)}`;
   const taxProfile = getRegionalTaxProfile(businessSettings?.country);
   const PLACEHOLDERS = useMemo(() => [
     t('expensePlaceholder1'),
@@ -889,7 +890,7 @@ export const FinanceTab = () => {
                       <td className="p-4">
                         {e.receiptImage ? (
                           <button 
-                            onClick={() => setFullSizeImage(e.receiptImage)}
+                            onClick={() => setFullSizeImage(e.receiptImage || null)}
                             className="w-10 h-10 rounded-lg overflow-hidden border border-bakery-beige hover:border-bakery-caramel transition-all group relative"
                           >
                             <img src={e.receiptImage} alt={t('receipt')} className="w-full h-full object-cover" />
@@ -1026,7 +1027,7 @@ export const FinanceTab = () => {
                     value={localTaxSettings.manualGrossRevenue ?? totalSalesRevenue}
                     onChange={e => setLocalTaxSettings({...localTaxSettings, manualGrossRevenue: parseFloat(e.target.value)})}
                   />
-                  <p className="text-[10px] text-bakery-brown/40 mt-1 italic">{t('autoFilledSales').replace('{amount}', formatPrice(totalSalesRevenue))}</p>
+                  <p className="text-[10px] text-bakery-brown/40 mt-1 italic">{t('autoFilledSales').replace('{amount}', priceStr(totalSalesRevenue))}</p>
                 </div>
 
                 <div>
@@ -1037,7 +1038,7 @@ export const FinanceTab = () => {
                     value={localTaxSettings.manualExpenses ?? expenseSummaries.yearTotal}
                     onChange={e => setLocalTaxSettings({...localTaxSettings, manualExpenses: parseFloat(e.target.value)})}
                   />
-                  <p className="text-[10px] text-bakery-brown/40 mt-1 italic">{t('autoFilledExpenses').replace('{amount}', formatPrice(expenseSummaries.yearTotal))}</p>
+                  <p className="text-[10px] text-bakery-brown/40 mt-1 italic">{t('autoFilledExpenses').replace('{amount}', priceStr(expenseSummaries.yearTotal))}</p>
                 </div>
 
                 <div>
@@ -1080,7 +1081,7 @@ export const FinanceTab = () => {
                   <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-xl flex gap-3">
                     <Check className="text-emerald-500 shrink-0" size={18} />
                 <p className="text-[10px] text-emerald-700">
-                  {t('smallBusinessEligible').replace('{amount}', formatPrice(25000))}
+                  {t('smallBusinessEligible').replace('{amount}', priceStr(25000))}
                 </p>
                   </div>
                 )}
@@ -1174,7 +1175,7 @@ export const FinanceTab = () => {
               <div className="p-3 bg-rose-500/20 border border-rose-500/40 rounded-xl flex gap-3 items-center relative z-10">
                 <AlertTriangle className="text-rose-300 shrink-0" size={18} />
                 <p className="text-[10px] text-rose-100">
-                  {t('socialSecurityDiscrepancy').replace('{amount}', formatPrice(taxResults.ssRef))}
+                  {t('socialSecurityDiscrepancy').replace('{amount}', priceStr(taxResults.ssRef))}
                 </p>
               </div>
             )}

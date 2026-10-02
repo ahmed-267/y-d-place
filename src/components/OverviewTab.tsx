@@ -1,10 +1,13 @@
 import React, { useMemo, useEffect, useRef, useState } from 'react';
 import { useApp } from '../AppContext';
-import { Euro, TrendingUp, ShoppingBag, CreditCard, Banknote, ArrowRight, Rocket, AlertCircle, Download } from 'lucide-react';
+import { Euro, TrendingUp, ShoppingBag, CreditCard, Banknote, ArrowRight, Rocket, AlertCircle, Download, Clock } from 'lucide-react';
 import Chart from 'chart.js/auto';
 import ChartDataLabels from 'chartjs-plugin-datalabels';
 import { exportPeriodReportPdf, ReportPeriod } from '../utils/pdfReport';
 import { normalizeEnabledModules } from '../types';
+import { isCountableSale, salePayable } from '../utils/ticketMoney';
+import { downloadZReport } from '../utils/tickets';
+import { tillTotals } from '../utils/till';
 
 Chart.register(ChartDataLabels);
 
@@ -29,8 +32,8 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   setupCompleted = false,
 }) => {
   const {
-    sales, products, businessSettings, formatPrice, user, loadDemoData, users, workShifts,
-    t, tc, tp, lang, ingredients, preparedStock = [], setActiveTab, addToast,
+    sales, products, businessSettings, formatPrice, user, loadDemoData, users, workShifts, shiftLogs, cashSessions,
+    t, tc, tp, lang, ingredients, preparedStock = [], setActiveTab, addToast, orders,
   } = useApp();
 
   const lowStockItems = useMemo(() => {
@@ -108,6 +111,12 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   const [period, setPeriod] = useState<Period>('weekly');
   const [staffPeriod, setStaffPeriod] = useState<Period | 'custom'>('weekly');
   const [staffDateRange, setStaffDateRange] = useState({ from: '', to: '' });
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 60000);
+    return () => window.clearInterval(id);
+  }, []);
 
   const periodOptions = [
     { id: 'daily' as const, label: t('daily') },
@@ -232,11 +241,11 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   }, [staffPeriod]);
 
   const salesInPeriod = useMemo(() => {
-    return sales.filter(s => s.timestamp >= periodRange.start && s.timestamp < periodRange.end);
+    return sales.filter(s => isCountableSale(s) && s.timestamp >= periodRange.start && s.timestamp < periodRange.end);
   }, [sales, periodRange]);
 
   const staffSalesInPeriod = useMemo(() => {
-    return sales.filter(s => s.timestamp >= staffRange.start && s.timestamp <= staffRange.end);
+    return sales.filter(s => isCountableSale(s) && s.timestamp >= staffRange.start && s.timestamp <= staffRange.end);
   }, [sales, staffRange]);
 
   const shiftsInPeriod = useMemo(() => {
@@ -248,8 +257,8 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
 
   const revenueByBucket = useMemo(() => {
     return buckets.map(bucket => {
-      return sales.filter(s => s.timestamp >= bucket.start && s.timestamp < bucket.end)
-        .reduce((acc, s) => acc + s.subtotal, 0);
+      return sales.filter(s => isCountableSale(s) && s.timestamp >= bucket.start && s.timestamp < bucket.end)
+        .reduce((acc, s) => acc + salePayable(s), 0);
     });
   }, [buckets, sales]);
 
@@ -297,13 +306,16 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
     const totals = { cash: 0, card: 0 };
     const counts = { cash: 0, card: 0 };
     salesInPeriod.forEach(s => {
-      if (s.paymentMethod === 'Cash') {
-        totals.cash += s.subtotal;
-        counts.cash += 1;
-      } else {
-        totals.card += s.subtotal;
-        counts.card += 1;
-      }
+      const cash = s.paymentMethod === 'Cash' || s.paymentMethod === 'Split'
+        ? (s.paymentMethod === 'Cash' ? salePayable(s) : Math.max(0, s.cashAmount || 0))
+        : 0;
+      const card = s.paymentMethod === 'Card' || s.paymentMethod === 'Split'
+        ? (s.paymentMethod === 'Card' ? salePayable(s) : Math.max(0, s.cardAmount || 0))
+        : 0;
+      totals.cash += cash;
+      totals.card += card;
+      if (cash > 0) counts.cash += 1;
+      if (card > 0) counts.card += 1;
     });
     const totalCount = counts.cash + counts.card;
     return {
@@ -317,20 +329,79 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
 
   const averageOrderValue = useMemo(() => {
     if (!salesInPeriod.length) return 0;
-    const total = salesInPeriod.reduce((acc, s) => acc + s.subtotal, 0);
+    const total = salesInPeriod.reduce((acc, s) => acc + salePayable(s), 0);
     return total / salesInPeriod.length;
   }, [salesInPeriod]);
 
   const periodRevenue = useMemo(
-    () => salesInPeriod.reduce((acc, s) => acc + s.subtotal, 0),
+    () => salesInPeriod.reduce((acc, s) => acc + salePayable(s), 0),
     [salesInPeriod]
   );
+  const periodTips = useMemo(
+    () => salesInPeriod.reduce((acc, s) => acc + Math.max(0, s.tipAmount || 0), 0),
+    [salesInPeriod]
+  );
+  const tipsByCashier = useMemo(() => {
+    const map = new Map<string, { name: string; tips: number }>();
+    salesInPeriod.forEach(s => {
+      const tip = Math.max(0, s.tipAmount || 0);
+      if (tip <= 0) return;
+      const key = s.cashierUsername || 'unknown';
+      const prev = map.get(key) || { name: s.cashierFullName || key, tips: 0 };
+      prev.tips += tip;
+      map.set(key, prev);
+    });
+    return [...map.values()].sort((a, b) => b.tips - a.tips).slice(0, 5);
+  }, [salesInPeriod]);
+  const avgTurnMins = useMemo(() => {
+    if (!normalizeEnabledModules(businessSettings?.enabledModules).tables) return null;
+    const turns = orders.filter(
+      o =>
+        o.type === 'DineIn' &&
+        o.status === 'Completed' &&
+        o.completedAt &&
+        o.completedAt >= periodRange.start &&
+        o.completedAt <= periodRange.end &&
+        o.tableId
+    );
+    if (!turns.length) return null;
+    const total = turns.reduce((acc, o) => acc + Math.max(0, (o.completedAt || 0) - o.createdAt), 0);
+    return Math.round(total / turns.length / 60000);
+  }, [orders, periodRange, businessSettings?.enabledModules]);
   const periodItemsSold = useMemo(
     () => salesInPeriod.reduce((acc, s) => acc + s.items.reduce((n, i) => n + i.qty, 0), 0),
     [salesInPeriod]
   );
 
-  const handleDownloadReport = (reportPeriod: ReportPeriod) => {
+  const labourVsSales = useMemo(() => {
+    const rateOf = (username: string) => users.find(u => u.username === username)?.hourlyRate || 0;
+    const covered = new Set<string>();
+    const dateKey = (ts: number) => {
+      const d = new Date(ts);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    };
+    let labourCost = 0;
+    shiftLogs.forEach(log => {
+      const end = log.logoutTime ?? now;
+      const start = Math.max(log.loginTime, periodRange.start);
+      const stop = Math.min(end, periodRange.end);
+      if (stop <= start) return;
+      labourCost += ((stop - start) / 3600000) * rateOf(log.username);
+      covered.add(`${log.username}|${dateKey(log.loginTime)}`);
+    });
+    workShifts.forEach(shift => {
+      const shiftTime = new Date(`${shift.date}T00:00`).getTime();
+      if (shiftTime < periodRange.start || shiftTime >= periodRange.end) return;
+      if (covered.has(`${shift.username}|${shift.date}`)) return;
+      labourCost += shift.totalHours * rateOf(shift.username);
+    });
+    const labourPercent = periodRevenue > 0 ? (labourCost / periodRevenue) * 100 : 0;
+    return { labourCost, labourPercent };
+  }, [shiftLogs, workShifts, users, periodRange, now, periodRevenue]);
+
+  const handleDownloadReport = () => {
+    const reportPeriod: ReportPeriod =
+      period === 'quarterly' ? 'quarterly' : period;
     exportPeriodReportPdf(sales, products, reportPeriod, {
       tp,
       tc,
@@ -348,11 +419,9 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
         itemsSold: t('units'),
         aov: t('averageOrderValue'),
         cash: t('cash'),
-        card: t('card'),
+        card: t('cardRecorded'),
         categories: t('categories'),
-        products: t('products'),
         category: t('category'),
-        product: t('productName'),
         units: t('units'),
         revenue: t('revenue'),
         total: t('total'),
@@ -362,7 +431,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   };
 
   const busiestHours = useMemo(() => {
-    const source = salesInPeriod.length > 0 ? salesInPeriod : sales;
+    const source = salesInPeriod.length > 0 ? salesInPeriod : sales.filter(isCountableSale);
     const hours = Array.from({ length: 24 }, () => 0);
     source.forEach(sale => {
       const stamp = Number(sale.timestamp);
@@ -397,7 +466,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   const staffPerformance = useMemo(() => {
     return staffDirectory.map(staff => {
       const staffSales = staffSalesInPeriod.filter(s => s.cashierUsername === staff.username);
-      const revenue = staffSales.reduce((acc, s) => acc + s.subtotal, 0);
+      const revenue = staffSales.reduce((acc, s) => acc + salePayable(s), 0);
       const orders = staffSales.length;
       const staffShiftList = shiftsInPeriod.filter(s => s.username === staff.username);
       const shiftsWorked = staffShiftList.length;
@@ -614,7 +683,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
         </section>
       )}
 
-      {user?.role === 'owner' && sales.length === 0 && (
+      {user?.role === 'owner' && businessSettings?.id === 'ydplace' && sales.length === 0 && (
         <div className="flex justify-end">
           <button
             type="button"
@@ -628,7 +697,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
       )}
 
       <section className="space-y-3">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-base font-bold font-serif text-bakery-brown mr-1">{t('periodKpis')}</h3>
             <div className="flex items-center gap-1 bg-bakery-beige/40 p-1 rounded-xl">
@@ -646,32 +715,22 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
               ))}
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mr-1 inline-flex items-center gap-1">
-              <Download size={12} />
-              {t('downloadReport')}
-            </span>
-            {([
-              { id: 'daily' as const, label: t('dailyReport') },
-              { id: 'weekly' as const, label: t('weeklyReport') },
-              { id: 'monthly' as const, label: t('monthlyReport') },
-              { id: 'total' as const, label: t('totalReport') },
-            ]).map(r => (
-              <button
-                key={r.id}
-                type="button"
-                onClick={() => handleDownloadReport(r.id)}
-                className="h-8 px-3 rounded-lg text-[10px] font-bold uppercase tracking-widest bg-white border border-bakery-beige text-bakery-brown hover:border-bakery-caramel"
-              >
-                {r.label}
-              </button>
-            ))}
-          </div>
+          <button
+            type="button"
+            onClick={handleDownloadReport}
+            className="h-8 px-3 rounded-lg text-[10px] font-bold uppercase tracking-widest bg-bakery-brown text-white inline-flex items-center gap-1.5 hover:bg-bakery-brown/90 self-start sm:self-auto"
+          >
+            <Download size={12} />
+            {t('downloadReport')}
+          </button>
         </div>
 
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className={`grid gap-3 ${normalizeEnabledModules(businessSettings?.enabledModules).tips ? 'grid-cols-2 lg:grid-cols-5' : 'grid-cols-2 lg:grid-cols-4'}`}>
           {[
             { label: t('revenue'), val: formatPrice(periodRevenue), icon: Euro },
+            ...(normalizeEnabledModules(businessSettings?.enabledModules).tips
+              ? [{ label: t('tipsTotal'), val: formatPrice(periodTips), icon: Banknote }]
+              : []),
             { label: t('orders'), val: String(salesInPeriod.length), icon: ShoppingBag },
             { label: t('units'), val: String(periodItemsSold), icon: TrendingUp },
             { label: t('averageOrderValue'), val: formatPrice(averageOrderValue), icon: CreditCard },
@@ -687,6 +746,101 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
             </div>
           ))}
         </div>
+
+        {(
+          (normalizeEnabledModules(businessSettings?.enabledModules).tips && tipsByCashier.length > 0) ||
+          avgTurnMins != null
+        ) && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            {normalizeEnabledModules(businessSettings?.enabledModules).tips && tipsByCashier.length > 0 && (
+              <div className="card-bakery p-3 sm:p-4">
+                <p className="text-[10px] font-bold text-bakery-brown/50 uppercase tracking-wider mb-2">{t('tipsByCashier')}</p>
+                <ul className="space-y-1.5">
+                  {tipsByCashier.map(row => (
+                    <li key={row.name} className="flex justify-between text-sm font-bold">
+                      <span className="truncate text-bakery-brown/70">{row.name}</span>
+                      <span>{formatPrice(row.tips)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {avgTurnMins != null && (
+              <div className="card-bakery p-3 sm:p-4 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[10px] font-bold text-bakery-brown/50 uppercase tracking-wider">{t('avgTurnTime')}</p>
+                  <p className="text-lg font-black font-serif mt-0.5">
+                    {avgTurnMins} {t('minutesShort')}
+                  </p>
+                </div>
+                <Clock className="text-bakery-brown/40" size={20} />
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="card-bakery p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="p-2 bg-bakery-beige rounded-xl text-bakery-brown shrink-0">
+              <Clock size={16} />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold text-bakery-brown/50 uppercase tracking-wider truncate">{t('labourVsSales')}</p>
+              <p className="text-base sm:text-lg font-black font-serif">{labourVsSales.labourPercent.toFixed(1)}%</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-4 text-sm font-bold">
+            <span className="text-bakery-brown/60">{t('labourCost')}: {formatPrice(labourVsSales.labourCost)}</span>
+            <span>{t('revenue')}: {formatPrice(periodRevenue)}</span>
+          </div>
+        </div>
+
+        {(() => {
+          const lastClosed = [...cashSessions].filter(s => s.closedAt).sort((a, b) => (b.closedAt || 0) - (a.closedAt || 0))[0];
+          return (
+            <div className="card-bakery p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-bold text-bakery-brown/50 uppercase tracking-wider">{t('lastZReport')}</p>
+                <p className="text-sm font-bold mt-0.5">
+                  {lastClosed
+                    ? new Date(lastClosed.closedAt!).toLocaleString()
+                    : t('noClosedTill')}
+                </p>
+              </div>
+              {lastClosed && (
+                <button
+                  type="button"
+                  className="h-9 px-3 rounded-xl bg-bakery-brown text-white text-xs font-bold inline-flex items-center gap-1.5"
+                  onClick={() => {
+                    const totals = tillTotals(sales, lastClosed);
+                    downloadZReport({
+                      business: businessSettings,
+                      currencySymbol: businessSettings?.currencySymbol,
+                      openedAt: lastClosed.openedAt,
+                      closedAt: lastClosed.closedAt || Date.now(),
+                      openingFloat: lastClosed.openingFloat,
+                      expectedCash: totals.expectedCash,
+                      countedCash: lastClosed.closingCounted || totals.expectedCash,
+                      cardRecorded: totals.cardRecorded,
+                      cashSales: totals.cashSales,
+                      refunds: totals.refunds,
+                      voids: totals.voids,
+                      orderCount: totals.orderCount,
+                      labels: {
+                        zReport: t('zReport'),
+                        cardRecorded: t('cardRecorded'),
+                        cash: t('cash'),
+                      },
+                    });
+                  }}
+                >
+                  <Download size={14} />
+                  {t('zReport')}
+                </button>
+              )}
+            </div>
+          );
+        })()}
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
           <div className="card-bakery p-3 sm:p-4">
@@ -727,7 +881,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
             <span className="font-black">{formatPrice(paymentBreakdown.totals.cash)} · {paymentBreakdown.cashPercent}%</span>
           </div>
           <div className="flex items-center justify-between text-sm">
-            <span className="inline-flex items-center gap-1.5 font-bold text-bakery-brown/60"><CreditCard size={14} />{t('card')}</span>
+            <span className="inline-flex items-center gap-1.5 font-bold text-bakery-brown/60"><CreditCard size={14} />{t('cardRecorded')}</span>
             <span className="font-black">{formatPrice(paymentBreakdown.totals.card)} · {paymentBreakdown.cardPercent}%</span>
           </div>
           <div className="w-full bg-bakery-beige rounded-full h-1.5 overflow-hidden flex">

@@ -1,7 +1,8 @@
 import { Product, Sale } from '../types';
 import { downloadCsv, rowsToCsv } from './csvExport';
+import { isCountableSale, saleCardAmount, saleCashAmount, salePayable } from './ticketMoney';
 
-export type ReportPeriod = 'daily' | 'weekly' | 'monthly' | 'total';
+export type ReportPeriod = 'daily' | 'weekly' | 'monthly' | 'quarterly' | 'total';
 
 export type PeriodReport = {
   period: ReportPeriod;
@@ -14,6 +15,8 @@ export type PeriodReport = {
   averageOrderValue: number;
   cashTotal: number;
   cardTotal: number;
+  tipTotal: number;
+  tipsByCashier: { username: string; fullName: string; tips: number; orders: number }[];
   categories: { name: string; units: number; revenue: number }[];
   products: { name: string; units: number; revenue: number }[];
 };
@@ -39,16 +42,21 @@ export const getPeriodBounds = (period: ReportPeriod, now = new Date()): { from:
     from.setDate(from.getDate() + mondayOffset);
     return { from, to, label: `Weekly from ${from.toISOString().slice(0, 10)}` };
   }
-  // monthly
-  from.setDate(1);
-  return { from, to, label: `Monthly ${from.getFullYear()}-${String(from.getMonth() + 1).padStart(2, '0')}` };
+  if (period === 'monthly') {
+    from.setDate(1);
+    return { from, to, label: `Monthly ${from.getFullYear()}-${String(from.getMonth() + 1).padStart(2, '0')}` };
+  }
+  // quarterly
+  const q = Math.floor(from.getMonth() / 3);
+  from.setMonth(q * 3, 1);
+  return { from, to, label: `Q${q + 1} ${from.getFullYear()}` };
 };
 
 export const filterSalesForPeriod = (sales: Sale[], period: ReportPeriod, now = new Date()): Sale[] => {
   const { from, to } = getPeriodBounds(period, now);
   const toTs = to.getTime();
   const fromTs = from ? from.getTime() : 0;
-  return sales.filter(s => s.timestamp >= fromTs && s.timestamp <= toTs);
+  return sales.filter(s => isCountableSale(s) && s.timestamp >= fromTs && s.timestamp <= toTs);
 };
 
 type ResolveName = (productId: number, fallback: string) => string;
@@ -71,13 +79,28 @@ export const buildPeriodReport = (
   let totalSales = 0;
   let cashTotal = 0;
   let cardTotal = 0;
+  let tipTotal = 0;
+  const tipByCashier = new Map<string, { username: string; fullName: string; tips: number; orders: number }>();
   const catMap = new Map<string, { units: number; revenue: number }>();
   const prodMap = new Map<string, { name: string; units: number; revenue: number }>();
 
   for (const sale of list) {
-    totalSales += sale.subtotal || 0;
-    if (sale.paymentMethod === 'Cash') cashTotal += sale.subtotal || 0;
-    else cardTotal += sale.subtotal || 0;
+    const payable = salePayable(sale);
+    totalSales += payable;
+    cashTotal += saleCashAmount(sale);
+    cardTotal += saleCardAmount(sale);
+    const tip = Math.max(0, sale.tipAmount || 0);
+    tipTotal += tip;
+    const cKey = sale.cashierUsername || 'unknown';
+    const prevTip = tipByCashier.get(cKey) || {
+      username: cKey,
+      fullName: sale.cashierFullName || cKey,
+      tips: 0,
+      orders: 0,
+    };
+    prevTip.tips += tip;
+    prevTip.orders += 1;
+    tipByCashier.set(cKey, prevTip);
 
     for (const item of sale.items || []) {
       const qty = item.qty || 0;
@@ -111,6 +134,8 @@ export const buildPeriodReport = (
     averageOrderValue: orderCount ? totalSales / orderCount : 0,
     cashTotal,
     cardTotal,
+    tipTotal,
+    tipsByCashier: [...tipByCashier.values()].sort((a, b) => b.tips - a.tips),
     categories: [...catMap.entries()]
       .map(([name, v]) => ({ name, ...v }))
       .sort((a, b) => b.revenue - a.revenue),
@@ -136,6 +161,7 @@ export const downloadPeriodReportCsv = (
     ['Average order value', money(report.averageOrderValue)],
     ['Cash total', money(report.cashTotal)],
     ['Card total', money(report.cardTotal)],
+    ['Tips total', money(report.tipTotal)],
   ];
 
   const catHeaders = ['Category', 'Units sold', 'Revenue'];
@@ -144,17 +170,11 @@ export const downloadPeriodReportCsv = (
   const catTotalRev = report.categories.reduce((a, c) => a + c.revenue, 0);
   catRows.push(['TOTAL', catTotalUnits, money(catTotalRev)]);
 
-  const prodHeaders = ['Product', 'Units sold', 'Revenue'];
-  const prodRows = report.products.map(p => [p.name, p.units, money(p.revenue)]);
-
   const content = [
     rowsToCsv(summaryHeaders, summaryRows),
     '',
     'Category breakdown',
     rowsToCsv(catHeaders, catRows),
-    '',
-    'Product breakdown',
-    rowsToCsv(prodHeaders, prodRows),
   ].join('\n');
 
   const slug = report.period;

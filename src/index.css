@@ -9,11 +9,24 @@
   --color-bakery-caramel: #d4a373;
   --color-bakery-beige: #faedcd;
   --color-bakery-accent: #e9edc9;
+
+  --app-sidebar-bg: #1E1B18;
+  --app-sidebar-fg: #F7F3ED;
+  --app-sidebar-muted: rgba(247, 243, 237, 0.55);
+  --app-sidebar-accent: #D4A373;
+  --app-sidebar-accent-fg: #1A1512;
+  --app-sidebar-chip: #3D2E28;
+  --app-canvas-bg: #F7F3ED;
+  --app-canvas-fg: #1A1512;
+  --app-card-bg: #FFFFFF;
+  --app-btn-fg: #F7F3ED;
 }
 
 @layer base {
   body {
-    @apply bg-bakery-cream text-bakery-brown font-sans;
+    background-color: var(--app-canvas-bg);
+    color: var(--app-canvas-fg);
+    @apply font-sans;
   }
   
   h1, h2, h3, h4, h5, h6 {
@@ -23,11 +36,38 @@
 
 @layer components {
   .btn-primary {
-    @apply bg-bakery-brown text-white px-6 py-2 rounded-full font-bold transition-all hover:bg-[#3e2723] hover:-translate-y-0.5 active:translate-y-0;
+    background-color: var(--color-bakery-brown);
+    color: var(--app-btn-fg, #fff);
+    @apply px-6 py-2 rounded-full font-bold transition-all duration-150;
+    box-shadow: 0 1px 0 color-mix(in srgb, #000 12%, transparent);
   }
-  
+
+  .btn-primary:hover {
+    filter: brightness(1.1);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px color-mix(in srgb, var(--color-bakery-brown) 30%, transparent);
+  }
+
+  .btn-primary:active {
+    transform: translateY(0);
+    filter: brightness(0.96);
+    box-shadow: none;
+  }
+
+  .btn-secondary {
+    @apply px-4 py-2 rounded-xl font-bold border-2 border-bakery-brown/15 bg-white text-bakery-brown transition-all duration-150;
+  }
+
+  .btn-secondary:hover {
+    border-color: var(--color-bakery-caramel);
+    background-color: color-mix(in srgb, var(--color-bakery-beige) 55%, white);
+    transform: translateY(-1px);
+  }
+
   .card-bakery {
-    @apply bg-white border border-bakery-beige rounded-2xl shadow-sm;
+    background-color: var(--app-card-bg, #fff);
+    border-color: var(--color-bakery-beige);
+    @apply border rounded-2xl shadow-sm;
   }
   
   .scrollbar-hide::-webkit-scrollbar {

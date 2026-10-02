@@ -1,6 +1,7 @@
 import React from 'react';
 import { Layout } from 'lucide-react';
 import { LanguageSwitcher } from './LanguageSwitcher';
+import { useApp } from '../AppContext';
 
 type AuthShellProps = {
   onBackHome: () => void;
@@ -8,6 +9,8 @@ type AuthShellProps = {
 };
 
 export const AuthShell = ({ onBackHome, children }: AuthShellProps) => {
+  const { t } = useApp();
+
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-b from-bakery-cream via-[#f7f3ed] to-bakery-beige/60 text-bakery-brown">
       <header className="shrink-0 px-4 sm:px-6 lg:px-10 py-4 sm:py-5 flex items-center justify-between gap-4">
@@ -17,7 +20,7 @@ export const AuthShell = ({ onBackHome, children }: AuthShellProps) => {
           className="inline-flex items-center gap-2 text-sm font-medium text-bakery-brown/50 hover:text-bakery-brown transition-colors"
         >
           <span aria-hidden="true">←</span>
-          Back to home
+          {t('backToHome')}
         </button>
 
         <div className="flex items-center gap-3 sm:gap-5">
@@ -27,7 +30,9 @@ export const AuthShell = ({ onBackHome, children }: AuthShellProps) => {
             </div>
             <div className="leading-tight hidden sm:block">
               <p className="text-sm font-bold tracking-tight text-bakery-brown font-serif">PreVisio</p>
-              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-bakery-brown/40">Restaurant OS</p>
+              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-bakery-brown/40">
+                {t('restaurantOs')}
+              </p>
             </div>
           </div>
 

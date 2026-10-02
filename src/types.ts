@@ -23,6 +23,12 @@ export interface Product {
   transKey: string;
   ingredientLinks?: IngredientLink[];
   preparedStockLinks?: PreparedStockLink[];
+  /** Addon product ids that can be added to this item. Empty/undefined falls back to addon-category extras. */
+  extraIds?: number[];
+  /** Pin to Cashier favourites row */
+  isFavourite?: boolean;
+  /** Optional POS tile colour (hex) */
+  posColor?: string;
 }
 
 export interface SaleItem {
@@ -33,20 +39,41 @@ export interface SaleItem {
   unitPrice: number;
   lineTotal: number;
   extras?: { productId: number; nameEN: string; price: number }[];
+  note?: string;
 }
+
+export type SaleStatus = 'completed' | 'refunded' | 'voided';
 
 export interface Sale {
   id: string;
   timestamp: number;
   items: SaleItem[];
+  /** Sum of line totals before discount/tip. */
   subtotal: number;
-  paymentMethod: 'Cash' | 'Card';
+  discountPercent?: number;
+  discountAmount?: number;
+  tipAmount?: number;
+  tenderedCash?: number;
+  changeGiven?: number;
+  paymentMethod: 'Cash' | 'Card' | 'Split';
+  /** When paymentMethod is Split — cash portion of payable. */
+  cashAmount?: number;
+  /** When paymentMethod is Split — card-recorded portion of payable. */
+  cardAmount?: number;
   cashierUsername: string;
   cashierFullName: string;
+  status?: SaleStatus;
+  voidReason?: string;
+  refundedAt?: number;
+  /** Manager/owner who approved a discount above staff limit. */
+  discountApprovedByUsername?: string;
+  customerName?: string;
+  customerPhone?: string;
+  customerId?: string;
 }
 
-export type OrderType = 'WalkIn' | 'PreOrder';
-export type OrderStatus = 'Preparing' | 'Ready' | 'Completed';
+export type OrderType = 'WalkIn' | 'PreOrder' | 'DineIn';
+export type OrderStatus = 'Preparing' | 'Ready' | 'Completed' | 'Cancelled';
 
 export interface Order {
   id: string;
@@ -59,11 +86,38 @@ export interface Order {
   customerPhone?: string;
   items: SaleItem[];
   subtotal: number;
-  paymentMethod: 'Cash' | 'Card';
+  discountPercent?: number;
+  discountAmount?: number;
+  tipAmount?: number;
+  tenderedCash?: number;
+  changeGiven?: number;
+  paymentMethod: 'Cash' | 'Card' | 'Split';
+  cashAmount?: number;
+  cardAmount?: number;
   createdByUsername: string;
   createdByFullName: string;
   completedAt?: number;
   saleId?: string;
+  voidReason?: string;
+  kitchenPrintedAt?: number;
+  tableId?: string;
+  tableLabel?: string;
+  covers?: number;
+  discountApprovedByUsername?: string;
+  customerId?: string;
+  /** pos = cashier; online = branded pre-order page */
+  source?: 'pos' | 'online';
+}
+
+export interface CashSession {
+  id: string;
+  openedAt: number;
+  closedAt?: number;
+  openingFloat: number;
+  closingCounted?: number;
+  openedBy: string;
+  closedBy?: string;
+  notes?: string;
 }
 
 export interface PreparedStock {
@@ -71,6 +125,8 @@ export interface PreparedStock {
   name: string;
   portions: number;
   lowThreshold: number;
+  /** Last receive unit cost (optional bookkeeping). */
+  lastUnitCost?: number;
 }
 
 export interface Ingredient {
@@ -79,6 +135,8 @@ export interface Ingredient {
   unit: string;
   qty: number;
   lowThreshold: number;
+  /** Last receive unit cost (optional bookkeeping). */
+  lastUnitCost?: number;
 }
 
 export type ExpenseCategory = 'Utilities' | 'Rent' | 'Supplies' | 'Staff' | 'Transport' | 'Marketing' | 'Insurance' | 'Equipment' | 'Other';
@@ -105,6 +163,16 @@ export interface EnabledModules {
   staff: boolean;
   /** Expenses & tax */
   finance: boolean;
+  /** Table service / floor map */
+  tables: boolean;
+  /** Customer directory & phone recall */
+  customers: boolean;
+  /** Tip entry on tickets + tips reporting */
+  tips: boolean;
+  /** Guest online pre-order link */
+  onlineOrders: boolean;
+  /** Park / recall tickets on the till */
+  parkTickets: boolean;
 }
 
 export const DEFAULT_ENABLED_MODULES: EnabledModules = {
@@ -113,6 +181,11 @@ export const DEFAULT_ENABLED_MODULES: EnabledModules = {
   stock: true,
   staff: true,
   finance: true,
+  tables: false,
+  customers: false,
+  tips: false,
+  onlineOrders: false,
+  parkTickets: false,
 };
 
 export const normalizeEnabledModules = (
@@ -121,6 +194,196 @@ export const normalizeEnabledModules = (
   ...DEFAULT_ENABLED_MODULES,
   ...(value || {}),
 });
+
+export type DiscountPolicy = {
+  staffMaxPercent: number;
+  staffMaxAmount: number;
+  requireManagerPinAboveLimit: boolean;
+};
+
+export const DEFAULT_DISCOUNT_POLICY: DiscountPolicy = {
+  staffMaxPercent: 10,
+  staffMaxAmount: 5,
+  requireManagerPinAboveLimit: true,
+};
+
+export const normalizeDiscountPolicy = (
+  value?: Partial<DiscountPolicy> | null
+): DiscountPolicy => ({
+  ...DEFAULT_DISCOUNT_POLICY,
+  ...(value || {}),
+});
+
+export type BrandPaletteId =
+  | 'espresso'
+  | 'forest'
+  | 'ocean'
+  | 'wine'
+  | 'midnight'
+  | 'terracotta'
+  | 'violet'
+  | 'graphite'
+  | 'sunrise'
+  | 'arctic'
+  // legacy ids (mapped in resolveBrandPalette)
+  | 'olive'
+  | 'slate'
+  | 'navy'
+  | 'cocoa';
+
+export const BRAND_PALETTE_IDS: BrandPaletteId[] = [
+  'espresso',
+  'forest',
+  'ocean',
+  'wine',
+  'midnight',
+  'terracotta',
+  'violet',
+  'graphite',
+  'sunrise',
+  'arctic',
+];
+
+export type BrandTheme = {
+  /** Curated palette id — preferred */
+  paletteId?: BrandPaletteId;
+  /** Legacy free-colour fields (migrated to nearest palette) */
+  sidebar?: string;
+  canvas?: string;
+};
+
+export const DEFAULT_BRAND_THEME: BrandTheme = {
+  paletteId: 'espresso',
+};
+
+export const normalizeBrandTheme = (value?: Partial<BrandTheme> | Record<string, unknown> | null): BrandTheme => {
+  const raw = (value || {}) as Record<string, unknown>;
+  if (typeof raw.paletteId === 'string') {
+    const id = raw.paletteId as BrandPaletteId;
+    if (BRAND_PALETTE_IDS.includes(id)) return { paletteId: id };
+    // Map legacy ids to current set
+    const legacy: Record<string, BrandPaletteId> = {
+      olive: 'forest',
+      slate: 'graphite',
+      navy: 'ocean',
+      cocoa: 'terracotta',
+    };
+    if (legacy[id]) return { paletteId: legacy[id] };
+  }
+  const sidebar =
+    (typeof raw.sidebar === 'string' && raw.sidebar) ||
+    (typeof raw.primary === 'string' && raw.primary) ||
+    undefined;
+  const canvas =
+    (typeof raw.canvas === 'string' && raw.canvas) ||
+    (typeof raw.surface === 'string' && raw.surface) ||
+    undefined;
+  if (sidebar || canvas) return { sidebar, canvas };
+  return { ...DEFAULT_BRAND_THEME };
+};
+
+export type FloorSection = {
+  id: string;
+  name: string;
+};
+
+export type FloorTable = {
+  id: string;
+  label: string;
+  seats: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  shape?: 'square' | 'round';
+  sectionId?: string;
+  /** Needs clearing after guests leave */
+  dirty?: boolean;
+  /** Assigned server username */
+  serverUsername?: string;
+  /** When guests were seated / check opened */
+  seatedAt?: number;
+};
+
+export type FloorPlan = {
+  tables: FloorTable[];
+  sections: FloorSection[];
+  useSections: boolean;
+};
+
+export type TableLiveStatus = 'free' | 'seated' | 'ordered' | 'bill' | 'dirty';
+
+export const emptyFloorPlan = (): FloorPlan => ({
+  tables: [],
+  sections: [],
+  useSections: false,
+});
+
+export const normalizeFloorPlan = (value?: Partial<FloorPlan> | Record<string, unknown> | null): FloorPlan => {
+  const raw = (value || {}) as Partial<FloorPlan>;
+  const tables = Array.isArray(raw.tables) ? raw.tables : [];
+  const sections = Array.isArray(raw.sections) ? raw.sections : [];
+  const useSections = !!raw.useSections;
+  return { tables, sections, useSections };
+};
+
+export type WasteReason = 'spoilage' | 'breakage' | 'overproduction' | 'staff_meal' | 'other';
+
+export type WasteLog = {
+  id: string;
+  timestamp: number;
+  kind: 'ingredient' | 'prepped';
+  itemId: number;
+  itemName: string;
+  qty: number;
+  unit?: string;
+  reason: WasteReason;
+  note?: string;
+  unitCost?: number;
+  costImpact: number;
+  recordedByUsername: string;
+};
+
+export type Customer = {
+  id: string;
+  name: string;
+  phone: string;
+  notes?: string;
+  allergies?: string;
+  createdAt: number;
+  lastOrderAt?: number;
+  orderCount: number;
+};
+
+export type ParkedTicket = {
+  id: string;
+  parkedAt: number;
+  cart: Array<SaleItem & { emoji?: string; transKey?: string; id?: number }>;
+  orderType: OrderType;
+  customerName: string;
+  customerPhone: string;
+  scheduledDate: string;
+  scheduledTime: string;
+  discountPercent: string;
+  discountAmount: string;
+  tipAmount: string;
+  paymentMethod: 'Cash' | 'Card' | 'Split';
+  cashReceived: string;
+  splitCash: string;
+  splitCard: string;
+  tableId?: string;
+  tableLabel?: string;
+  covers?: string;
+  resumeOrderId?: string;
+  customerId?: string;
+};
+
+export type PendingTableSession = {
+  tableId: string;
+  tableLabel: string;
+  covers?: number;
+  resumeOrderId?: string;
+};
 
 export interface BusinessSettings {
   id: string;
@@ -137,6 +400,8 @@ export interface BusinessSettings {
   currencySymbol: string;
   language: Language;
   enabledModules?: EnabledModules;
+  discountPolicy?: DiscountPolicy;
+  brandTheme?: BrandTheme;
 }
 
 export interface TaxSettings {

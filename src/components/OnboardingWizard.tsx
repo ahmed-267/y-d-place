@@ -18,12 +18,13 @@ import {
   Users,
   Wallet,
 } from 'lucide-react';
-import { IngredientLink, Product, PreparedStockLink, normalizeEnabledModules, EnabledModules } from '../types';
+import { IngredientLink, Product, PreparedStockLink, normalizeEnabledModules, EnabledModules, Language } from '../types';
 import { getAIAssistance, scanMenu, ScanMenuResult, compressImage } from '../utils/aiHelper';
 import { CitySelect } from './CitySelect';
 import { Modal } from './Modal';
 import { ScanProgressModal } from './ScanProgressModal';
 import { APP_LANGUAGE_OPTIONS } from '../utils/languages';
+import { requestProductTour } from '../utils/productTour';
 
 const ONBOARDING_STEP_KEY = 'previsio_onboarding_step';
 
@@ -44,6 +45,7 @@ export const OnboardingWizard = () => {
     saveBusinessSettings,
     t,
     lang,
+    setLang,
     tp,
     tc,
     formatPrice,
@@ -96,8 +98,13 @@ export const OnboardingWizard = () => {
     city: businessSettings?.city || '',
     currencyCode: businessSettings?.currencyCode || 'GBP',
     currencySymbol: businessSettings?.currencySymbol || '£',
-    language: businessSettings?.language || 'en',
+    language: (businessSettings?.language || lang || 'en') as Language,
   });
+
+  // Keep local business language in sync with the header switcher (and vice versa).
+  useEffect(() => {
+    setBusinessConfig(prev => (prev.language === lang ? prev : { ...prev, language: lang as Language }));
+  }, [lang]);
 
   const currencyOptions = [
     { code: 'EUR', symbol: '€', label: 'EUR (€)' },
@@ -375,7 +382,7 @@ export const OnboardingWizard = () => {
       city: businessConfig.city.trim(),
       currencyCode: businessConfig.currencyCode,
       currencySymbol: businessConfig.currencySymbol,
-      language: businessConfig.language as any,
+      language: businessConfig.language,
       openingHours: businessSettings?.openingHours || '',
       address: businessSettings?.address || '',
     };
@@ -414,6 +421,8 @@ export const OnboardingWizard = () => {
     }
     await completeOnboarding();
     setActiveTab(goCashier ? 'cashier' : 'overview');
+    // Ensure tour starts after either exit path (pending flag + event survive Dashboard remount).
+    window.setTimeout(() => requestProductTour(), 750);
   };
 
   const toggleModule = (key: keyof EnabledModules) => {
@@ -439,6 +448,11 @@ export const OnboardingWizard = () => {
     { key: 'stock', icon: <Boxes size={18} />, title: t('moduleStock'), hint: t('moduleStockHint') },
     { key: 'staff', icon: <Users size={18} />, title: t('moduleStaff'), hint: t('moduleStaffHint') },
     { key: 'finance', icon: <Wallet size={18} />, title: t('moduleFinance'), hint: t('moduleFinanceHint') },
+    { key: 'tables', icon: <Layout size={18} />, title: t('moduleTables'), hint: t('moduleTablesHint') },
+    { key: 'customers', icon: <Users size={18} />, title: t('moduleCustomers'), hint: t('moduleCustomersHint') },
+    { key: 'tips', icon: <Wallet size={18} />, title: t('moduleTips'), hint: t('moduleTipsHint') },
+    { key: 'onlineOrders', icon: <ClipboardList size={18} />, title: t('moduleOnlineOrders'), hint: t('moduleOnlineOrdersHint') },
+    { key: 'parkTickets', icon: <ClipboardList size={18} />, title: t('moduleParkTickets'), hint: t('moduleParkTicketsHint') },
   ];
 
   return (
@@ -536,7 +550,11 @@ export const OnboardingWizard = () => {
                       <select
                         className="w-full p-3 sm:p-4 pr-12 bg-white border-2 border-bakery-brown/15 focus:border-bakery-brown/50 rounded-2xl outline-none font-bold appearance-none text-sm sm:text-base text-bakery-brown"
                         value={businessConfig.language}
-                        onChange={e => setBusinessConfig(prev => ({ ...prev, language: e.target.value }))}
+                        onChange={e => {
+                          const next = e.target.value as Language;
+                          setBusinessConfig(prev => ({ ...prev, language: next }));
+                          setLang(next);
+                        }}
                       >
                         {languageOptions.map(l => (
                           <option key={l.value} value={l.value}>
@@ -871,6 +889,11 @@ export const OnboardingWizard = () => {
                       modules.finance && t('finance'),
                       modules.orders && t('orders'),
                       modules.sales && t('sales'),
+                      modules.tables && t('moduleTables'),
+                      modules.customers && t('moduleCustomers'),
+                      modules.tips && t('moduleTips'),
+                      modules.onlineOrders && t('moduleOnlineOrders'),
+                      modules.parkTickets && t('moduleParkTickets'),
                     ]
                       .filter(Boolean)
                       .join(' · ') || t('modulesAlwaysOn')}

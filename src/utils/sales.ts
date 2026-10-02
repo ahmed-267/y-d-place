@@ -8,11 +8,20 @@ export interface FinalizeSaleInput {
   preparedStock: PreparedStock[];
   shiftLogs: ShiftLog[];
   cashier: User;
-  paymentMethod: 'Cash' | 'Card';
+  paymentMethod: 'Cash' | 'Card' | 'Split';
   timestamp?: number;
   idPrefix?: string;
-  /** When set, reuse this id (idempotent completes). */
   existingSaleId?: string;
+  discountPercent?: number;
+  discountAmount?: number;
+  tipAmount?: number;
+  tenderedCash?: number;
+  changeGiven?: number;
+  cashAmount?: number;
+  cardAmount?: number;
+  customerName?: string;
+  customerPhone?: string;
+  customerId?: string;
 }
 
 export interface FinalizeSaleResult {
@@ -35,6 +44,16 @@ export const finalizeSale = ({
   timestamp,
   idPrefix = 'ORD',
   existingSaleId,
+  discountPercent,
+  discountAmount,
+  tipAmount,
+  tenderedCash,
+  changeGiven,
+  cashAmount,
+  cardAmount,
+  customerName,
+  customerPhone,
+  customerId,
 }: FinalizeSaleInput): FinalizeSaleResult => {
   const stockCheck = checkStockAvailability(items, products, ingredients, preparedStock);
   if (!stockCheck.ok) {
@@ -52,13 +71,24 @@ export const finalizeSale = ({
   const sale: Sale = {
     id: existingSaleId || `${idPrefix}-${saleTimestamp}`,
     timestamp: saleTimestamp,
-    items: items.map(({ productId, nameEN, qty, unitPrice, lineTotal, extras }) => ({
-      productId, nameEN, qty, unitPrice, lineTotal, extras
+    items: items.map(({ productId, nameEN, qty, unitPrice, lineTotal, extras, note }) => ({
+      productId, nameEN, qty, unitPrice, lineTotal, extras, note
     })),
     subtotal,
+    discountPercent,
+    discountAmount: discountAmount || 0,
+    tipAmount: tipAmount || 0,
+    tenderedCash,
+    changeGiven,
+    cashAmount,
+    cardAmount,
     paymentMethod,
     cashierUsername: cashier.username,
-    cashierFullName: cashier.fullName
+    cashierFullName: cashier.fullName,
+    status: 'completed',
+    customerName,
+    customerPhone,
+    customerId,
   };
 
   const updatedShiftLogs = shiftLogs.map(log => {

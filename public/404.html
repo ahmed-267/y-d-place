@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Page not found · PreVisio</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: Georgia, 'Times New Roman', serif;
+        color: #ece8e1;
+        background:
+          radial-gradient(circle at 50% 18%, rgba(212, 163, 115, 0.28), transparent 42%),
+          radial-gradient(circle at 12% 70%, rgba(233, 213, 190, 0.12), transparent 40%),
+          #0b0d12;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 2rem;
+        text-align: center;
+      }
+      .card {
+        max-width: 32rem;
+      }
+      .eyebrow {
+        font-family: system-ui, sans-serif;
+        font-size: 0.7rem;
+        font-weight: 800;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: #d4a373;
+        margin-bottom: 1rem;
+      }
+      h1 {
+        font-size: clamp(2.4rem, 6vw, 3.5rem);
+        margin: 0 0 1rem;
+        letter-spacing: -0.02em;
+      }
+      p {
+        font-family: system-ui, sans-serif;
+        color: rgba(214, 209, 200, 0.78);
+        line-height: 1.6;
+        margin: 0 0 2rem;
+      }
+      a {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        height: 3rem;
+        padding: 0 1.75rem;
+        border-radius: 999px;
+        background: #d4a373;
+        color: #2a241f;
+        font-family: system-ui, sans-serif;
+        font-weight: 800;
+        font-size: 0.9rem;
+        text-decoration: none;
+        box-shadow: 0 12px 40px rgba(212, 163, 115, 0.35);
+      }
+      a:hover { filter: brightness(1.06); }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="eyebrow">Error 404</div>
+      <h1>This table is empty</h1>
+      <p>We couldn’t find that page. Head home to PreVisio and pick up where you left off.</p>
+      <a href="/">Back to home</a>
+    </div>
+    <script>
+      // Prefer the SPA 404 when the app bundle is available on this host.
+      if (location.pathname !== '/404.html') {
+        // Keep the broken URL so the React app can render NotFoundPage.
+      }
+    </script>
+  </body>
+</html>

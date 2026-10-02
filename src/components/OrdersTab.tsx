@@ -1,10 +1,12 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { useApp } from '../AppContext';
-import { ArrowLeftRight, Calendar, Check, Loader2, Search, User, Phone, XCircle, ShoppingBag } from 'lucide-react';
+import { ArrowLeftRight, Calendar, Check, Loader2, Search, User, Phone, XCircle, ShoppingBag, Printer, Maximize2, Minimize2 } from 'lucide-react';
 import { Order, OrderStatus } from '../types';
 import { finalizeSale } from '../utils/sales';
 import { restoreStock } from '../utils/stock';
 import { toSearchValue, priceMatchesQuery } from '../utils/search';
+import { downloadKitchenTicket } from '../utils/tickets';
+import { paymentMethodLabel } from '../utils/ticketMoney';
 
 const ORDER_STATUSES: OrderStatus[] = ['Preparing', 'Ready', 'Completed'];
 const BOARD_STATUSES: OrderStatus[] = ['Preparing', 'Ready', 'Completed'];
@@ -28,16 +30,28 @@ export const OrdersTab = () => {
     formatPrice,
     lang,
     setActiveTab,
+    businessSettings,
+    recordSale,
+    markSaleStatus,
   } = useApp();
 
   const statusLabels: Record<OrderStatus, string> = {
     Preparing: t('statusPreparing'),
     Ready: t('statusReady'),
-    Completed: t('statusCompleted')
+    Completed: t('statusCompleted'),
+    Cancelled: t('voidOrder'),
   };
+
+  const ticketLabels = () => ({
+    kitchenTicket: t('kitchenTicket'),
+    walkIn: t('walkIn'),
+    preOrder: t('preOrder'),
+    pickupTime: t('pickupTime'),
+  });
 
   const [search, setSearch] = useState('');
   const [now, setNow] = useState(Date.now());
+  const [fullscreen, setFullscreen] = useState(false);
   const prevPreparing = useRef(0);
 
   useEffect(() => {
@@ -72,6 +86,7 @@ export const OrdersTab = () => {
 
   const visibleOrders = useMemo(() => {
     return orders.filter(o => {
+      if (o.status === 'Cancelled') return false;
       if (o.status !== 'Completed') return true;
       const completedStamp = o.completedAt ?? o.lastUpdatedAt ?? o.createdAt;
       return getDateKey(completedStamp) === todayKey;
@@ -126,6 +141,13 @@ export const OrdersTab = () => {
       paymentMethod: order.paymentMethod,
       timestamp: Date.now(),
       existingSaleId: order.saleId,
+      discountPercent: order.discountPercent,
+      discountAmount: order.discountAmount,
+      tipAmount: order.tipAmount,
+      tenderedCash: order.tenderedCash,
+      changeGiven: order.changeGiven,
+      cashAmount: order.cashAmount,
+      cardAmount: order.cardAmount,
     });
 
     if (!result.ok) {
@@ -139,6 +161,7 @@ export const OrdersTab = () => {
       if (prev.some(s => s.id === result.sale!.id)) return prev;
       return [...prev, result.sale!];
     });
+    void recordSale(result.sale!);
     setShiftLogs(result.updatedShiftLogs || shiftLogs);
     setOrders(prev => prev.map(o => {
       if (o.id !== order.id) return o;
@@ -170,12 +193,12 @@ export const OrdersTab = () => {
       const restored = restoreStock(order.items, products, ingredients, preparedStock);
       setIngredients(restored.ingredients);
       setPreparedStock(restored.preparedStock);
-      setSales(prev => prev.filter(s => s.id !== order.saleId));
+      markSaleStatus(order.saleId, 'voided', t('orderReopened'));
       setOrders(prev => prev.map(o => {
         if (o.id !== order.id) return o;
         return { ...o, status: nextStatus, saleId: undefined, completedAt: undefined, lastUpdatedAt: Date.now() };
       }));
-      addToast('Order reopened — stock restored.', 'info');
+      addToast(t('orderReopened'), 'info');
       return;
     }
 
@@ -185,15 +208,35 @@ export const OrdersTab = () => {
     }));
   };
 
+  const printKitchen = (order: Order) => {
+    downloadKitchenTicket(order, {
+      currencySymbol: businessSettings?.currencySymbol,
+      business: businessSettings,
+      labels: ticketLabels(),
+      itemName: item => {
+        const product = productMap.get(item.productId);
+        return product ? tp(product) : item.translations?.[lang] || item.nameEN;
+      },
+      extraName: (id, fallback) => {
+        const product = productMap.get(id);
+        return product ? tp(product) : fallback;
+      },
+    });
+    setOrders(prev => prev.map(o => o.id === order.id ? { ...o, kitchenPrintedAt: Date.now() } : o));
+  };
+
   const voidOrder = (order: Order) => {
+    const reason = window.prompt(t('voidReasonPlaceholder'));
+    if (reason === null) return;
+    const voidReason = reason.trim() || t('voidOrder');
     if (order.status === 'Completed' && order.saleId) {
       const restored = restoreStock(order.items, products, ingredients, preparedStock);
       setIngredients(restored.ingredients);
       setPreparedStock(restored.preparedStock);
-      setSales(prev => prev.filter(s => s.id !== order.saleId));
+      markSaleStatus(order.saleId, 'voided', voidReason);
     }
-    setOrders(prev => prev.filter(o => o.id !== order.id));
-    addToast('Order cancelled.', 'info');
+    setOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: 'Cancelled' as const, voidReason, lastUpdatedAt: Date.now() } : o));
+    addToast(t('orderCancelled'), 'info');
   };
 
   const formatDuration = (ms: number) => {
@@ -216,11 +259,18 @@ export const OrdersTab = () => {
   };
 
   const isWalkInLate = (order: Order) =>
-    order.type === 'WalkIn' && now - order.createdAt > 15 * 60 * 1000;
+    (order.type === 'WalkIn' || order.type === 'DineIn') && now - order.createdAt > 15 * 60 * 1000;
+
+  const isOrderAging = (order: Order) => {
+    if (order.status === 'Completed' || order.status === 'Cancelled') return false;
+    const ageMs = now - order.createdAt;
+    if (order.status === 'Ready') return ageMs > 10 * 60 * 1000;
+    return isWalkInLate(order);
+  };
 
   const OrderCard: React.FC<{ order: Order }> = ({ order }) => {
     const timing = getOrderTiming(order);
-    const isLate = isWalkInLate(order);
+    const isLate = isOrderAging(order);
 
     return (
       <div className={`rounded-2xl border p-3 space-y-3 bg-white ${
@@ -230,7 +280,13 @@ export const OrdersTab = () => {
           <div>
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-[10px] font-black uppercase tracking-wider text-bakery-brown/40">
-                {order.type === 'WalkIn' ? t('walkIn') : t('preOrder')}
+                {order.tableLabel
+                  ? `${t('tableLabel')} ${order.tableLabel}`
+                  : order.type === 'WalkIn'
+                    ? t('walkIn')
+                    : order.type === 'DineIn'
+                      ? t('dineIn')
+                      : t('preOrder')}
               </span>
               <span className="text-xs font-bold text-bakery-brown">#{order.id.slice(-6)}</span>
             </div>
@@ -238,14 +294,24 @@ export const OrdersTab = () => {
               {timing.label}: {timing.value}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => voidOrder(order)}
-            className="p-1.5 text-bakery-brown/40 hover:text-rose-600"
-            title="Cancel"
-          >
-            <XCircle size={16} />
-          </button>
+          <div className="flex items-center gap-0.5">
+            <button
+              type="button"
+              onClick={() => printKitchen(order)}
+              className="p-1.5 text-bakery-brown/40 hover:text-bakery-brown"
+              title={t('downloadTicket')}
+            >
+              <Printer size={16} />
+            </button>
+            <button
+              type="button"
+              onClick={() => voidOrder(order)}
+              className="p-1.5 text-bakery-brown/40 hover:text-rose-600"
+              title={t('voidOrder')}
+            >
+              <XCircle size={16} />
+            </button>
+          </div>
         </div>
 
         {order.type === 'PreOrder' && (
@@ -263,13 +329,27 @@ export const OrdersTab = () => {
             const product = productMap.get(item.productId);
             const name = product ? tp(product) : item.translations?.[lang] || item.nameEN;
             return (
-              <div key={`${order.id}-${idx}`} className="flex justify-between text-sm">
-                <span className="font-semibold truncate">{item.qty}× {name}</span>
-                <span className="font-bold shrink-0 ml-2">{formatPrice(item.lineTotal)}</span>
+              <div key={`${order.id}-${idx}`} className="text-sm">
+                <div className="flex justify-between">
+                  <span className="font-semibold truncate">{item.qty}× {name}</span>
+                  <span className="font-bold shrink-0 ml-2">{formatPrice(item.lineTotal)}</span>
+                </div>
+                {item.extras?.map(extra => (
+                  <p key={extra.productId} className="text-[10px] text-bakery-brown/50 font-semibold ml-3">
+                    + {productMap.get(extra.productId) ? tp(productMap.get(extra.productId)!) : extra.nameEN}
+                  </p>
+                ))}
+                {item.note && (
+                  <p className="text-[10px] italic text-bakery-brown/45 ml-3">{item.note}</p>
+                )}
               </div>
             );
           })}
         </div>
+
+        <p className="text-[10px] font-bold uppercase tracking-wider text-bakery-brown/40">
+          {paymentMethodLabel(order.paymentMethod, t)}
+        </p>
 
         <div className="flex gap-2">
           {order.status !== 'Preparing' && (
@@ -295,7 +375,7 @@ export const OrdersTab = () => {
     );
   };
 
-  const columnStyles: Record<OrderStatus, string> = {
+  const columnStyles: Record<Exclude<OrderStatus, 'Cancelled'>, string> = {
     Preparing: 'bg-amber-50/80 border-amber-200',
     Ready: 'bg-sky-50/80 border-sky-200',
     Completed: 'bg-emerald-50/50 border-emerald-200',
@@ -318,13 +398,23 @@ export const OrdersTab = () => {
   }
 
   return (
-    <div className="space-y-4 max-w-full overflow-hidden">
+    <div className={`space-y-4 max-w-full overflow-hidden ${fullscreen ? 'fixed inset-0 z-[90] bg-[#F7F3ED] p-4 overflow-y-auto' : ''}`}>
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-bold text-bakery-brown">{t('activeOrders')}</h2>
           <p className="text-sm text-bakery-brown/50">{t('ordersFlowHint')}</p>
         </div>
-        <div className="relative w-full sm:w-64">
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <button
+            type="button"
+            onClick={() => setFullscreen(f => !f)}
+            className="h-10 px-3 rounded-xl border border-bakery-beige bg-white text-bakery-brown text-xs font-bold inline-flex items-center gap-1.5 shrink-0"
+            title={fullscreen ? t('exitFullscreen') : t('kitchenFullscreen')}
+          >
+            {fullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+            <span className="hidden sm:inline">{fullscreen ? t('exitFullscreen') : t('kitchenFullscreen')}</span>
+          </button>
+          <div className="relative flex-1 sm:w-64">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-bakery-brown/40" size={16} />
           <input
             type="text"
@@ -333,6 +423,7 @@ export const OrdersTab = () => {
             onChange={e => setSearch(e.target.value)}
             className="w-full pl-9 pr-3 py-2 border border-bakery-beige rounded-xl outline-none focus:ring-2 focus:ring-bakery-caramel text-sm bg-white"
           />
+          </div>
         </div>
       </div>
 

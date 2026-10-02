@@ -165,7 +165,7 @@ const steps = [
 const features = [
   { title: 'AI menu scan', description: 'Turn a printed menu into a live catalogue in minutes.', icon: BrainCircuit, wide: true },
   { title: 'Receipt to expense', description: 'Photograph a supplier receipt and file it automatically.', icon: ScanLine, wide: false },
-  { title: 'Tap-to-Pay & Stripe', description: 'Take card and contactless payments in the same flow.', icon: CreditCard, wide: false },
+  { title: 'Cash + card recorded', description: 'Take cash in the till. Record card payments taken on your own terminal.', icon: CreditCard, wide: false },
   { title: 'Reports & exports', description: 'Daily sales, best-sellers, and VAT-ready summaries.', icon: ClipboardList, wide: false },
   { title: 'Four languages', description: 'EN, FR, NL, and Flemish for mixed-language teams.', icon: Languages, wide: false },
   { title: 'Roles that fit', description: 'Owners see everything; staff see only their tools.', icon: Users, wide: true },

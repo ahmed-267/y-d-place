@@ -27,6 +27,7 @@ import { getAIAssistance, scanMenu, ScanMenuResult, compressImage } from '../uti
 import { motion, AnimatePresence } from 'motion/react';
 import { toSearchValue, priceMatchesQuery } from '../utils/search';
 import { SortableTh, useColumnSort, sortByColumn } from '../utils/tableSort';
+import { isAddonCategory, partitionProductsByAddonCategory } from '../utils/menuCategories';
 
 export const ProductsTab = () => {
   const { 
@@ -63,6 +64,7 @@ export const ProductsTab = () => {
   const { sortKey, sortDirection, toggleSort } = useColumnSort<ProductSort>('name');
   const abortControllerRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { addonProducts } = useMemo(() => partitionProductsByAddonCategory(products), [products]);
 
   const filteredProducts = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -273,7 +275,12 @@ export const ProductsTab = () => {
       active: editItem.active ?? true,
       transKey: editItem.transKey || `p${Date.now()}`,
       ingredientLinks: editItem.ingredientLinks || [],
-      preparedStockLinks: editItem.preparedStockLinks || []
+      preparedStockLinks: editItem.preparedStockLinks || [],
+      extraIds: isAddonCategory((data.category as string) || editItem.category || '')
+        ? []
+        : (editItem.extraIds || []),
+      isFavourite: !!editItem.isFavourite,
+      posColor: editItem.posColor || undefined,
     };
 
     if (editItem.id) {
@@ -712,7 +719,12 @@ export const ProductsTab = () => {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-bold uppercase mb-1">{t('category')}</label>
-                <select name="category" defaultValue={editItem.category || categories[0]} className="w-full p-3 border rounded-xl">
+                <select
+                  name="category"
+                  value={editItem.category || categories[0]}
+                  onChange={e => setEditItem({ ...editItem, category: e.target.value })}
+                  className="w-full p-3 border rounded-xl"
+                >
                   {categories.map(c => <option key={c} value={c}>{tc(c)}</option>)}
                 </select>
               </div>
@@ -720,6 +732,35 @@ export const ProductsTab = () => {
                 <label className="block text-xs font-bold uppercase mb-1">{t('price')} ({businessSettings?.currencySymbol || '€'})</label>
                 <input name="price" type="number" step="0.01" defaultValue={editItem.price} className="w-full p-3 border rounded-xl" required />
               </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <label className="flex items-center gap-2 p-3 rounded-xl border border-bakery-beige cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={!!editItem.isFavourite}
+                  onChange={e => setEditItem({ ...editItem, isFavourite: e.target.checked })}
+                />
+                <span className="text-sm font-bold">{t('markFavourite')}</span>
+              </label>
+              <label className="block space-y-1">
+                <span className="text-xs font-bold uppercase">{t('posTileColor')}</span>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    className="h-10 w-12 rounded-lg border border-bakery-beige cursor-pointer"
+                    value={editItem.posColor || '#D4A373'}
+                    onChange={e => setEditItem({ ...editItem, posColor: e.target.value })}
+                  />
+                  <button
+                    type="button"
+                    className="text-xs font-bold text-bakery-brown/50"
+                    onClick={() => setEditItem({ ...editItem, posColor: undefined })}
+                  >
+                    {t('resetTheme')}
+                  </button>
+                </div>
+              </label>
             </div>
 
             <div className="pt-4 border-t border-bakery-beige">
@@ -835,6 +876,44 @@ export const ProductsTab = () => {
                 </button>
               </div>
             </div>
+
+            {!isAddonCategory(editItem.category || '') && addonProducts.length > 0 && (
+              <div className="pt-4 border-t border-bakery-beige">
+                <label className="block text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-1">{t('allowedExtras')}</label>
+                <p className="text-[11px] text-bakery-brown/45 mb-3">
+                  {(editItem.extraIds || []).length === 0 ? t('noExtrasLinked') : t('extrasForItem')}
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto">
+                  {addonProducts.map(extra => {
+                    const selected = (editItem.extraIds || []).includes(extra.id);
+                    return (
+                      <label
+                        key={extra.id}
+                        className={`flex items-center gap-2 p-2.5 rounded-xl border cursor-pointer ${
+                          selected ? 'border-bakery-brown bg-bakery-cream/40' : 'border-bakery-beige'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          className="rounded border-bakery-beige"
+                          checked={selected}
+                          onChange={() => {
+                            const current = editItem.extraIds || [];
+                            const extraIds = selected
+                              ? current.filter(id => id !== extra.id)
+                              : [...current, extra.id];
+                            setEditItem({ ...editItem, extraIds });
+                          }}
+                        />
+                        <span className="text-sm">{extra.emoji}</span>
+                        <span className="text-xs font-bold truncate">{tp(extra)}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             <button type="submit" className="btn-primary w-full p-4 rounded-2xl font-bold text-lg mt-4">
               {t('save')}
             </button>

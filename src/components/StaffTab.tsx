@@ -1421,7 +1421,7 @@ export const StaffTab = () => {
             <Modal
               title={t('availabilityExceptions')}
               onClose={() => { setShowAvailabilityModal(false); setAvailabilityFocusId(null); }}
-              size="xl"
+              size="lg"
             >
               <div className="flex flex-col lg:flex-row gap-5">
                 <div className="lg:w-56 shrink-0 space-y-2">
@@ -1470,9 +1470,9 @@ export const StaffTab = () => {
                     setAvailabilityConfig(focused.id, { days: next });
                   };
                   return (
-                    <div className="flex-1 rounded-2xl border border-bakery-beige bg-bakery-cream/40 p-4 sm:p-5 space-y-4">
+                    <div className="flex-1 rounded-2xl border border-bakery-beige bg-bakery-cream/40 p-4 sm:p-5 space-y-3">
                       <div className="flex items-center gap-3">
-                        <div className={`w-11 h-11 rounded-full text-xs font-black flex items-center justify-center ${
+                        <div className={`w-10 h-10 rounded-full text-xs font-black flex items-center justify-center ${
                           focused.role === 'manager' ? 'bg-blue-600 text-white' : 'bg-bakery-brown text-white'
                         }`}>
                           {focused.fullName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
@@ -1487,7 +1487,7 @@ export const StaffTab = () => {
 
                       <div>
                         <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('workingDays')}</p>
-                        <div className="flex flex-wrap gap-2">
+                        <div className="flex flex-wrap gap-1.5">
                           {dayLabels.map((day, idx) => {
                             const on = cfg.days.includes(idx);
                             return (
@@ -1495,7 +1495,7 @@ export const StaffTab = () => {
                                 key={day}
                                 type="button"
                                 onClick={() => toggleDay(idx)}
-                                className={`min-w-[3rem] px-3 py-2 rounded-xl text-xs font-bold transition-all ${
+                                className={`min-w-[2.75rem] px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
                                   on
                                     ? 'bg-bakery-brown text-white shadow-sm'
                                     : 'bg-white border border-bakery-beige text-bakery-brown/50 hover:border-bakery-caramel'
@@ -1508,25 +1508,24 @@ export const StaffTab = () => {
                         </div>
                       </div>
 
-                      <div>
-                        <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('usualHours')}</p>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <label className="block text-[10px] font-bold text-bakery-brown/45 mb-1">{t('startTime')}</label>
+                      <div className="flex flex-wrap items-end gap-3">
+                        <div>
+                          <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-1.5">{t('usualHours')}</p>
+                          <div className="inline-flex items-center gap-2 bg-white border border-bakery-beige rounded-xl px-2.5 py-1.5">
                             <input
                               type="time"
-                              className="w-full p-3 border border-bakery-beige rounded-xl text-sm font-bold bg-white outline-none focus:ring-2 focus:ring-bakery-caramel"
+                              className="w-[7.5rem] p-1.5 text-sm font-bold bg-transparent outline-none"
                               value={cfg.startTime}
                               onChange={e => setAvailabilityConfig(focused.id, { startTime: e.target.value })}
+                              aria-label={t('startTime')}
                             />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-bold text-bakery-brown/45 mb-1">{t('endTime')}</label>
+                            <span className="text-bakery-brown/35 font-bold text-sm">–</span>
                             <input
                               type="time"
-                              className="w-full p-3 border border-bakery-beige rounded-xl text-sm font-bold bg-white outline-none focus:ring-2 focus:ring-bakery-caramel"
+                              className="w-[7.5rem] p-1.5 text-sm font-bold bg-transparent outline-none"
                               value={cfg.endTime}
                               onChange={e => setAvailabilityConfig(focused.id, { endTime: e.target.value })}
+                              aria-label={t('endTime')}
                             />
                           </div>
                         </div>
@@ -1535,7 +1534,7 @@ export const StaffTab = () => {
                       <button
                         type="button"
                         onClick={() => setShowAvailabilityModal(false)}
-                        className="btn-primary w-full py-2.5 rounded-xl font-bold mt-1"
+                        className="btn-primary w-full sm:w-auto px-8 py-2.5 rounded-xl font-bold"
                       >
                         {t('save')}
                       </button>

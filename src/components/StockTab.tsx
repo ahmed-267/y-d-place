@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../AppContext';
-import { AlertCircle, Plus, Edit2, Trash2, Search, CheckCircle2, Package } from 'lucide-react';
+import { AlertCircle, Plus, Edit2, Trash2, Search, CheckCircle2, Package, Trash } from 'lucide-react';
+import { WasteReason } from '../types';
 import { Modal } from './Modal';
 import { ConfirmDialog } from './ConfirmDialog';
 import { DataTablePagination, useTablePagination } from './DataTablePagination';
@@ -8,7 +9,7 @@ import { ErrorBoundary } from './ErrorBoundary';
 import { toSearchValue } from '../utils/search';
 import { SortableTh, useColumnSort, sortByColumn } from '../utils/tableSort';
 
-type StockView = 'attention' | 'all';
+type StockView = 'attention' | 'all' | 'waste';
 type StockKind = 'ingredient' | 'prepped';
 
 type AttentionItem = {
@@ -39,10 +40,14 @@ const StockTabContent = () => {
     setIngredients,
     preparedStock = [],
     setPreparedStock,
+    wasteLogs = [],
+    setWasteLogs,
+    user,
     t,
     tp,
     addToast,
     setActiveTab,
+    formatPrice,
   } = useApp();
 
   const [view, setView] = useState<StockView>(() => {
@@ -60,6 +65,12 @@ const StockTabContent = () => {
 
   const [restockItem, setRestockItem] = useState<{ id: number; name: string; type: StockKind } | null>(null);
   const [restockAmount, setRestockAmount] = useState('');
+  const [restockUnitCost, setRestockUnitCost] = useState('');
+  const [wasteItem, setWasteItem] = useState<{ id: number; name: string; type: StockKind; unit?: string; unitCost?: number } | null>(null);
+  const [showWastePicker, setShowWastePicker] = useState(false);
+  const [wasteAmount, setWasteAmount] = useState('');
+  const [wasteReason, setWasteReason] = useState<WasteReason>('spoilage');
+  const [wasteNote, setWasteNote] = useState('');
   const [showAddIngredient, setShowAddIngredient] = useState(false);
   const [showAddPrepped, setShowAddPrepped] = useState(false);
   const [newIngredient, setNewIngredient] = useState({
@@ -235,18 +246,78 @@ const StockTabContent = () => {
     if (!restockItem) return;
     const amount = parseFloat(restockAmount);
     if (isNaN(amount) || amount <= 0) return;
+    const unitCostRaw = parseFloat(restockUnitCost);
+    const unitCost = !isNaN(unitCostRaw) && unitCostRaw >= 0 ? unitCostRaw : undefined;
 
     if (restockItem.type === 'ingredient') {
-      setIngredients(ingredients.map(i => (i.id === restockItem.id ? { ...i, qty: i.qty + amount } : i)));
+      setIngredients(
+        ingredients.map(i =>
+          i.id === restockItem.id
+            ? { ...i, qty: i.qty + amount, ...(unitCost != null ? { lastUnitCost: unitCost } : {}) }
+            : i
+        )
+      );
     } else {
       setPreparedStock(
-        preparedStock.map(p => (p.id === restockItem.id ? { ...p, portions: p.portions + amount } : p))
+        preparedStock.map(p =>
+          p.id === restockItem.id
+            ? { ...p, portions: p.portions + amount, ...(unitCost != null ? { lastUnitCost: unitCost } : {}) }
+            : p
+        )
       );
     }
 
-    addToast(t('restocked').replace('{name}', restockItem.name));
+    addToast(t('stockReceived'));
     setRestockItem(null);
     setRestockAmount('');
+    setRestockUnitCost('');
+  };
+
+  const handleWaste = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!wasteItem || !user) return;
+    const amount = parseFloat(wasteAmount);
+    if (isNaN(amount) || amount <= 0) return;
+
+    if (wasteItem.type === 'ingredient') {
+      const ing = ingredients.find(i => i.id === wasteItem.id);
+      if (!ing || ing.qty < amount) {
+        addToast(t('stockWasteInsufficient'), 'error');
+        return;
+      }
+      setIngredients(ingredients.map(i => (i.id === wasteItem.id ? { ...i, qty: i.qty - amount } : i)));
+    } else {
+      const prep = preparedStock.find(p => p.id === wasteItem.id);
+      if (!prep || prep.portions < amount) {
+        addToast(t('stockWasteInsufficient'), 'error');
+        return;
+      }
+      setPreparedStock(preparedStock.map(p => (p.id === wasteItem.id ? { ...p, portions: p.portions - amount } : p)));
+    }
+
+    const unitCost = wasteItem.unitCost ?? 0;
+    setWasteLogs(prev => [
+      {
+        id: `W-${Date.now()}`,
+        timestamp: Date.now(),
+        kind: wasteItem.type,
+        itemId: wasteItem.id,
+        itemName: wasteItem.name,
+        qty: amount,
+        unit: wasteItem.unit,
+        reason: wasteReason,
+        note: wasteNote.trim() || undefined,
+        unitCost: unitCost || undefined,
+        costImpact: Math.round(amount * unitCost * 100) / 100,
+        recordedByUsername: user.username,
+      },
+      ...prev,
+    ].slice(0, 200));
+    addToast(t('wasteLogged'), 'success');
+    setWasteItem(null);
+    setWasteAmount('');
+    setWasteNote('');
+    setWasteReason('spoilage');
   };
 
   const handleEditSave = (e: React.FormEvent) => {
@@ -300,6 +371,33 @@ const StockTabContent = () => {
   const openRestock = (id: number, name: string, type: StockKind) => {
     setRestockItem({ id, name, type });
     setRestockAmount('');
+    setRestockUnitCost('');
+  };
+
+  const openWaste = (id: number, name: string, type: StockKind) => {
+    const ing = type === 'ingredient' ? ingredients.find(i => i.id === id) : undefined;
+    const prep = type === 'prepped' ? preparedStock.find(p => p.id === id) : undefined;
+    setWasteItem({
+      id,
+      name,
+      type,
+      unit: ing?.unit || (type === 'prepped' ? t('portions') : undefined),
+      unitCost: ing?.lastUnitCost ?? prep?.lastUnitCost,
+    });
+    setWasteAmount('');
+    setWasteNote('');
+    setWasteReason('spoilage');
+  };
+
+  const wasteReasonLabel = (r: WasteReason) => {
+    const map: Record<WasteReason, string> = {
+      spoilage: t('wasteSpoilage'),
+      breakage: t('wasteBreakage'),
+      overproduction: t('wasteOverproduction'),
+      staff_meal: t('wasteStaffMeal'),
+      other: t('wasteOther'),
+    };
+    return map[r];
   };
 
   return (
@@ -307,6 +405,15 @@ const StockTabContent = () => {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <p className="text-sm text-bakery-brown/50">{t('stockTabSubtitle')}</p>
         <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+          <button
+            type="button"
+            onClick={() => setShowWastePicker(true)}
+            disabled={!hasAnyStock}
+            className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 border-2 border-rose-200 text-rose-700 bg-white rounded-xl font-bold hover:bg-rose-50 transition-all active:scale-95 text-xs md:text-sm disabled:opacity-40 disabled:pointer-events-none"
+          >
+            <Trash size={16} />
+            {t('wasteStock')}
+          </button>
           <button
             onClick={() => setShowAddPrepped(true)}
             className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 bg-bakery-accent text-bakery-brown rounded-xl font-bold hover:bg-bakery-brown hover:text-white transition-all active:scale-95 text-xs md:text-sm"
@@ -347,6 +454,15 @@ const StockTabContent = () => {
           }`}
         >
           {t('allStock')}
+        </button>
+        <button
+          type="button"
+          onClick={() => setView('waste')}
+          className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+            view === 'waste' ? 'bg-white text-bakery-brown shadow-sm' : 'text-bakery-brown/50 hover:text-bakery-brown'
+          }`}
+        >
+          {t('wasteHistory')}
         </button>
       </div>
 
@@ -398,7 +514,7 @@ const StockTabContent = () => {
               <div className="flex items-center gap-2 text-rose-700">
                 <AlertCircle size={18} />
                 <p className="text-xs font-black uppercase tracking-widest">
-                  {t('needsAttention')} · {attentionItems.length}
+                  {t('suggestedReceive')} · {attentionItems.length}
                 </p>
               </div>
               <ul className="space-y-3">
@@ -438,13 +554,23 @@ const StockTabContent = () => {
                         </button>
                       )}
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => openRestock(item.id, item.name, item.type)}
-                      className="shrink-0 w-full sm:w-auto px-5 py-3 bg-bakery-brown text-white rounded-xl font-bold text-sm hover:bg-bakery-brown/90 active:scale-95 transition-all"
-                    >
-                      {t('restock')}
-                    </button>
+                    <div className="flex flex-col sm:flex-row gap-2 shrink-0 w-full sm:w-auto">
+                      <button
+                        type="button"
+                        onClick={() => openRestock(item.id, item.name, item.type)}
+                        className="px-5 py-3 bg-bakery-brown text-white rounded-xl font-bold text-sm hover:bg-bakery-brown/90 active:scale-95 transition-all"
+                      >
+                        {t('receiveStock')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => openWaste(item.id, item.name, item.type)}
+                        className="px-4 py-3 border-2 border-rose-200 text-rose-700 rounded-xl font-bold text-sm hover:bg-rose-50 inline-flex items-center justify-center gap-1"
+                      >
+                        <Trash size={14} />
+                        {t('wasteStock')}
+                      </button>
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -535,7 +661,15 @@ const StockTabContent = () => {
                                 onClick={() => openRestock(p.id, p.name, 'prepped')}
                                 className="px-3 py-2 text-xs font-bold bg-bakery-brown text-white rounded-lg hover:bg-bakery-brown/90 transition-all active:scale-95"
                               >
-                                {t('restock')}
+                                {t('receiveStock')}
+                              </button>
+                              <button
+                                onClick={() => openWaste(p.id, p.name, 'prepped')}
+                                className="px-3 py-2 text-xs font-bold text-rose-700 border border-rose-200 hover:bg-rose-50 rounded-lg inline-flex items-center gap-1"
+                                title={t('wasteStock')}
+                              >
+                                <Trash size={14} />
+                                {t('wasteStock')}
                               </button>
                               <button
                                 onClick={() =>
@@ -653,7 +787,15 @@ const StockTabContent = () => {
                                 onClick={() => openRestock(i.id, i.name, 'ingredient')}
                                 className="px-3 py-2 text-xs font-bold bg-bakery-brown text-white rounded-lg hover:bg-bakery-brown/90 transition-all active:scale-95"
                               >
-                                {t('restock')}
+                                {t('receiveStock')}
+                              </button>
+                              <button
+                                onClick={() => openWaste(i.id, i.name, 'ingredient')}
+                                className="px-3 py-2 text-xs font-bold text-rose-700 border border-rose-200 hover:bg-rose-50 rounded-lg inline-flex items-center gap-1"
+                                title={t('wasteStock')}
+                              >
+                                <Trash size={14} />
+                                {t('wasteStock')}
                               </button>
                               <button
                                 onClick={() =>
@@ -704,6 +846,39 @@ const StockTabContent = () => {
             />
           </section>
         </>
+      )}
+
+      {hasAnyStock && view === 'waste' && (
+        <section className="card-bakery overflow-hidden">
+          <div className="p-4 border-b border-bakery-beige">
+            <h3 className="text-base font-bold font-serif text-bakery-brown">{t('wasteHistory')}</h3>
+            <p className="text-xs text-bakery-brown/50 mt-1">
+              {t('wasteCostImpact')}:{' '}
+              {formatPrice(wasteLogs.reduce((a, w) => a + (w.costImpact || 0), 0))}
+            </p>
+          </div>
+          {wasteLogs.length === 0 ? (
+            <p className="p-8 text-center text-sm text-bakery-brown/40">{t('wasteHistory')}</p>
+          ) : (
+            <ul className="divide-y divide-bakery-beige max-h-[480px] overflow-y-auto">
+              {wasteLogs.map(w => (
+                <li key={w.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <p className="font-bold text-sm text-bakery-brown">{w.itemName}</p>
+                    <p className="text-xs text-bakery-brown/50">
+                      {w.qty} {w.unit || ''} · {wasteReasonLabel(w.reason)}
+                      {w.note ? ` · ${w.note}` : ''}
+                    </p>
+                    <p className="text-[10px] text-bakery-brown/35 mt-0.5">
+                      {new Date(w.timestamp).toLocaleString()} · {w.recordedByUsername}
+                    </p>
+                  </div>
+                  <p className="text-sm font-black text-rose-700">{formatPrice(w.costImpact || 0)}</p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
       )}
 
       {editStockItem && (
@@ -777,10 +952,10 @@ const StockTabContent = () => {
       )}
 
       {restockItem && (
-        <Modal title={`${t('restock')}: ${restockItem.name}`} onClose={() => setRestockItem(null)}>
+        <Modal title={`${t('receiveStock')}: ${restockItem.name}`} onClose={() => setRestockItem(null)}>
           <form onSubmit={handleRestock} className="space-y-6">
             <div>
-              <label className="block text-sm font-bold mb-2">{t('amountToAdd')}</label>
+              <label className="block text-sm font-bold mb-2">{t('receiveQty')}</label>
               <input
                 type="number"
                 step="0.1"
@@ -791,8 +966,118 @@ const StockTabContent = () => {
                 required
               />
             </div>
+            <div>
+              <label className="block text-sm font-bold mb-2">{t('receiveCostOptional')}</label>
+              <input
+                type="number"
+                step="0.01"
+                className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel"
+                value={restockUnitCost}
+                onChange={e => setRestockUnitCost(e.target.value)}
+                placeholder="0.00"
+              />
+            </div>
             <button type="submit" className="btn-primary w-full p-4 rounded-2xl font-bold text-lg">
-              {t('restockNow')}
+              {t('receiveStock')}
+            </button>
+          </form>
+        </Modal>
+      )}
+
+      {showWastePicker && (
+        <Modal title={t('wasteStock')} onClose={() => setShowWastePicker(false)}>
+          <div className="space-y-4 max-h-[60vh] overflow-y-auto">
+            {preparedStock.length > 0 && (
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('preppedStock')}</p>
+                <ul className="space-y-1">
+                  {preparedStock.map(p => (
+                    <button
+                      key={`wp-${p.id}`}
+                      type="button"
+                      className="w-full text-left px-3 py-3 rounded-xl border border-bakery-beige hover:border-rose-300 hover:bg-rose-50/50 font-bold text-sm text-bakery-brown"
+                      onClick={() => {
+                        setShowWastePicker(false);
+                        openWaste(p.id, p.name, 'prepped');
+                      }}
+                    >
+                      {p.name}
+                      <span className="ml-2 font-normal text-bakery-brown/50">
+                        {p.portions} {t('portionsAbbr')}
+                      </span>
+                    </button>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {ingredients.length > 0 && (
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('rawIngredients')}</p>
+                <ul className="space-y-1">
+                  {ingredients.map(i => (
+                    <button
+                      key={`wi-${i.id}`}
+                      type="button"
+                      className="w-full text-left px-3 py-3 rounded-xl border border-bakery-beige hover:border-rose-300 hover:bg-rose-50/50 font-bold text-sm text-bakery-brown"
+                      onClick={() => {
+                        setShowWastePicker(false);
+                        openWaste(i.id, i.name, 'ingredient');
+                      }}
+                    >
+                      {i.name}
+                      <span className="ml-2 font-normal text-bakery-brown/50">
+                        {i.qty} {i.unit}
+                      </span>
+                    </button>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {!hasAnyStock && (
+              <p className="text-sm text-bakery-brown/50 text-center py-4">{t('stockEmptySubtitle')}</p>
+            )}
+          </div>
+        </Modal>
+      )}
+
+      {wasteItem && (
+        <Modal title={`${t('wasteStock')}: ${wasteItem.name}`} onClose={() => setWasteItem(null)}>
+          <form onSubmit={handleWaste} className="space-y-4">
+            <div>
+              <label className="block text-sm font-bold mb-2">{t('receiveQty')}</label>
+              <input
+                type="number"
+                step="0.1"
+                className="w-full p-4 border border-bakery-beige rounded-2xl outline-none"
+                value={wasteAmount}
+                onChange={e => setWasteAmount(e.target.value)}
+                autoFocus
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-bold mb-2">{t('wasteReason')}</label>
+              <select
+                className="w-full p-3 border border-bakery-beige rounded-xl font-bold"
+                value={wasteReason}
+                onChange={e => setWasteReason(e.target.value as WasteReason)}
+              >
+                {(['spoilage', 'breakage', 'overproduction', 'staff_meal', 'other'] as WasteReason[]).map(r => (
+                  <option key={r} value={r}>{wasteReasonLabel(r)}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-bold mb-2">{t('customerNotes')}</label>
+              <input
+                type="text"
+                className="w-full p-3 border border-bakery-beige rounded-xl"
+                value={wasteNote}
+                onChange={e => setWasteNote(e.target.value)}
+              />
+            </div>
+            <button type="submit" className="w-full p-4 rounded-2xl font-bold text-lg bg-rose-600 text-white">
+              {t('wasteStock')}
             </button>
           </form>
         </Modal>

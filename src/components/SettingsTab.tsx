@@ -4,7 +4,8 @@ import { CURRENCIES, VENUE_TYPES, CURRENCY_OPTIONS } from '../constants';
 import { SUPPORTED_COUNTRIES } from '../data/supportedCountries';
 import { getRegionalTaxProfile, regionalTaxLines } from '../utils/taxRegions';
 import { CitySelect } from './CitySelect';
-import { BusinessSettings, Language, TaxSettings, EnabledModules, normalizeEnabledModules } from '../types';
+import { BusinessSettings, Language, TaxSettings, EnabledModules, normalizeEnabledModules, normalizeDiscountPolicy, normalizeBrandTheme, DiscountPolicy, BrandTheme, DEFAULT_BRAND_THEME } from '../types';
+import { BRAND_PALETTES, resolveBrandPalette, contrastingInk, applyBrandThemeToDocument } from '../utils/brandTheme';
 import {
   Save,
   Building2,
@@ -16,6 +17,9 @@ import {
   Phone,
   Receipt,
   LayoutGrid,
+  Palette,
+  Shield,
+  Compass,
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import {
@@ -25,6 +29,7 @@ import {
 } from '../utils/localAccounts';
 import { applyCountryDialCode, getDialCode } from '../utils/phone';
 import { APP_LANGUAGE_OPTIONS } from '../utils/languages';
+import { requestProductTour } from '../utils/productTour';
 
 const LANGUAGE_OPTIONS = APP_LANGUAGE_OPTIONS;
 
@@ -74,7 +79,14 @@ export const SettingsTab = () => {
   const [modulesForm, setModulesForm] = useState<EnabledModules>(() =>
     normalizeEnabledModules(businessSettings?.enabledModules)
   );
-  type SettingsSection = 'profile' | 'hours' | 'locale' | 'modules' | 'fiscal' | 'account';
+  const [discountForm, setDiscountForm] = useState<DiscountPolicy>(() =>
+    normalizeDiscountPolicy(businessSettings?.discountPolicy)
+  );
+  const [themeForm, setThemeForm] = useState<BrandTheme>(() =>
+    normalizeBrandTheme(businessSettings?.brandTheme)
+  );
+  const selectedPalette = resolveBrandPalette(themeForm);
+  type SettingsSection = 'profile' | 'hours' | 'locale' | 'modules' | 'appearance' | 'floor' | 'fiscal' | 'account';
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('profile');
 
   useEffect(() => {
@@ -93,7 +105,9 @@ export const SettingsTab = () => {
 
   useEffect(() => {
     setModulesForm(normalizeEnabledModules(businessSettings?.enabledModules));
-  }, [businessSettings?.enabledModules]);
+    setDiscountForm(normalizeDiscountPolicy(businessSettings?.discountPolicy));
+    setThemeForm(normalizeBrandTheme(businessSettings?.brandTheme));
+  }, [businessSettings?.enabledModules, businessSettings?.discountPolicy, businessSettings?.brandTheme]);
 
   useEffect(() => {
     setFiscalForm({
@@ -112,18 +126,40 @@ export const SettingsTab = () => {
     await saveBusinessSettings(next);
   };
 
-  const handleSaveModules = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const persistTheme = async (theme: BrandTheme) => {
+    const normalized = normalizeBrandTheme(theme);
+    setThemeForm(normalized);
+    applyBrandThemeToDocument(normalized);
     if (!businessSettings) return;
     await saveBusinessSettings({
       ...businessSettings,
-      ...formData,
-      enabledModules: normalizeEnabledModules(modulesForm),
+      brandTheme: normalized,
+    });
+  };
+
+  const persistDiscount = async (next: DiscountPolicy) => {
+    const normalized = normalizeDiscountPolicy(next);
+    setDiscountForm(normalized);
+    if (!businessSettings) return;
+    await saveBusinessSettings({
+      ...businessSettings,
+      discountPolicy: normalized,
+    });
+  };
+
+  const persistModules = async (next: EnabledModules) => {
+    const normalized = normalizeEnabledModules(next);
+    setModulesForm(normalized);
+    if (!businessSettings) return;
+    await saveBusinessSettings({
+      ...businessSettings,
+      enabledModules: normalized,
     });
   };
 
   const toggleModule = (key: keyof EnabledModules) => {
-    setModulesForm(prev => ({ ...prev, [key]: !prev[key] }));
+    const next = { ...modulesForm, [key]: !modulesForm[key] };
+    void persistModules(next);
   };
 
   const handleSaveFiscal = (e: React.FormEvent) => {
@@ -269,6 +305,8 @@ export const SettingsTab = () => {
     { id: 'hours', label: t('hoursAndContact'), icon: <Clock size={14} /> },
     { id: 'locale', label: t('localeLanguage'), icon: <Languages size={14} /> },
     { id: 'modules', label: t('enabledModules'), icon: <LayoutGrid size={14} /> },
+    { id: 'appearance', label: t('appearanceSection'), icon: <Palette size={14} /> },
+    { id: 'floor', label: t('floorRules'), icon: <Shield size={14} /> },
     { id: 'fiscal', label: t('fiscalDefaults'), icon: <Receipt size={14} /> },
     { id: 'account', label: t('accountSection'), icon: <KeyRound size={14} /> },
   ];
@@ -490,7 +528,7 @@ export const SettingsTab = () => {
           )}
 
           {settingsSection === 'modules' && (
-          <form onSubmit={handleSaveModules} className="card-bakery p-4 sm:p-8 space-y-5">
+          <div className="card-bakery p-4 sm:p-8 space-y-5">
             <div className="flex items-center gap-2 text-bakery-caramel">
               <LayoutGrid size={20} />
               <h3 className="font-black uppercase tracking-widest text-sm">{t('enabledModules')}</h3>
@@ -505,6 +543,11 @@ export const SettingsTab = () => {
                   { key: 'stock' as const, title: t('moduleStock'), hint: t('moduleStockHint') },
                   { key: 'staff' as const, title: t('moduleStaff'), hint: t('moduleStaffHint') },
                   { key: 'finance' as const, title: t('moduleFinance'), hint: t('moduleFinanceHint') },
+                  { key: 'tables' as const, title: t('moduleTables'), hint: t('moduleTablesHint') },
+                  { key: 'customers' as const, title: t('moduleCustomers'), hint: t('moduleCustomersHint') },
+                  { key: 'tips' as const, title: t('moduleTips'), hint: t('moduleTipsHint') },
+                  { key: 'onlineOrders' as const, title: t('moduleOnlineOrders'), hint: t('moduleOnlineOrdersHint') },
+                  { key: 'parkTickets' as const, title: t('moduleParkTickets'), hint: t('moduleParkTicketsHint') },
                 ] as const
               ).map(opt => (
                 <button
@@ -529,10 +572,162 @@ export const SettingsTab = () => {
                 </button>
               ))}
             </div>
-            <button type="submit" className="btn-primary px-8 py-3 rounded-2xl font-bold text-sm">
-              {t('save')}
+            {modulesForm.onlineOrders && (
+              <div className="rounded-2xl border border-bakery-beige p-4 space-y-2">
+                <p className="text-sm font-black text-bakery-brown">{t('onlineOrderPage')}</p>
+                <p className="text-xs text-bakery-brown/50">{t('onlineOrderHint')}</p>
+                <div className="flex flex-wrap gap-2 items-center">
+                  <code className="text-[11px] bg-bakery-cream px-2 py-1 rounded-lg break-all">
+                    {`${typeof window !== 'undefined' ? window.location.origin : ''}/order/${businessSettings?.id || ''}`}
+                  </code>
+                  <button
+                    type="button"
+                    className="h-9 px-3 rounded-xl bg-bakery-brown text-white text-xs font-bold"
+                    onClick={() => {
+                      const url = `${window.location.origin}/order/${businessSettings?.id || ''}`;
+                      void navigator.clipboard?.writeText(url);
+                      addToast(t('linkCopied'), 'success');
+                    }}
+                  >
+                    {t('copyOrderLink')}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+          )}
+
+          {settingsSection === 'appearance' && (
+          <div className="card-bakery p-4 sm:p-8 space-y-5">
+            <div className="flex items-center gap-2 text-bakery-caramel">
+              <Palette size={20} />
+              <h3 className="font-black uppercase tracking-widest text-sm">{t('appearanceSection')}</h3>
+            </div>
+            <p className="text-xs text-bakery-brown/50">{t('appearanceHint')}</p>
+            <label className="block space-y-2">
+              <span className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40">{t('themePalette')}</span>
+              <select
+                className="w-full p-3 border border-bakery-beige rounded-xl text-sm font-bold bg-white outline-none"
+                value={selectedPalette.id}
+                onChange={e => void persistTheme({ paletteId: e.target.value as BrandTheme['paletteId'] })}
+              >
+                {BRAND_PALETTES.map(p => (
+                  <option key={p.id} value={p.id}>
+                    {t(p.labelKey)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+              {BRAND_PALETTES.map(p => {
+                const active = selectedPalette.id === p.id;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => void persistTheme({ paletteId: p.id })}
+                    className={`rounded-2xl border-2 p-2 text-left transition-all ${
+                      active ? 'border-bakery-brown shadow-sm ring-2 ring-bakery-caramel/40' : 'border-bakery-beige hover:border-bakery-caramel'
+                    }`}
+                  >
+                    <div className="h-14 rounded-xl overflow-hidden flex mb-2 border border-black/5">
+                      <div className="w-[34%]" style={{ background: p.sidebar }} />
+                      <div className="flex-1 relative" style={{ background: p.canvas }}>
+                        <span className="absolute bottom-1 right-1 w-4 h-4 rounded-full border border-white/70 shadow" style={{ background: p.accent }} />
+                      </div>
+                    </div>
+                    <p className="text-[11px] font-black uppercase tracking-wider text-bakery-brown">{t(p.labelKey)}</p>
+                    <div className="flex gap-1 mt-1.5">
+                      {[p.ink, p.accent, p.soft].map((c, i) => (
+                        <span key={i} className="w-3.5 h-3.5 rounded-full border border-black/10" style={{ background: c }} />
+                      ))}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="h-28 rounded-2xl border border-bakery-beige overflow-hidden flex shadow-sm">
+              <div
+                className="w-[30%] flex flex-col justify-end p-3 text-[10px] font-bold gap-1"
+                style={{ background: selectedPalette.sidebar, color: contrastingInk(selectedPalette.sidebar) }}
+              >
+                <span className="opacity-60">{t('themeSidebar')}</span>
+                <span
+                  className="inline-flex w-full h-6 rounded-lg text-[9px] font-black items-center justify-center"
+                  style={{ background: selectedPalette.accent, color: contrastingInk(selectedPalette.accent) }}
+                >
+                  Nav
+                </span>
+              </div>
+              <div
+                className="flex-1 flex flex-col justify-end p-3 gap-2"
+                style={{ background: selectedPalette.canvas, color: contrastingInk(selectedPalette.canvas) }}
+              >
+                <span className="text-[10px] font-bold opacity-60">{t('themeCanvas')}</span>
+                <div
+                  className="rounded-xl border px-3 py-2 text-[10px] font-bold"
+                  style={{
+                    background: selectedPalette.card,
+                    borderColor: selectedPalette.soft,
+                    color: selectedPalette.ink,
+                  }}
+                >
+                  Card · text
+                </div>
+                <span
+                  className="inline-flex self-start px-3 py-1.5 rounded-full text-[9px] font-black"
+                  style={{ background: selectedPalette.ink, color: contrastingInk(selectedPalette.ink) }}
+                >
+                  Button
+                </span>
+              </div>
+            </div>
+            <button type="button" className="px-4 py-2 rounded-xl border border-bakery-beige text-xs font-bold" onClick={() => void persistTheme(DEFAULT_BRAND_THEME)}>
+              {t('resetTheme')}
             </button>
-          </form>
+          </div>
+          )}
+
+          {settingsSection === 'floor' && (
+          <div className="card-bakery p-4 sm:p-8 space-y-5">
+            <div className="flex items-center gap-2 text-bakery-caramel">
+              <Shield size={20} />
+              <h3 className="font-black uppercase tracking-widest text-sm">{t('discountPolicyTitle')}</h3>
+            </div>
+            <p className="text-xs text-bakery-brown/50">{t('discountPolicyHint')}</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('staffMaxPercent')}</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  className="w-full p-3 border border-bakery-beige rounded-xl font-bold"
+                  value={discountForm.staffMaxPercent}
+                  onChange={e => void persistDiscount({ ...discountForm, staffMaxPercent: Math.max(0, parseFloat(e.target.value) || 0) })}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('staffMaxAmount')}</label>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  className="w-full p-3 border border-bakery-beige rounded-xl font-bold"
+                  value={discountForm.staffMaxAmount}
+                  onChange={e => void persistDiscount({ ...discountForm, staffMaxAmount: Math.max(0, parseFloat(e.target.value) || 0) })}
+                />
+              </div>
+            </div>
+            <label className="flex items-center gap-3 p-3 rounded-xl border border-bakery-beige cursor-pointer">
+              <input
+                type="checkbox"
+                checked={discountForm.requireManagerPinAboveLimit}
+                onChange={e => void persistDiscount({ ...discountForm, requireManagerPinAboveLimit: e.target.checked })}
+              />
+              <span className="text-sm font-bold text-bakery-brown">{t('requireManagerPin')}</span>
+            </label>
+          </div>
           )}
 
           {settingsSection === 'fiscal' && (
@@ -607,54 +802,86 @@ export const SettingsTab = () => {
         )}
 
         {settingsSection === 'account' && (
-          <div className="lg:col-span-3 space-y-6 max-w-2xl">
-            <div className="card-bakery p-6 bg-bakery-accent/10 border-bakery-accent/30">
-              <h3 className="font-black uppercase tracking-widest text-xs text-bakery-brown/60 mb-4">
-                {t('accountSignedInAs')}
-              </h3>
-              <div className="space-y-4">
-                <div>
-                  <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40">{t('fullName')}</p>
-                  <p className="font-bold text-sm sm:text-base">{user?.fullName || formData.ownerName || '—'}</p>
+          <div className="lg:col-span-3 space-y-5 max-w-xl">
+            <div className="card-bakery p-5 sm:p-6">
+              <div className="flex items-start gap-4 mb-5">
+                <div className="w-14 h-14 rounded-2xl bg-bakery-brown text-white flex items-center justify-center text-lg font-black shrink-0">
+                  {(user?.fullName || formData.ownerName || '?')
+                    .split(' ')
+                    .map(n => n[0])
+                    .join('')
+                    .slice(0, 2)
+                    .toUpperCase()}
                 </div>
-                <div>
-                  <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40">{t('username')}</p>
-                  <p className="font-bold text-sm sm:text-base break-all">{user?.username || '—'}</p>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-1">
+                    {t('accountSignedInAs')}
+                  </p>
+                  <h3 className="font-bold text-lg text-bakery-brown truncate">
+                    {user?.fullName || formData.ownerName || '—'}
+                  </h3>
+                  <p className="text-xs font-bold uppercase tracking-wider text-bakery-caramel mt-1">
+                    {user ? t(user.role === 'staff' ? 'staffRole' : user.role) : '—'}
+                  </p>
                 </div>
-                <div>
-                  <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40">{t('role')}</p>
-                  <p className="font-bold text-sm sm:text-base uppercase">{user ? t(user.role === 'staff' ? 'staffRole' : user.role) : '—'}</p>
-                </div>
-                {(user?.email || formData.ownerEmail) && (
-                  <div>
-                    <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40">{t('ownerEmail')}</p>
-                    <p className="font-bold text-sm sm:text-base break-all">{user?.email || formData.ownerEmail}</p>
-                  </div>
-                )}
               </div>
-              <p className="text-xs text-bakery-brown/50 mt-4 pt-4 border-t border-bakery-beige/60">{t('accountProfileHint')}</p>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                {(() => {
+                  const loginId = (user?.username || '').trim();
+                  const email = (user?.email || (isOwner ? formData.ownerEmail : '') || '').trim();
+                  const usernameIsEmail = !!loginId && !!email && loginId.toLowerCase() === email.toLowerCase();
+                  const looksLikeEmail = loginId.includes('@');
+                  return (
+                    <>
+                      {email && (
+                        <div className="rounded-xl bg-bakery-cream/50 border border-bakery-beige/80 p-3">
+                          <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-1">{t('ownerEmail')}</p>
+                          <p className="font-bold text-sm break-all">{email}</p>
+                        </div>
+                      )}
+                      {loginId && !usernameIsEmail && (
+                        <div className="rounded-xl bg-bakery-cream/50 border border-bakery-beige/80 p-3">
+                          <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-1">
+                            {looksLikeEmail ? t('ownerEmail') : t('username')}
+                          </p>
+                          <p className="font-bold text-sm break-all">{loginId}</p>
+                          {looksLikeEmail && !email && (
+                            <p className="text-[10px] text-bakery-brown/45 mt-1">{t('accountProfileHint')}</p>
+                          )}
+                        </div>
+                      )}
+                      {loginId && usernameIsEmail && !email && (
+                        <div className="rounded-xl bg-bakery-cream/50 border border-bakery-beige/80 p-3 sm:col-span-2">
+                          <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-1">{t('ownerEmail')}</p>
+                          <p className="font-bold text-sm break-all">{loginId}</p>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+              </div>
+              <p className="text-xs text-bakery-brown/50 mt-4">{t('accountProfileHint')}</p>
             </div>
 
-            {isOwner && (
-              <div className="card-bakery p-6 bg-bakery-accent/10 border-bakery-accent/30">
-                <h3 className="font-black uppercase tracking-widest text-xs text-bakery-brown/60 mb-4 italic">
-                  {t('ownerInformation')}
-                </h3>
-                <div className="space-y-4">
-                  <div>
-                    <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40">{t('ownerFullName')}</p>
-                    <p className="font-bold text-sm sm:text-base">{formData.ownerName || '—'}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40">{t('ownerEmail')}</p>
-                    <p className="font-bold text-sm sm:text-base break-all">{formData.ownerEmail || '—'}</p>
-                  </div>
-                </div>
+            <div className="card-bakery p-5 sm:p-6 space-y-3">
+              <div className="flex items-center gap-2 text-bakery-caramel">
+                <Compass size={18} />
+                <h3 className="font-black uppercase tracking-widest text-xs">{t('productTour')}</h3>
               </div>
-            )}
+              <p className="text-sm text-bakery-brown/60">{t('replayTourHint')}</p>
+              <button
+                type="button"
+                onClick={() => requestProductTour()}
+                className="btn-primary h-11 px-5 rounded-xl text-sm inline-flex items-center gap-2"
+              >
+                <Compass size={16} />
+                {t('replayTour')}
+              </button>
+            </div>
 
-            <form onSubmit={handlePasswordChange} className="card-bakery p-6 space-y-4">
-              <div className="flex items-center gap-2 text-bakery-caramel mb-2">
+            <form onSubmit={handlePasswordChange} className="card-bakery p-5 sm:p-6 space-y-4">
+              <div className="flex items-center gap-2 text-bakery-caramel mb-1">
                 <KeyRound size={18} />
                 <h3 className="font-black uppercase tracking-widest text-xs">{t('changePassword')}</h3>
               </div>

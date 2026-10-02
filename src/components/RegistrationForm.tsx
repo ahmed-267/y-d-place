@@ -24,7 +24,7 @@ const deriveProfileFromEmail = (email: string) => {
 };
 
 export const RegistrationForm = ({ onBack, onGoLogin, onAuthenticated }: RegistrationFormProps) => {
-  const { addToast, registerAccount } = useApp();
+  const { addToast, registerAccount, t } = useApp();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -35,7 +35,7 @@ export const RegistrationForm = ({ onBack, onGoLogin, onAuthenticated }: Registr
     setError(null);
 
     if (password.length < 6) {
-      const message = 'Password must be at least 6 characters.';
+      const message = t('passwordMinError');
       setError(message);
       addToast(message, 'error');
       return;
@@ -129,10 +129,10 @@ export const RegistrationForm = ({ onBack, onGoLogin, onAuthenticated }: Registr
     <AuthShell onBackHome={onBack}>
       <div className="mb-7">
         <h1 className="text-2xl sm:text-[1.75rem] font-black font-serif tracking-tight text-bakery-brown">
-          Create an account
+          {t('createAnAccount')}
         </h1>
         <p className="mt-2 text-sm text-bakery-brown/55 leading-relaxed">
-          Get started with your PreVisio management portal
+          {t('createAccountSubtitle')}
         </p>
       </div>
 
@@ -148,7 +148,7 @@ export const RegistrationForm = ({ onBack, onGoLogin, onAuthenticated }: Registr
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label htmlFor="register-email" className="mb-1.5 block text-sm font-bold text-bakery-brown">
-            Email
+            {t('email')}
           </label>
           <input
             id="register-email"
@@ -158,13 +158,13 @@ export const RegistrationForm = ({ onBack, onGoLogin, onAuthenticated }: Registr
             value={email}
             onChange={e => setEmail(e.target.value)}
             className={authFieldClassName}
-            placeholder="you@restaurant.com"
+            placeholder={t('emailPlaceholder')}
           />
         </div>
 
         <div>
           <label htmlFor="register-password" className="mb-1.5 block text-sm font-bold text-bakery-brown">
-            Password
+            {t('password')}
           </label>
           <input
             id="register-password"
@@ -175,24 +175,24 @@ export const RegistrationForm = ({ onBack, onGoLogin, onAuthenticated }: Registr
             value={password}
             onChange={e => setPassword(e.target.value)}
             className={authFieldClassName}
-            placeholder="At least 6 characters"
+            placeholder={t('passwordMinHint')}
           />
         </div>
 
         <button type="submit" disabled={isSubmitting} className={`${authPrimaryButtonClassName} mt-2`}>
           {isSubmitting ? <Loader2 size={18} className="animate-spin" /> : null}
-          Create account
+          {t('createAccount')}
         </button>
       </form>
 
       <p className="mt-6 text-center text-sm text-bakery-brown/50">
-        Already have an account?{' '}
+        {t('alreadyHaveAccount')}{' '}
         <button
           type="button"
           onClick={onGoLogin}
           className="font-bold text-bakery-brown hover:text-bakery-caramel transition-colors"
         >
-          Sign in
+          {t('signIn')}
         </button>
       </p>
     </AuthShell>

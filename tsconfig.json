@@ -20,6 +20,8 @@
     },
     "allowImportingTsExtensions": true,
     "noEmit": true,
-    "baseUrl": "."
-  }
+    "baseUrl": ".",
+    "types": ["vite/client"]
+  },
+  "include": ["src"]
 }

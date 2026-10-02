@@ -3,6 +3,7 @@ import {
   EnabledModules,
   Expense,
   Language,
+  Order,
   Product,
   Role,
   Sale,
@@ -10,6 +11,8 @@ import {
   User,
   WorkShift,
   normalizeEnabledModules,
+  normalizeDiscountPolicy,
+  normalizeBrandTheme,
 } from '../types';
 
 const parseEnabledModules = (raw: unknown): EnabledModules => {
@@ -41,6 +44,12 @@ export const mapBusinessRow = (row: Record<string, unknown>): BusinessSettings =
   currencySymbol: String(row.currency_symbol ?? row.currencySymbol ?? '€'),
   language: (row.language as Language) || 'en',
   enabledModules: parseEnabledModules(row.enabled_modules ?? row.enabledModules),
+  discountPolicy: normalizeDiscountPolicy(
+    (row.discount_policy ?? row.discountPolicy) as Record<string, unknown> | null | undefined
+  ),
+  brandTheme: normalizeBrandTheme(
+    (row.brand_theme ?? row.brandTheme) as Record<string, unknown> | null | undefined
+  ),
 });
 
 export const businessToRow = (settings: BusinessSettings) => ({
@@ -57,6 +66,8 @@ export const businessToRow = (settings: BusinessSettings) => ({
   currency_symbol: settings.currencySymbol,
   language: settings.language,
   enabled_modules: normalizeEnabledModules(settings.enabledModules),
+  discount_policy: normalizeDiscountPolicy(settings.discountPolicy),
+  brand_theme: normalizeBrandTheme(settings.brandTheme),
 });
 
 export const mapUserRow = (row: Record<string, unknown>): User => ({
@@ -79,6 +90,13 @@ export const mapProductRow = (row: Record<string, unknown>): Product => ({
   transKey: String(row.trans_key ?? row.transKey ?? ''),
   ingredientLinks: (row.ingredient_links ?? row.ingredientLinks) as Product['ingredientLinks'],
   preparedStockLinks: (row.prepared_stock_links ?? row.preparedStockLinks) as Product['preparedStockLinks'],
+  extraIds: Array.isArray(row.extra_ids)
+    ? (row.extra_ids as number[])
+    : Array.isArray(row.extraIds)
+      ? (row.extraIds as number[])
+      : undefined,
+  isFavourite: row.is_favourite === true || row.isFavourite === true,
+  posColor: (row.pos_color as string) || (row.posColor as string) || undefined,
 });
 
 export const mapSaleRow = (row: Record<string, unknown>): Sale => {
@@ -91,6 +109,7 @@ export const mapSaleRow = (row: Record<string, unknown>): Sale => {
     unitPrice: Number(item.unit_price ?? item.unitPrice ?? 0),
     lineTotal: Number(item.line_total ?? item.lineTotal ?? 0),
     extras: item.extras as SaleItem['extras'],
+    note: (item.note as string) || undefined,
   }));
 
   const timestampRaw = row.timestamp ?? row.created_at;
@@ -106,11 +125,61 @@ export const mapSaleRow = (row: Record<string, unknown>): Sale => {
     timestamp,
     items,
     subtotal: Number(row.subtotal ?? 0),
-    paymentMethod: (row.payment_method ?? row.paymentMethod ?? 'Cash') as 'Cash' | 'Card',
+    paymentMethod: (row.payment_method ?? row.paymentMethod ?? 'Cash') as Sale['paymentMethod'],
     cashierUsername: String(row.cashier_username ?? row.cashierUsername ?? ''),
     cashierFullName: String(row.cashier_fullname ?? row.cashierFullName ?? ''),
+    discountPercent: row.discount_percent != null ? Number(row.discount_percent) : undefined,
+    discountAmount: row.discount_amount != null ? Number(row.discount_amount) : undefined,
+    tipAmount: row.tip_amount != null ? Number(row.tip_amount) : undefined,
+    tenderedCash: row.tendered_cash != null ? Number(row.tendered_cash) : undefined,
+    changeGiven: row.change_given != null ? Number(row.change_given) : undefined,
+    cashAmount: row.cash_amount != null ? Number(row.cash_amount) : undefined,
+    cardAmount: row.card_amount != null ? Number(row.card_amount) : undefined,
+    status: (row.status as Sale['status']) || 'completed',
+    voidReason: (row.void_reason as string) || undefined,
+    refundedAt: row.refunded_at ? new Date(String(row.refunded_at)).getTime() : undefined,
+    customerName: (row.customer_name as string) || (row.customerName as string) || undefined,
+    customerPhone: (row.customer_phone as string) || (row.customerPhone as string) || undefined,
+    customerId: (row.customer_id as string) || (row.customerId as string) || undefined,
   };
 };
+
+export const saleToRow = (sale: Sale, businessId: string) => ({
+  id: sale.id,
+  business_id: businessId,
+  subtotal: sale.subtotal,
+  payment_method: sale.paymentMethod,
+  cashier_username: sale.cashierUsername,
+  cashier_fullname: sale.cashierFullName,
+  discount_percent: sale.discountPercent || 0,
+  discount_amount: sale.discountAmount || 0,
+  tip_amount: sale.tipAmount || 0,
+  tendered_cash: sale.tenderedCash ?? null,
+  change_given: sale.changeGiven ?? null,
+  cash_amount: sale.cashAmount ?? null,
+  card_amount: sale.cardAmount ?? null,
+  status: sale.status || 'completed',
+  void_reason: sale.voidReason || null,
+  refunded_at: sale.refundedAt ? new Date(sale.refundedAt).toISOString() : null,
+  customer_name: sale.customerName || null,
+  customer_phone: sale.customerPhone || null,
+  customer_id: sale.customerId || null,
+  created_at: new Date(sale.timestamp).toISOString(),
+  timestamp: sale.timestamp,
+});
+
+export const saleItemsToRows = (sale: Sale) =>
+  sale.items.map(item => ({
+    sale_id: sale.id,
+    product_id: item.productId,
+    qty: item.qty,
+    unit_price: item.unitPrice,
+    line_total: item.lineTotal,
+    extras: item.extras || [],
+    name_en: item.nameEN,
+    translations: item.translations || {},
+    note: item.note || null,
+  }));
 
 export const mapExpenseRow = (row: Record<string, unknown>): Expense => ({
   id: String(row.id),
@@ -160,6 +229,51 @@ export const workShiftToRow = (shift: Omit<WorkShift, 'id'> | WorkShift, busines
   business_id: businessId,
 });
 
+export const productToRow = (product: Product, businessId: string) => ({
+  id: product.id,
+  business_id: businessId,
+  name_en: product.nameEN,
+  translations: product.translations || {},
+  category: product.category,
+  price: product.price,
+  emoji: product.emoji,
+  active: product.active,
+  trans_key: product.transKey,
+  ingredient_links: product.ingredientLinks || [],
+  prepared_stock_links: product.preparedStockLinks || [],
+  extra_ids: product.extraIds || [],
+  is_favourite: !!product.isFavourite,
+  pos_color: product.posColor || null,
+});
+
+export const orderToRow = (order: Order, businessId: string) => ({
+  id: order.id,
+  business_id: businessId,
+  type: order.type,
+  status: order.status,
+  created_at: new Date(order.createdAt).toISOString(),
+  updated_at: new Date(order.lastUpdatedAt).toISOString(),
+  scheduled_for: order.scheduledFor || null,
+  customer_name: order.customerName || null,
+  customer_phone: order.customerPhone || null,
+  items: order.items,
+  subtotal: order.subtotal,
+  payment_method: order.paymentMethod,
+  created_by_username: order.createdByUsername,
+  created_by_fullname: order.createdByFullName,
+  completed_at: order.completedAt ? new Date(order.completedAt).toISOString() : null,
+  sale_id: order.saleId || null,
+  discount_amount: order.discountAmount || 0,
+  tip_amount: order.tipAmount || 0,
+  void_reason: order.voidReason || null,
+  kitchen_printed_at: order.kitchenPrintedAt ? new Date(order.kitchenPrintedAt).toISOString() : null,
+  customer_id: order.customerId || null,
+  source: order.source || 'pos',
+  table_id: order.tableId || null,
+  table_label: order.tableLabel || null,
+  covers: order.covers ?? null,
+});
+
 export const DEMO_BUSINESS_ID = 'ydplace';
 
 export const createDemoBusiness = (): BusinessSettings => ({
@@ -181,5 +295,10 @@ export const createDemoBusiness = (): BusinessSettings => ({
     stock: true,
     staff: true,
     finance: true,
+    tables: false,
+    customers: false,
+    tips: false,
+    onlineOrders: false,
+    parkTickets: false,
   },
 });

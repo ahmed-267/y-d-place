@@ -1,10 +1,13 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
-import { User, Product, Ingredient, PreparedStock, Sale, Language, Expense, TaxSettings, WorkShift, BusinessSettings, Order, RotaShift, StaffAvailability, LandingPageConfig, ShiftLog, Role } from './types';
+import { User, Product, Ingredient, PreparedStock, Sale, Language, Expense, TaxSettings, WorkShift, BusinessSettings, Order, RotaShift, StaffAvailability, LandingPageConfig, ShiftLog, Role, CashSession, FloorPlan, PendingTableSession, emptyFloorPlan, normalizeFloorPlan, WasteLog, Customer, ParkedTicket, normalizeEnabledModules } from './types';
 import { DEFAULT_USERS, TRANSLATIONS, DEFAULT_CATEGORIES } from './constants';
 import { generateDemoData } from './utils/demoData';
 import { supabase } from './components/supabaseClient';
 import { createDemoLandingConfig } from './utils/demoLanding';
-import { clearPersistedOps, loadPersistedOps, savePersistedOps } from './utils/opsPersistence';
+import { clearPersistedOps, loadPersistedOps, savePersistedOps, loadOnlineInbox, clearOnlineInbox, savePublicMenuSnapshot } from './utils/opsPersistence';
+import { applyBrandThemeToDocument } from './utils/brandTheme';
+import { queueTourAfterSetup } from './utils/productTour';
+import { upsertCustomerFromOrder } from './utils/customers';
 import {
   DEMO_BUSINESS_ID,
   businessToRow,
@@ -17,6 +20,10 @@ import {
   mapUserRow,
   mapWorkShiftRow,
   workShiftToRow,
+  productToRow,
+  orderToRow,
+  saleToRow,
+  saleItemsToRows,
 } from './utils/dbMappers';
 import {
   buildLocalBusiness,
@@ -27,11 +34,22 @@ import {
   getLocalSession,
   isLocalBusinessId,
   isNetworkAuthError,
+  loadLocalAccounts,
   localAccountToUser,
   setLocalSession,
   upsertLocalAccount,
 } from './utils/localAccounts';
+import { restoreStock } from './utils/stock';
 import { normalizeAppLanguage } from './utils/languages';
+import {
+  clearStaffSession,
+  findRosterStaff,
+  loadStaffRoster,
+  loadStaffSession,
+  rosterToUser,
+  saveStaffSession,
+  upsertStaffRosterEntry,
+} from './utils/staffRoster';
 
 const LANDING_STORAGE_KEY = 'previsio_landing_page';
 const DEMO_SESSION_KEY = 'previsio_demo_session';
@@ -49,6 +67,8 @@ interface AppContextType {
   products: Product[];
   setProducts: React.Dispatch<React.SetStateAction<Product[]>>;
   addSale: (sale: Omit<Sale, 'id' | 'timestamp' | 'cashierFullName' | 'cashierUsername'>) => Promise<void>;
+  recordSale: (sale: Sale) => Promise<void>;
+  markSaleStatus: (saleId: string, status: 'voided' | 'refunded', reason?: string) => void;
   ingredients: Ingredient[];
   setIngredients: React.Dispatch<React.SetStateAction<Ingredient[]>>;
   preparedStock: PreparedStock[];
@@ -74,6 +94,24 @@ interface AppContextType {
   deleteWorkShift: (shiftId: number | string) => Promise<void>;
   shiftLogs: ShiftLog[];
   setShiftLogs: React.Dispatch<React.SetStateAction<ShiftLog[]>>;
+  clockIn: () => void;
+  clockOut: () => void;
+  openShiftLog: ShiftLog | null;
+  cashSessions: CashSession[];
+  openTill: (openingFloat: number) => void;
+  closeTill: (countedCash: number) => CashSession | null;
+  openCashSession: CashSession | null;
+  refundSale: (saleId: string, reason?: string) => void;
+  floorPlan: FloorPlan;
+  setFloorPlan: React.Dispatch<React.SetStateAction<FloorPlan>>;
+  pendingTableSession: PendingTableSession | null;
+  setPendingTableSession: React.Dispatch<React.SetStateAction<PendingTableSession | null>>;
+  wasteLogs: WasteLog[];
+  setWasteLogs: React.Dispatch<React.SetStateAction<WasteLog[]>>;
+  customers: Customer[];
+  setCustomers: React.Dispatch<React.SetStateAction<Customer[]>>;
+  parkedTickets: ParkedTicket[];
+  setParkedTickets: React.Dispatch<React.SetStateAction<ParkedTicket[]>>;
   rota: RotaShift[];
   setRota: React.Dispatch<React.SetStateAction<RotaShift[]>>;
   saveRota: (rota: RotaShift[]) => Promise<void>;
@@ -135,6 +173,12 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [shiftLogs, setShiftLogs] = useState<ShiftLog[]>([]);
   const [rota, setRota] = useState<RotaShift[]>([]);
   const [staffAvailability, setStaffAvailability] = useState<StaffAvailability[]>([]);
+  const [cashSessions, setCashSessions] = useState<CashSession[]>([]);
+  const [floorPlan, setFloorPlan] = useState<FloorPlan>(() => emptyFloorPlan());
+  const [pendingTableSession, setPendingTableSession] = useState<PendingTableSession | null>(null);
+  const [wasteLogs, setWasteLogs] = useState<WasteLog[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [parkedTickets, setParkedTickets] = useState<ParkedTicket[]>([]);
   const [taxSettings, setTaxSettings] = useState<TaxSettings>({ municipalTaxRate: 7, vatRegime: 'Standard' });
   const [landingPageConfig, setLandingPageConfigState] = useState<LandingPageConfig | null>(() => {
     try {
@@ -164,6 +208,10 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [isDemoMode, setIsDemoMode] = useState(false);
 
   const isDemoBusiness = isDemoMode || businessSettings?.id === DEMO_BUSINESS_ID || isLocalBusinessId(businessSettings?.id);
+
+  useEffect(() => {
+    applyBrandThemeToDocument(businessSettings?.brandTheme);
+  }, [businessSettings?.brandTheme]);
 
   const setLandingPageConfig: React.Dispatch<React.SetStateAction<LandingPageConfig | null>> = (value) => {
     setLandingPageConfigState((prev) => {
@@ -268,6 +316,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     setShiftLogs(demo.shiftLogs);
     setRota([]);
     setStaffAvailability([]);
+    setFloorPlan(emptyFloorPlan());
+    setPendingTableSession(null);
     setCategories(DEFAULT_CATEGORIES);
     setIsOnboarding(false);
     setIsBusinessSetupCompleted(true);
@@ -292,6 +342,44 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       if (persisted.sales?.length) setSales(persisted.sales);
       if (persisted.products?.length) setProducts(persisted.products);
       if (persisted.taxSettings) setTaxSettings(persisted.taxSettings);
+      if (persisted.cashSessions) setCashSessions(persisted.cashSessions);
+      if (persisted.shiftLogs) setShiftLogs(persisted.shiftLogs);
+      if (persisted.wasteLogs) setWasteLogs(persisted.wasteLogs);
+      if (persisted.customers) setCustomers(persisted.customers);
+      if (persisted.parkedTickets) setParkedTickets(persisted.parkedTickets);
+    }
+  }, []);
+
+  const applyPersistedOpsToState = useCallback((businessId: string) => {
+    const persisted = loadPersistedOps(businessId);
+    if (!persisted) return;
+    if (persisted.products?.length) setProducts(persisted.products);
+    if (persisted.ingredients) setIngredients(persisted.ingredients);
+    if (persisted.preparedStock) setPreparedStock(persisted.preparedStock);
+    if (persisted.sales?.length) setSales(persisted.sales);
+    if (persisted.orders) setOrders(persisted.orders);
+    if (persisted.expenses) setExpenses(persisted.expenses);
+    if (persisted.workShifts) setWorkShifts(persisted.workShifts);
+    if (persisted.shiftLogs) setShiftLogs(persisted.shiftLogs);
+    if (persisted.users?.length) setUsers(persisted.users);
+    if (persisted.categories?.length) setCategories(persisted.categories);
+    if (persisted.rota) setRota(persisted.rota);
+    if (persisted.staffAvailability) setStaffAvailability(persisted.staffAvailability);
+    if (persisted.taxSettings) setTaxSettings(persisted.taxSettings);
+    if (persisted.cashSessions) setCashSessions(persisted.cashSessions);
+    if (persisted.floorPlan) setFloorPlan(normalizeFloorPlan(persisted.floorPlan));
+    if (persisted.wasteLogs) setWasteLogs(persisted.wasteLogs);
+    if (persisted.customers) setCustomers(persisted.customers);
+    if (persisted.parkedTickets) setParkedTickets(persisted.parkedTickets);
+    else {
+      // Migrate older session-only parked tickets once
+      try {
+        const legacy = JSON.parse(sessionStorage.getItem(`previsio_parked_${businessId}`) || '[]');
+        if (Array.isArray(legacy) && legacy.length) {
+          setParkedTickets(legacy);
+          sessionStorage.removeItem(`previsio_parked_${businessId}`);
+        }
+      } catch { /* ignore */ }
     }
   }, []);
 
@@ -408,6 +496,67 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     setShiftLogs([]);
   }, [addToast]);
 
+  const applyStaffBusinessSession = useCallback(async (staffUser: User, businessId: string) => {
+    saveStaffSession({ username: staffUser.username, businessId });
+    setUser(staffUser);
+    setActiveTab(staffUser.role === 'manager' ? 'orders' : 'cashier');
+    setIsOnboarding(false);
+    setIsBusinessSetupCompleted(true);
+
+    if (businessId === DEMO_BUSINESS_ID) {
+      applyDemoSession(staffUser);
+      setUser(staffUser);
+      return;
+    }
+
+    if (isLocalBusinessId(businessId)) {
+      const account = loadLocalAccounts().find(a => a.business?.id === businessId);
+      setIsDemoMode(false);
+      if (account?.business) {
+        setBusinessSettingsState(account.business);
+        if (account.business.language) setLangState(normalizeAppLanguage(account.business.language));
+      } else {
+        setBusinessSettingsState({
+          id: businessId,
+          name: 'Local business',
+          ownerName: '',
+          ownerEmail: '',
+          ownerPhone: '',
+          venueType: 'Café',
+          country: 'BE',
+          city: '',
+          currencyCode: 'EUR',
+          currencySymbol: '€',
+          language: 'en',
+          enabledModules: {
+            orders: true,
+            sales: true,
+            stock: true,
+            staff: true,
+            finance: true,
+            tables: false,
+            customers: false,
+            tips: false,
+            onlineOrders: false,
+            parkTickets: false,
+          },
+        });
+      }
+      applyPersistedOpsToState(businessId);
+      return;
+    }
+
+    setIsDemoMode(false);
+    const { data: bizRow } = await supabase.from('businesses').select('*').eq('id', businessId).maybeSingle();
+    if (bizRow) {
+      const business = mapBusinessRow(bizRow as Record<string, unknown>);
+      setBusinessSettingsState(business);
+      if (business.language) setLangState(normalizeAppLanguage(business.language));
+    }
+    await fetchBusinessData(businessId);
+    applyPersistedOpsToState(businessId);
+  }, [applyDemoSession, applyPersistedOpsToState, fetchBusinessData]);
+
   useEffect(() => {
     const restoreLocalRegisteredSession = () => {
       const session = getLocalSession();
@@ -440,6 +589,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           if (persisted.rota) setRota(persisted.rota);
           if (persisted.staffAvailability) setStaffAvailability(persisted.staffAvailability);
           if (persisted.taxSettings) setTaxSettings(persisted.taxSettings);
+          if (persisted.cashSessions) setCashSessions(persisted.cashSessions);
         } else if (!account.setupCompleted) {
           setCategories(['General']);
         }
@@ -464,6 +614,31 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         }
       } catch {
         localStorage.removeItem(DEMO_SESSION_KEY);
+      }
+
+      // Restore invited / staff session bound to a business
+      try {
+        const staffSession = loadStaffSession();
+        if (staffSession) {
+          const roster = loadStaffRoster();
+          const entry = roster.find(
+            u => u.username === staffSession.username && u.businessId === staffSession.businessId
+          );
+          const demoUser = DEFAULT_USERS.find(u => u.username === staffSession.username);
+          if (entry) {
+            await applyStaffBusinessSession(rosterToUser(entry), staffSession.businessId);
+            setIsSessionLoading(false);
+            return;
+          }
+          if (demoUser && staffSession.businessId === DEMO_BUSINESS_ID) {
+            applyDemoSession(demoUser as User);
+            setIsSessionLoading(false);
+            return;
+          }
+          clearStaffSession();
+        }
+      } catch {
+        clearStaffSession();
       }
 
       // Restore offline / local registered accounts (used when Supabase is unreachable)
@@ -534,8 +709,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       const isAuthAction = _event === 'SIGNED_IN' || _event === 'SIGNED_OUT';
       try {
-        if (localStorage.getItem(DEMO_SESSION_KEY) || getLocalSession()) {
-          // Demo / local sessions own the UI; ignore Supabase auth churn
+        if (localStorage.getItem(DEMO_SESSION_KEY) || getLocalSession() || loadStaffSession()) {
+          // Demo / local / staff sessions own the UI; ignore Supabase auth churn
           return;
         }
         if (session) {
@@ -595,7 +770,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     });
 
     return () => subscription.unsubscribe();
-  }, [fetchBusinessData, applyDemoSession, addToast]);
+  }, [fetchBusinessData, applyDemoSession, applyStaffBusinessSession, addToast]);
 
   const activateLocalAccount = (account: ReturnType<typeof createLocalAccount>, message = 'Account created on this device. Continue onboarding.') => {
     setLocalSession(account.id);
@@ -864,27 +1039,65 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     try {
       const demoUser = findDemoUser(payload.identifier, payload.password);
 
-      // Demo credentials + invited staff roster
-      if (!demoUser && payload.mode === 'staff') {
+      if (payload.mode === 'staff') {
+        if (demoUser) {
+          if (demoUser.role === 'owner') {
+            throw new Error('Use Owner Login for the demo owner account');
+          }
+          await applyStaffBusinessSession(demoUser as User, DEMO_BUSINESS_ID);
+          addToast(t('welcomeBack'), 'success');
+          setIsLoggingIn(false);
+          return;
+        }
+
+        const invited = findRosterStaff(payload.identifier, payload.password);
+        if (invited?.businessId) {
+          await applyStaffBusinessSession(rosterToUser(invited), invited.businessId);
+          addToast(t('welcomeBack'), 'success');
+          setIsLoggingIn(false);
+          return;
+        }
+
+        // Online cloud staff with local_password on app_users
         try {
-          const roster = JSON.parse(localStorage.getItem('previsio_staff_roster') || '[]') as User[];
-          const invited = roster.find(u => u.username === payload.identifier && u.password === payload.password);
-          if (invited) {
-            applyDemoSession(invited);
-            setUser(invited);
+          const { data: rows } = await supabase
+            .from('app_users')
+            .select('*, businesses (*)')
+            .eq('username', payload.identifier)
+            .limit(5);
+          const match = (rows || []).find(
+            (row: any) => row.local_password === payload.password || row.password === payload.password
+          );
+          if (match) {
+            const staffUser: User = {
+              id: typeof match.numeric_id === 'number' ? match.numeric_id : Date.now(),
+              username: String(match.username),
+              fullName: String(match.full_name || match.username),
+              email: match.email || undefined,
+              role: (match.role as Role) || 'staff',
+              hourlyRate: match.hourly_rate != null ? Number(match.hourly_rate) : 14,
+              password: payload.password,
+            };
+            const businessId = String(match.business_id || match.businesses?.id || '');
+            if (!businessId) throw new Error('Invalid staff credentials');
+            upsertStaffRosterEntry({ ...staffUser, businessId, password: payload.password });
+            await applyStaffBusinessSession(staffUser, businessId);
             addToast(t('welcomeBack'), 'success');
             setIsLoggingIn(false);
             return;
           }
-        } catch { /* ignore */ }
+        } catch (err) {
+          if (!isNetworkAuthError(err)) {
+            /* fall through */
+          }
+        }
+
+        throw new Error('Invalid staff credentials');
       }
 
       if (demoUser) {
-        if (payload.mode === 'owner' && demoUser.role !== 'owner') {
+        if (demoUser.role !== 'owner') {
           throw new Error('Invalid owner credentials');
-        }
-        if (payload.mode === 'staff' && demoUser.role === 'owner') {
-          throw new Error('Use Owner Login for the demo owner account');
         }
         applyDemoSession(demoUser as User);
         addToast(t('welcomeBack'), 'success');
@@ -892,34 +1105,30 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         return;
       }
 
-      if (payload.mode === 'owner') {
-        const localAccount = findLocalAccount(payload.identifier, payload.password);
-        if (localAccount) {
-          activateLocalAccount(localAccount, t('welcomeBack'));
-          setIsLoggingIn(false);
-          return;
-        }
+      const localAccount = findLocalAccount(payload.identifier, payload.password);
+      if (localAccount) {
+        activateLocalAccount(localAccount, t('welcomeBack'));
+        setIsLoggingIn(false);
+        return;
+      }
 
-        try {
-          const { error } = await supabase.auth.signInWithPassword({
-            email: payload.identifier,
-            password: payload.password,
-          });
-          if (error) {
-            if (isNetworkAuthError(error)) {
-              throw new Error('Cloud login is unavailable. If you registered on this device, use that email and password.');
-            }
-            throw error;
-          }
-          // onAuthStateChange finishes the session
-        } catch (error) {
+      try {
+        const { error } = await supabase.auth.signInWithPassword({
+          email: payload.identifier,
+          password: payload.password,
+        });
+        if (error) {
           if (isNetworkAuthError(error)) {
             throw new Error('Cloud login is unavailable. If you registered on this device, use that email and password.');
           }
           throw error;
         }
-      } else {
-        throw new Error('Invalid staff credentials');
+        // onAuthStateChange finishes the session
+      } catch (error) {
+        if (isNetworkAuthError(error)) {
+          throw new Error('Cloud login is unavailable. If you registered on this device, use that email and password.');
+        }
+        throw error;
       }
     } catch (error) {
       setIsLoggingIn(false);
@@ -931,7 +1140,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     setIsLoggingIn(true);
     localStorage.removeItem(DEMO_SESSION_KEY);
     clearLocalSession();
-    if (isDemoMode || isLocalBusinessId(businessSettings?.id)) clearPersistedOps();
+    clearStaffSession();
+    // Keep previsio_ops_v1 so demo/local till work survives logout (resetAllData still clears).
     setIsDemoMode(false);
     supabase.auth.signOut().catch(() => undefined).finally(() => setIsLoggingIn(false));
     setProducts([]);
@@ -946,6 +1156,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     setShiftLogs([]);
     setRota([]);
     setStaffAvailability([]);
+    setCashSessions([]);
     setBusinessSettingsState(null);
     setUser(null);
     setIsBusinessSetupCompleted(false);
@@ -989,14 +1200,11 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }
 
     setUsers(prev => [...prev, newUser]);
-    // Also register in DEFAULT_USERS-compatible local storage for staff login
-    try {
-      const key = 'previsio_staff_roster';
-      const raw = localStorage.getItem(key);
-      const roster = raw ? JSON.parse(raw) : [];
-      roster.push({ ...newUser, businessId: businessSettings?.id || DEMO_BUSINESS_ID });
-      localStorage.setItem(key, JSON.stringify(roster));
-    } catch { /* ignore */ }
+    upsertStaffRosterEntry({
+      ...newUser,
+      businessId: businessSettings?.id || DEMO_BUSINESS_ID,
+      password: payload.password,
+    });
 
     return {
       error: null,
@@ -1057,9 +1265,14 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }
     setIsOnboarding(false);
     setIsBusinessSetupCompleted(true);
+    queueTourAfterSetup();
   };
 
   const loadDemoData = () => {
+    if (businessSettings?.id !== DEMO_BUSINESS_ID && !isDemoMode) {
+      addToast(t('demoDataYdPlaceOnly') || 'Demo data is only available for the Y\'D Place account.', 'error');
+      return;
+    }
     applyDemoSession(
       user ||
         ({
@@ -1105,71 +1318,81 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
+  const recordSale = async (sale: Sale) => {
+    setSales(prev => (prev.some(s => s.id === sale.id) ? prev.map(s => (s.id === sale.id ? sale : s)) : [...prev, sale]));
+    if (
+      normalizeEnabledModules(businessSettings?.enabledModules).customers &&
+      (sale.customerPhone || sale.customerName)
+    ) {
+      setCustomers(prev =>
+        upsertCustomerFromOrder(prev, {
+          name: sale.customerName,
+          phone: sale.customerPhone,
+          at: sale.timestamp,
+        }).customers
+      );
+    }
+    if (isDemoBusiness || !businessSettings?.id) return;
+    try {
+      const { error } = await supabase.from('sales').upsert(saleToRow(sale, businessSettings.id));
+      if (error) {
+        console.warn('sale upsert', error.message);
+        return;
+      }
+      await supabase.from('sale_items').delete().eq('sale_id', sale.id);
+      const items = saleItemsToRows(sale);
+      if (items.length) {
+        const { error: itemsError } = await supabase.from('sale_items').insert(items);
+        if (itemsError) console.warn('sale_items insert', itemsError.message);
+      }
+    } catch (err) {
+      console.warn('recordSale failed', err);
+    }
+  };
+
+  const markSaleStatus = (saleId: string, status: 'voided' | 'refunded', reason?: string) => {
+    const refundedAt = status === 'refunded' ? Date.now() : undefined;
+    setSales(prev =>
+      prev.map(s =>
+        s.id === saleId
+          ? { ...s, status, voidReason: reason || s.voidReason, refundedAt: refundedAt ?? s.refundedAt }
+          : s
+      )
+    );
+    if (isDemoBusiness || !businessSettings?.id) return;
+    void supabase
+      .from('sales')
+      .update({
+        status,
+        void_reason: reason || null,
+        refunded_at: refundedAt ? new Date(refundedAt).toISOString() : null,
+      })
+      .eq('id', saleId);
+  };
+
   const addSale = async (sale: Omit<Sale, 'id' | 'timestamp' | 'cashierFullName' | 'cashierUsername'>) => {
     if (!user || !businessSettings) return;
-
-    if (isDemoBusiness) {
-      const localSale: Sale = {
-        ...sale,
-        id: `DEMO-${Date.now()}`,
-        timestamp: Date.now(),
-        cashierUsername: user.username,
-        cashierFullName: user.fullName,
-      };
-      setSales(prev => [...prev, localSale]);
-      addToast(t('orderSent'));
-      return;
-    }
-
-    const { data: saleData, error: saleError } = await supabase.from('sales').insert({
-      subtotal: sale.subtotal,
-      payment_method: sale.paymentMethod,
-      cashier_username: user.username || user.email,
-      cashier_fullname: user.fullName,
-      business_id: businessSettings.id,
-    }).select().single();
-
-    if (saleError || !saleData) {
-      addToast(`Error creating sale: ${saleError?.message}`, 'error');
-      return;
-    }
-
-    const saleItems = sale.items.map(item => ({
-      sale_id: saleData.id,
-      product_id: item.productId,
-      qty: item.qty,
-      unit_price: item.unitPrice,
-      line_total: item.lineTotal,
-      extras: item.extras,
-      name_en: item.nameEN,
-      translations: item.translations,
-    }));
-
-    const { error: itemsError } = await supabase.from('sale_items').insert(saleItems);
-    if (itemsError) {
-      addToast(`Error adding sale items: ${itemsError.message}`, 'error');
-      return;
-    }
-
-    setSales(prev => [...prev, mapSaleRow({ ...saleData, sale_items: saleItems })]);
+    const full: Sale = {
+      ...sale,
+      id: `SALE-${Date.now()}`,
+      timestamp: Date.now(),
+      cashierUsername: user.username,
+      cashierFullName: user.fullName,
+      status: sale.status || 'completed',
+    };
+    await recordSale(full);
     addToast(t('orderSent'));
   };
 
   const updateSale = async (sale: Sale) => {
-    if (isDemoBusiness) {
-      setSales(prev => prev.map(s => s.id === sale.id ? sale : s));
+    setSales(prev => prev.map(s => (s.id === sale.id ? sale : s)));
+    if (isDemoBusiness || !businessSettings?.id) {
       addToast(t('saleUpdated'));
       return;
     }
-    const { error } = await supabase
-      .from('sales')
-      .update({ subtotal: sale.subtotal, payment_method: sale.paymentMethod })
-      .eq('id', sale.id);
+    const { error } = await supabase.from('sales').upsert(saleToRow(sale, businessSettings.id));
     if (error) addToast(error.message, 'error');
-    else {
-      setSales(prev => prev.map(s => s.id === sale.id ? sale : s));
-      addToast(t('saleUpdated'));
-    }
+    else addToast(t('saleUpdated'));
   };
 
   const deleteSale = async (saleId: string) => {
@@ -1184,6 +1407,84 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       setSales(prev => prev.filter(s => s.id !== saleId));
       addToast(t('saleDeleted'));
     }
+  };
+
+  const openShiftLog = user ? shiftLogs.find(l => l.username === user.username && !l.logoutTime) || null : null;
+  const openCashSession = cashSessions.find(s => !s.closedAt) || null;
+
+  const clockIn = () => {
+    if (!user) return;
+    if (shiftLogs.some(l => l.username === user.username && !l.logoutTime)) {
+      addToast(t('clockedIn'), 'info');
+      return;
+    }
+    const log: ShiftLog = {
+      id: Date.now(),
+      username: user.username,
+      fullName: user.fullName,
+      role: user.role,
+      loginTime: Date.now(),
+      logoutTime: null,
+      ordersProcessed: 0,
+    };
+    setShiftLogs(prev => [...prev, log]);
+    addToast(t('clockIn'), 'success');
+  };
+
+  const clockOut = () => {
+    if (!user) return;
+    setShiftLogs(prev =>
+      prev.map(l =>
+        l.username === user.username && !l.logoutTime ? { ...l, logoutTime: Date.now() } : l
+      )
+    );
+    addToast(t('clockOut'), 'success');
+  };
+
+  const openTill = (openingFloat: number) => {
+    if (!user) return;
+    if (cashSessions.some(s => !s.closedAt)) {
+      addToast(t('tillOpen'), 'info');
+      return;
+    }
+    setCashSessions(prev => [
+      ...prev,
+      {
+        id: `TILL-${Date.now()}`,
+        openedAt: Date.now(),
+        openingFloat: Math.max(0, openingFloat || 0),
+        openedBy: user.username,
+      },
+    ]);
+    addToast(t('tillOpen'), 'success');
+  };
+
+  const closeTill = (countedCash: number): CashSession | null => {
+    if (!user) return null;
+    const open = cashSessions.find(s => !s.closedAt);
+    if (!open) return null;
+    const closed: CashSession = {
+      ...open,
+      closedAt: Date.now(),
+      closingCounted: countedCash,
+      closedBy: user.username,
+    };
+    setCashSessions(prev => prev.map(s => (s.id === open.id ? closed : s)));
+    addToast(t('closeTill'), 'success');
+    return closed;
+  };
+
+  const refundSale = (saleId: string, reason?: string) => {
+    const sale = sales.find(s => s.id === saleId);
+    if (!sale || sale.status === 'refunded') return;
+    const restored = restoreStock(sale.items, products, ingredients, preparedStock);
+    setIngredients(restored.ingredients);
+    setPreparedStock(restored.preparedStock);
+    markSaleStatus(saleId, 'refunded', reason);
+    setOrders(prev =>
+      prev.map(o => (o.saleId === saleId ? { ...o, status: 'Cancelled' as const, voidReason: reason, lastUpdatedAt: Date.now() } : o))
+    );
+    addToast(t('refundSale'), 'info');
   };
 
   const addExpense = async (expense: Omit<Expense, 'id'>) => {
@@ -1308,10 +1609,9 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  // Persist ops locally so kitchen/stock survive refresh (demo + soft real tenants)
+  // Persist ops locally so kitchen/stock survive refresh (all tenants)
   useEffect(() => {
     if (!businessSettings?.id) return;
-    if (!isDemoBusiness && !isDemoMode) return;
     savePersistedOps({
       businessId: businessSettings.id,
       products,
@@ -1327,23 +1627,231 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       rota,
       staffAvailability,
       taxSettings,
+      cashSessions,
+      floorPlan,
+      wasteLogs,
+      customers,
+      parkedTickets,
       updatedAt: Date.now(),
     });
   }, [
-    businessSettings?.id, isDemoBusiness, isDemoMode,
+    businessSettings?.id,
     products, ingredients, preparedStock, sales, orders, expenses,
-    workShifts, shiftLogs, users, categories, rota, staffAvailability, taxSettings,
+    workShifts, shiftLogs, users, categories, rota, staffAvailability, taxSettings, cashSessions, floorPlan,
+    wasteLogs, customers, parkedTickets,
   ]);
+
+  // Cloud upsert catalog + orders (best-effort; missing tables are ignored)
+  useEffect(() => {
+    if (!businessSettings?.id || isDemoBusiness) return;
+    const businessId = businessSettings.id;
+    const timer = window.setTimeout(() => {
+      void supabase.from('products').upsert(products.map(p => productToRow(p, businessId)));
+      void supabase.from('ingredients').upsert(
+        ingredients.map(i => ({
+          id: i.id,
+          business_id: businessId,
+          name: i.name,
+          unit: i.unit,
+          qty: i.qty,
+          low_threshold: i.lowThreshold,
+        }))
+      );
+      void supabase.from('prepared_stock').upsert(
+        preparedStock.map(p => ({
+          id: p.id,
+          business_id: businessId,
+          name: p.name,
+          portions: p.portions,
+          low_threshold: p.lowThreshold,
+        }))
+      );
+      void supabase.from('orders').upsert(orders.map(o => orderToRow(o, businessId)));
+    }, 900);
+    return () => window.clearTimeout(timer);
+  }, [businessSettings?.id, isDemoBusiness, products, ingredients, preparedStock, orders]);
+
+  // Merge online pre-orders from public order page inbox
+  useEffect(() => {
+    if (!businessSettings?.id) return;
+    if (!normalizeEnabledModules(businessSettings.enabledModules).onlineOrders) return;
+    const businessId = businessSettings.id;
+    const pull = () => {
+      const inbox = loadOnlineInbox(businessId);
+      const ops = loadPersistedOps(businessId);
+      const fromOps = (ops?.orders || []).filter(o => o.source === 'online');
+      const byId = new Map<string, (typeof inbox)[0]>();
+      [...fromOps, ...inbox].forEach(o => byId.set(o.id, o));
+      const candidates = Array.from(byId.values());
+      if (!candidates.length) return;
+      setOrders(prev => {
+        const ids = new Set(prev.map(o => o.id));
+        const fresh = candidates.filter(o => !ids.has(o.id));
+        if (!fresh.length) return prev;
+        addToast(t('onlineOrdersReceived'), 'info');
+        return [...fresh, ...prev];
+      });
+      if (inbox.length) clearOnlineInbox(businessId);
+    };
+    pull();
+    const id = window.setInterval(pull, 2500);
+    const onStorage = (e: StorageEvent) => {
+      if (!e.key) return;
+      if (e.key === `previsio_online_ping_${businessId}` || e.key === `previsio_online_inbox_${businessId}`) {
+        pull();
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, [businessSettings?.id, businessSettings?.enabledModules, addToast, t]);
+
+  // Publish menu snapshot for branded online ordering
+  useEffect(() => {
+    if (!businessSettings?.id) return;
+    const modules = normalizeEnabledModules(businessSettings.enabledModules);
+    savePublicMenuSnapshot({
+      businessId: businessSettings.id,
+      businessName: businessSettings.name,
+      currencySymbol: businessSettings.currencySymbol || '€',
+      onlineOrdersEnabled: modules.onlineOrders,
+      products: products
+        .filter(p => p.active !== false)
+        .map(p => ({
+          id: p.id,
+          nameEN: p.nameEN,
+          category: p.category,
+          price: p.price,
+          emoji: p.emoji,
+          active: p.active,
+          isFavourite: p.isFavourite,
+          posColor: p.posColor,
+          extraIds: p.extraIds,
+        })),
+      updatedAt: Date.now(),
+    });
+  }, [businessSettings?.id, businessSettings?.name, businessSettings?.currencySymbol, businessSettings?.enabledModules, products]);
+
+  useEffect(() => {
+    if (!businessSettings?.id || isDemoBusiness) return;
+    const businessId = businessSettings.id;
+    const channel = supabase
+      .channel(`orders-${businessId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'orders', filter: `business_id=eq.${businessId}` },
+        payload => {
+          const row = (payload.new || payload.old) as Record<string, unknown> | undefined;
+          if (!row) return;
+          if (payload.eventType === 'DELETE') {
+            setOrders(prev => prev.filter(o => o.id !== String(row.id)));
+            return;
+          }
+          const mapped: Order = {
+            id: String(row.id),
+            type: (row.type as Order['type']) || 'WalkIn',
+            status: (row.status as Order['status']) || 'Preparing',
+            createdAt: row.created_at ? new Date(String(row.created_at)).getTime() : Date.now(),
+            lastUpdatedAt: row.updated_at ? new Date(String(row.updated_at)).getTime() : Date.now(),
+            scheduledFor: (row.scheduled_for as string) || undefined,
+            customerName: (row.customer_name as string) || undefined,
+            customerPhone: (row.customer_phone as string) || undefined,
+            items: (row.items as Order['items']) || [],
+            subtotal: Number(row.subtotal ?? 0),
+            paymentMethod: (row.payment_method as Order['paymentMethod']) || 'Cash',
+            createdByUsername: String(row.created_by_username || ''),
+            createdByFullName: String(row.created_by_fullname || ''),
+            completedAt: row.completed_at ? new Date(String(row.completed_at)).getTime() : undefined,
+            saleId: (row.sale_id as string) || undefined,
+            discountAmount: row.discount_amount != null ? Number(row.discount_amount) : undefined,
+            tipAmount: row.tip_amount != null ? Number(row.tip_amount) : undefined,
+            voidReason: (row.void_reason as string) || undefined,
+            kitchenPrintedAt: row.kitchen_printed_at ? new Date(String(row.kitchen_printed_at)).getTime() : undefined,
+          };
+          setOrders(prev => {
+            const idx = prev.findIndex(o => o.id === mapped.id);
+            if (idx < 0) return [mapped, ...prev];
+            const next = [...prev];
+            next[idx] = { ...next[idx], ...mapped };
+            return next;
+          });
+        }
+      )
+      .subscribe();
+
+    const stockChannel = supabase
+      .channel(`stock-${businessId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'ingredients', filter: `business_id=eq.${businessId}` },
+        payload => {
+          const row = payload.new as Record<string, unknown> | undefined;
+          if (!row || payload.eventType === 'DELETE') {
+            if (payload.old) setIngredients(prev => prev.filter(i => i.id !== Number((payload.old as any).id)));
+            return;
+          }
+          const mapped: Ingredient = {
+            id: Number(row.id),
+            name: String(row.name ?? ''),
+            unit: String(row.unit ?? 'pcs'),
+            qty: Number(row.qty ?? 0),
+            lowThreshold: Number(row.low_threshold ?? 5),
+          };
+          setIngredients(prev => {
+            const idx = prev.findIndex(i => i.id === mapped.id);
+            if (idx < 0) return [...prev, mapped];
+            const next = [...prev];
+            next[idx] = mapped;
+            return next;
+          });
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'prepared_stock', filter: `business_id=eq.${businessId}` },
+        payload => {
+          const row = payload.new as Record<string, unknown> | undefined;
+          if (!row || payload.eventType === 'DELETE') {
+            if (payload.old) setPreparedStock(prev => prev.filter(p => p.id !== Number((payload.old as any).id)));
+            return;
+          }
+          const mapped: PreparedStock = {
+            id: Number(row.id),
+            name: String(row.name ?? ''),
+            portions: Number(row.portions ?? 0),
+            lowThreshold: Number(row.low_threshold ?? 5),
+          };
+          setPreparedStock(prev => {
+            const idx = prev.findIndex(p => p.id === mapped.id);
+            if (idx < 0) return [...prev, mapped];
+            const next = [...prev];
+            next[idx] = mapped;
+            return next;
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+      void supabase.removeChannel(stockChannel);
+    };
+  }, [businessSettings?.id, isDemoBusiness]);
 
   return (
     <AppContext.Provider value={{
       lang, setLang, t, tp, tc, activeTab, setActiveTab,
       user, setUser, products, setProducts, ingredients, setIngredients,
       preparedStock, setPreparedStock,
-      sales, setSales, deleteSale, updateSale, addSale, orders, setOrders, users, setUsers, categories, setCategories,
+      sales, setSales, deleteSale, updateSale, addSale, recordSale, markSaleStatus, orders, setOrders, users, setUsers, categories, setCategories,
       expenses, addExpense, updateExpense, deleteExpense,
       workShifts, setWorkShifts, addWorkShift, updateWorkShift, deleteWorkShift,
-      shiftLogs, setShiftLogs,
+      shiftLogs, setShiftLogs, clockIn, clockOut, openShiftLog,
+      cashSessions, openTill, closeTill, openCashSession, refundSale,
+      floorPlan, setFloorPlan, pendingTableSession, setPendingTableSession,
+      wasteLogs, setWasteLogs, customers, setCustomers, parkedTickets, setParkedTickets,
       rota, setRota, saveRota, staffAvailability, setStaffAvailability, isSessionLoading,
       taxSettings, setTaxSettings, landingPageConfig, setLandingPageConfig, hasLandingPage: !!landingPageConfig, isLoggingIn,
       toasts, addToast, logout, resetAllData, formatPrice,

@@ -1,25 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useApp } from '../AppContext';
-import {
-  LogOut,
-  Menu,
-  X,
-  Layout,
-  Lock,
-  LayoutDashboard,
-  ShoppingCart,
-  ClipboardList,
-  BarChart3,
-  Package,
-  UtensilsCrossed,
-  Users,
-  Wallet,
-  Settings,
-  CalendarDays,
-  Tag,
-} from 'lucide-react';
+import { LogOut, Menu, X, Layout, Lock, LayoutDashboard, ShoppingCart, ClipboardList, BarChart3, Package, UtensilsCrossed, Users, Wallet, Settings, CalendarDays, Tag, Grid3X3, Contact } from 'lucide-react';
 import { OverviewTab } from './OverviewTab';
 import { CashierTab } from './CashierTab';
+import { TablesTab } from './TablesTab';
 import { OrdersTab } from './OrdersTab';
 import { SalesTab } from './SalesTab';
 import { StockTab } from './StockTab';
@@ -28,17 +12,21 @@ import { StaffTab } from './StaffTab';
 import { MyShiftsTab } from './MyShiftsTab';
 import { FinanceTab } from './FinanceTab';
 import { SettingsTab } from './SettingsTab';
+import { CustomersTab } from './CustomersTab';
 import { OnboardingWizard } from './OnboardingWizard';
 import { LanguageSwitcher } from './LanguageSwitcher';
+import { ProductTour } from './ProductTour';
 import { Role, normalizeEnabledModules } from '../types';
 
 const TAB_ICONS: Record<string, React.ReactNode> = {
   overview: <LayoutDashboard size={18} />,
   cashier: <ShoppingCart size={18} />,
+  tables: <Grid3X3 size={18} />,
   orders: <ClipboardList size={18} />,
   sales: <BarChart3 size={18} />,
   stock: <Package size={18} />,
   products: <UtensilsCrossed size={18} />,
+  customers: <Contact size={18} />,
   staff: <Users size={18} />,
   myshifts: <CalendarDays size={18} />,
   finance: <Wallet size={18} />,
@@ -46,8 +34,8 @@ const TAB_ICONS: Record<string, React.ReactNode> = {
 };
 
 const NAV_GROUPS: { id: string; labelKey: string; tabIds: string[] }[] = [
-  { id: 'ops', labelKey: 'navOperations', tabIds: ['overview', 'cashier', 'orders', 'sales', 'stock'] },
-  { id: 'manage', labelKey: 'navManage', tabIds: ['products', 'staff', 'myshifts', 'finance'] },
+  { id: 'ops', labelKey: 'navOperations', tabIds: ['overview', 'cashier', 'tables', 'orders', 'sales', 'stock'] },
+  { id: 'manage', labelKey: 'navManage', tabIds: ['products', 'customers', 'staff', 'myshifts', 'finance'] },
   { id: 'account', labelKey: 'navAccount', tabIds: ['settings'] },
 ];
 
@@ -55,7 +43,9 @@ const MODULE_TAB_MAP: Record<string, keyof ReturnType<typeof normalizeEnabledMod
   overview: 'always',
   cashier: 'always',
   products: 'always',
+  customers: 'customers',
   settings: 'always',
+  tables: 'tables',
   orders: 'orders',
   sales: 'sales',
   stock: 'stock',
@@ -78,6 +68,8 @@ export const Dashboard = () => {
     setActiveTab,
     startOnboarding,
     completeOnboarding,
+    rota,
+    openCashSession,
   } = useApp();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [navTrail, setNavTrail] = useState<string[]>([]);
@@ -91,6 +83,15 @@ export const Dashboard = () => {
       return next.length > 8 ? next.slice(-8) : next;
     });
   }, [activeTab]);
+
+  const todayKey = useMemo(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }, []);
+  const scheduledToday = useMemo(
+    () => (user ? rota.filter(r => r.username === user.username && r.date === todayKey) : []),
+    [rota, user, todayKey]
+  );
 
   const goToTrailItem = (tabId: string) => {
     setActiveTab(tabId);
@@ -119,6 +120,7 @@ export const Dashboard = () => {
     return [
       { id: 'overview', label: t('overview'), roles: ['owner'] },
       { id: 'cashier', label: t('cashier'), roles: ['owner', 'manager', 'staff'] },
+      { id: 'tables', label: t('tablesTab'), roles: ['owner', 'manager', 'staff'] },
       {
         id: 'orders',
         label: t('orders'),
@@ -128,6 +130,7 @@ export const Dashboard = () => {
       { id: 'sales', label: t('sales'), roles: ['owner'] },
       { id: 'stock', label: t('stock'), roles: ['owner', 'manager', 'staff'] },
       { id: 'products', label: t('products'), roles: ['owner', 'manager', 'staff'] },
+      { id: 'customers', label: t('customersTab'), roles: ['owner', 'manager'] },
       { id: 'staff', label: t('staff'), roles: ['owner', 'manager'] },
       { id: 'myshifts', label: t('myShifts'), roles: ['staff'] },
       { id: 'finance', label: t('finance'), roles: ['owner'] },
@@ -200,15 +203,15 @@ export const Dashboard = () => {
   };
 
   const SidebarNav = () => (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full" style={{ color: 'var(--app-sidebar-fg)' }}>
       <div className="px-5 pt-6 pb-5">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-[#D4A373] text-[#1E1B18] flex items-center justify-center shrink-0">
+          <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'var(--app-sidebar-accent)', color: 'var(--app-sidebar-accent-fg)' }}>
             <Tag size={18} strokeWidth={2.5} />
           </div>
           <div className="min-w-0">
-            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-white/35">PreVisio</p>
-            <h1 className="text-base font-black font-serif text-white truncate leading-tight">{storeName}</h1>
+            <p className="text-[10px] font-bold uppercase tracking-[0.16em]" style={{ color: 'var(--app-sidebar-muted)' }}>PreVisio</p>
+            <h1 className="text-base font-black font-serif truncate leading-tight">{storeName}</h1>
           </div>
         </div>
       </div>
@@ -216,7 +219,7 @@ export const Dashboard = () => {
       <nav className="flex-1 overflow-y-auto px-3 pb-4 space-y-5 scrollbar-hide">
         {groupedTabs.map(group => (
           <div key={group.id}>
-            <p className="px-3 mb-1.5 text-[10px] font-black uppercase tracking-[0.14em] text-white/30">
+            <p className="px-3 mb-1.5 text-[10px] font-black uppercase tracking-[0.14em]" style={{ color: 'var(--app-sidebar-muted)' }}>
               {t(group.labelKey)}
             </p>
             <div className="space-y-0.5">
@@ -230,16 +233,26 @@ export const Dashboard = () => {
                     disabled={tab.locked}
                     className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left text-sm font-bold transition-all ${
                       isActive
-                        ? 'bg-[#3D2E28] text-white shadow-sm'
+                        ? 'shadow-sm'
                         : tab.locked
-                          ? 'text-white/25 cursor-not-allowed'
-                          : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
+                          ? 'cursor-not-allowed opacity-40'
+                          : 'hover:bg-white/15 hover:translate-x-0.5'
                     }`}
+                    style={
+                      isActive
+                        ? {
+                            background: 'color-mix(in srgb, var(--app-sidebar-fg) 14%, transparent)',
+                            color: 'var(--app-sidebar-fg)',
+                          }
+                        : { color: tab.locked ? 'var(--app-sidebar-muted)' : 'var(--app-sidebar-muted)' }
+                    }
                   >
-                    <span className={`shrink-0 ${isActive ? 'text-[#D4A373]' : 'text-white/35'}`}>
+                    <span className="shrink-0" style={{ color: isActive ? 'var(--app-sidebar-accent)' : 'var(--app-sidebar-muted)' }}>
                       {TAB_ICONS[tab.id] || <Layout size={18} />}
                     </span>
-                    <span className="flex-1 truncate">{tab.label}</span>
+                    <span className="flex-1 truncate" style={isActive ? undefined : { color: 'color-mix(in srgb, var(--app-sidebar-fg) 70%, transparent)' }}>
+                      {tab.label}
+                    </span>
                     {tab.locked && <Lock size={12} className="opacity-60" />}
                     {typeof tab.badge === 'number' && tab.badge > 0 && (
                       <span className="px-2 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-black">
@@ -254,23 +267,38 @@ export const Dashboard = () => {
         ))}
       </nav>
 
-      <div className="px-4 pb-5 pt-4 border-t border-white/10">
-        <div className="flex items-center gap-3 rounded-xl bg-white/[0.04] px-3 py-3">
-          <div className="w-9 h-9 rounded-full bg-[#3D2E28] text-[#D4A373] flex items-center justify-center font-bold text-sm shrink-0">
+      <div className="px-4 pb-5 pt-4 space-y-2" style={{ borderTop: '1px solid color-mix(in srgb, var(--app-sidebar-fg) 12%, transparent)' }}>
+        <div
+          className="flex items-center gap-3 rounded-xl px-3 py-3"
+          style={{ background: 'color-mix(in srgb, var(--app-sidebar-fg) 6%, transparent)' }}
+        >
+          <div
+            className="w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm shrink-0"
+            style={{ background: 'var(--app-sidebar-chip)', color: 'var(--app-sidebar-accent)' }}
+          >
             {(user.fullName || user.username).charAt(0).toUpperCase()}
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-bold text-white truncate leading-none mb-1">
+            <p className="text-sm font-bold truncate leading-none mb-1">
               {user.fullName || user.username}
             </p>
-            <p className="text-[10px] font-black uppercase tracking-wider text-white/35">
+            <p className="text-[10px] font-black uppercase tracking-wider" style={{ color: 'var(--app-sidebar-muted)' }}>
               {t(user.role === 'staff' ? 'staffRole' : user.role)}
             </p>
+            {scheduledToday[0] && (
+              <p className="text-[9px] mt-0.5 truncate" style={{ color: 'var(--app-sidebar-muted)' }}>
+                {t('scheduledToday')}
+                {scheduledToday[0].startTime && scheduledToday[0].endTime
+                  ? ` ${scheduledToday[0].startTime}–${scheduledToday[0].endTime}`
+                  : ''}
+              </p>
+            )}
           </div>
           <button
             type="button"
             onClick={logout}
-            className="p-2 rounded-lg text-white/45 hover:text-rose-300 hover:bg-white/5 transition-colors"
+            className="p-2 rounded-lg hover:text-rose-300 hover:bg-black/10 transition-colors shrink-0"
+            style={{ color: 'var(--app-sidebar-muted)' }}
             title={t('logout')}
           >
             <LogOut size={18} />
@@ -281,8 +309,11 @@ export const Dashboard = () => {
   );
 
   return (
-    <div className="h-screen max-h-screen flex bg-[#F7F3ED] overflow-hidden">
-      <aside className="hidden md:flex w-[248px] shrink-0 flex-col h-full bg-[#1E1B18] text-white border-r border-black/20">
+    <div className="h-screen max-h-screen flex overflow-hidden" style={{ background: 'var(--app-canvas-bg)' }}>
+      <aside
+        className="hidden md:flex w-[248px] shrink-0 flex-col h-full border-r border-black/20"
+        style={{ background: 'var(--app-sidebar-bg)', color: 'var(--app-sidebar-fg)' }}
+      >
         <SidebarNav />
       </aside>
 
@@ -292,11 +323,15 @@ export const Dashboard = () => {
             className="absolute inset-0 bg-black/50 backdrop-blur-sm animate-fade-in"
             onClick={() => setIsSidebarOpen(false)}
           />
-          <aside className="absolute left-0 top-0 bottom-0 w-[min(248px,86vw)] bg-[#1E1B18] text-white shadow-2xl animate-fade-in flex flex-col">
+          <aside
+            className="absolute left-0 top-0 bottom-0 w-[min(248px,86vw)] shadow-2xl animate-fade-in flex flex-col"
+            style={{ background: 'var(--app-sidebar-bg)', color: 'var(--app-sidebar-fg)' }}
+          >
             <button
               type="button"
               onClick={() => setIsSidebarOpen(false)}
-              className="absolute top-4 right-3 p-2 text-white/50 hover:text-white z-10"
+              className="absolute top-4 right-3 p-2 z-10 opacity-50 hover:opacity-100"
+              style={{ color: 'var(--app-sidebar-fg)' }}
               aria-label="Close menu"
             >
               <X size={20} />
@@ -307,7 +342,7 @@ export const Dashboard = () => {
       )}
 
       <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
-        <header className="shrink-0 bg-[#F7F3ED]/95 backdrop-blur-md border-b border-bakery-beige px-4 sm:px-6 lg:px-8">
+        <header className="shrink-0 backdrop-blur-md border-b border-bakery-beige px-4 sm:px-6 lg:px-8" style={{ background: 'color-mix(in srgb, var(--app-canvas-bg) 95%, transparent)' }}>
           <div className="h-12 flex items-center justify-between gap-4">
             <div className="flex items-center gap-3 min-w-0">
               <button
@@ -349,7 +384,16 @@ export const Dashboard = () => {
               </nav>
             </div>
 
-            <LanguageSwitcher compact align="right" />
+            <div className="flex items-center gap-2 shrink-0">
+              <span
+                className={`hidden sm:inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg text-[10px] font-bold uppercase tracking-wider ${
+                  openCashSession ? 'bg-amber-100 text-amber-800' : 'bg-bakery-beige/60 text-bakery-brown/50'
+                }`}
+              >
+                {openCashSession ? t('tillStatusOpen') : t('tillStatusClosed')}
+              </span>
+              <LanguageSwitcher compact align="right" />
+            </div>
           </div>
         </header>
 
@@ -368,10 +412,12 @@ export const Dashboard = () => {
                   />
                 )}
                 {activeTab === 'cashier' && <CashierTab />}
+                {activeTab === 'tables' && <TablesTab />}
                 {activeTab === 'orders' && <OrdersTab />}
                 {activeTab === 'sales' && <SalesTab />}
                 {activeTab === 'stock' && <StockTab />}
                 {activeTab === 'products' && <ProductsTab />}
+                {activeTab === 'customers' && <CustomersTab />}
                 {activeTab === 'staff' && <StaffTab />}
                 {activeTab === 'myshifts' && <MyShiftsTab />}
                 {activeTab === 'finance' && <FinanceTab />}
@@ -381,6 +427,8 @@ export const Dashboard = () => {
           </div>
         </main>
       </div>
+
+      <ProductTour visibleTabIds={tabs.filter(tab => !tab.locked).map(tab => tab.id)} />
     </div>
   );
 };

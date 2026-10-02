@@ -55,6 +55,31 @@ export const checkStockAvailability = (
   return { ok: outOfStockItems.length === 0, outOfStockItems };
 };
 
+/** How many more of this product can be sold from current recipe stock. null = untracked. */
+export const remainingYieldForProduct = (
+  product: Product,
+  ingredients: Ingredient[],
+  preparedStock: PreparedStock[]
+): number | null => {
+  const prepped = product.preparedStockLinks || [];
+  const ings = product.ingredientLinks || [];
+  if (!prepped.length && !ings.length) return null;
+  let min = Infinity;
+  prepped.forEach(link => {
+    if (!link.portionsPerSale) return;
+    const ps = preparedStock.find(p => p.id === link.preparedStockId);
+    if (!ps) return;
+    min = Math.min(min, Math.floor(ps.portions / link.portionsPerSale));
+  });
+  ings.forEach(link => {
+    if (!link.quantityUsed) return;
+    const ing = ingredients.find(i => i.id === link.ingredientId);
+    if (!ing) return;
+    min = Math.min(min, Math.floor(ing.qty / link.quantityUsed));
+  });
+  return min === Infinity ? null : Math.max(0, min);
+};
+
 /** Deduct stock for an order (consume on complete). */
 export const deductStock = (
   items: SaleItem[],

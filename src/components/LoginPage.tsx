@@ -15,8 +15,10 @@ type LoginPageProps = {
 };
 
 export const LoginPage = ({ onBack, onGoRegister, onAuthenticated }: LoginPageProps) => {
-  const { addToast, login } = useApp();
+  const { addToast, login, t } = useApp();
+  const [mode, setMode] = useState<'owner' | 'staff'>('owner');
   const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -69,9 +71,15 @@ export const LoginPage = ({ onBack, onGoRegister, onAuthenticated }: LoginPagePr
     setError(null);
     setIsSubmitting(true);
 
-    const trimmedEmail = email.trim();
-
     try {
+      if (mode === 'staff') {
+        await login({ identifier: username.trim(), password, mode: 'staff' });
+        addToast(t('welcomeBack') || 'Welcome back.', 'success');
+        onAuthenticated('dashboard');
+        return;
+      }
+
+      const trimmedEmail = email.trim();
       if (rememberMe) {
         localStorage.setItem(REMEMBER_EMAIL_KEY, trimmedEmail);
       } else {
@@ -84,16 +92,14 @@ export const LoginPage = ({ onBack, onGoRegister, onAuthenticated }: LoginPagePr
       });
 
       if (!authError && data.user) {
-        addToast('Welcome back.', 'success');
+        addToast(t('welcomeBack') || 'Welcome back.', 'success');
         await finishAuth(data.user.id);
         return;
       }
 
-      // Cloud rejected or unreachable — try local / demo owner accounts
       try {
         await login({ identifier: trimmedEmail, password, mode: 'owner' });
-        addToast('Welcome back.', 'success');
-        // Local/demo hydrate synchronously; App routing effect sends them onward.
+        addToast(t('welcomeBack') || 'Welcome back.', 'success');
       } catch (localErr) {
         const message =
           localErr instanceof Error
@@ -114,10 +120,29 @@ export const LoginPage = ({ onBack, onGoRegister, onAuthenticated }: LoginPagePr
   return (
     <AuthShell onBackHome={onBack}>
       <div className="mb-7">
-        <h1 className="text-2xl sm:text-[1.75rem] font-black font-serif tracking-tight text-bakery-brown">Welcome back</h1>
+        <h1 className="text-2xl sm:text-[1.75rem] font-black font-serif tracking-tight text-bakery-brown">
+          {t('welcomeBack') || 'Welcome back'}
+        </h1>
         <p className="mt-2 text-sm text-bakery-brown/55 leading-relaxed">
-          Sign in to your PreVisio management portal
+          {t('signInSubtitle')}
         </p>
+      </div>
+
+      <div className="flex gap-1 p-1 mb-5 rounded-xl bg-bakery-beige/40">
+        <button
+          type="button"
+          onClick={() => { setMode('owner'); setError(null); }}
+          className={`flex-1 py-2 rounded-lg text-xs font-bold ${mode === 'owner' ? 'bg-bakery-brown text-white' : 'text-bakery-brown/60'}`}
+        >
+          {t('ownerLogin')}
+        </button>
+        <button
+          type="button"
+          onClick={() => { setMode('staff'); setError(null); }}
+          className={`flex-1 py-2 rounded-lg text-xs font-bold ${mode === 'staff' ? 'bg-bakery-brown text-white' : 'text-bakery-brown/60'}`}
+        >
+          {t('staffLogin')}
+        </button>
       </div>
 
       {error && (
@@ -130,25 +155,43 @@ export const LoginPage = ({ onBack, onGoRegister, onAuthenticated }: LoginPagePr
       )}
 
       <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <label htmlFor="login-email" className="mb-1.5 block text-sm font-bold text-bakery-brown">
-            Email
-          </label>
-          <input
-            id="login-email"
-            type="email"
-            autoComplete="email"
-            required
-            value={email}
-            onChange={e => setEmail(e.target.value)}
-            className={authFieldClassName}
-            placeholder="you@restaurant.com"
-          />
-        </div>
+        {mode === 'owner' ? (
+          <div>
+            <label htmlFor="login-email" className="mb-1.5 block text-sm font-bold text-bakery-brown">
+              {t('email')}
+            </label>
+            <input
+              id="login-email"
+              type="email"
+              autoComplete="email"
+              required
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              className={authFieldClassName}
+              placeholder={t('emailPlaceholder')}
+            />
+          </div>
+        ) : (
+          <div>
+            <label htmlFor="login-username" className="mb-1.5 block text-sm font-bold text-bakery-brown">
+              {t('staffUsername') || t('username') || 'Username'}
+            </label>
+            <input
+              id="login-username"
+              type="text"
+              autoComplete="username"
+              required
+              value={username}
+              onChange={e => setUsername(e.target.value)}
+              className={authFieldClassName}
+              placeholder="staff1"
+            />
+          </div>
+        )}
 
         <div>
           <label htmlFor="login-password" className="mb-1.5 block text-sm font-bold text-bakery-brown">
-            Password
+            {t('password') || 'Password'}
           </label>
           <input
             id="login-password"
@@ -162,41 +205,45 @@ export const LoginPage = ({ onBack, onGoRegister, onAuthenticated }: LoginPagePr
           />
         </div>
 
-        <div className="flex items-center justify-between gap-3 pt-0.5">
-          <label className="inline-flex items-center gap-2 text-sm text-bakery-brown/60 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={rememberMe}
-              onChange={e => setRememberMe(e.target.checked)}
-              className="h-4 w-4 rounded border-bakery-beige text-bakery-brown focus:ring-bakery-caramel/40"
-            />
-            Remember me
-          </label>
-          <button
-            type="button"
-            onClick={handleForgotPassword}
-            className="text-sm font-bold text-bakery-caramel hover:text-bakery-brown transition-colors"
-          >
-            Forgot password?
-          </button>
-        </div>
+        {mode === 'owner' && (
+          <div className="flex items-center justify-between gap-3 pt-0.5">
+            <label className="inline-flex items-center gap-2 text-sm text-bakery-brown/60 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={rememberMe}
+                onChange={e => setRememberMe(e.target.checked)}
+                className="h-4 w-4 rounded border-bakery-beige text-bakery-brown focus:ring-bakery-caramel/40"
+              />
+              {t('rememberMe')}
+            </label>
+            <button
+              type="button"
+              onClick={handleForgotPassword}
+              className="text-sm font-bold text-bakery-caramel hover:text-bakery-brown transition-colors"
+            >
+              {t('forgotPassword')}
+            </button>
+          </div>
+        )}
 
         <button type="submit" disabled={isSubmitting} className={`${authPrimaryButtonClassName} mt-2`}>
           {isSubmitting ? <Loader2 size={18} className="animate-spin" /> : null}
-          Sign in
+          {t('signIn') || t('loginTitle') || 'Sign in'}
         </button>
       </form>
 
-      <p className="mt-6 text-center text-sm text-bakery-brown/50">
-        Don&apos;t have an account?{' '}
-        <button
-          type="button"
-          onClick={onGoRegister}
-          className="font-bold text-bakery-brown hover:text-bakery-caramel transition-colors"
-        >
-          Create account
-        </button>
-      </p>
+      {mode === 'owner' && (
+        <p className="mt-6 text-center text-sm text-bakery-brown/50">
+          {t('dontHaveAccount')}{' '}
+          <button
+            type="button"
+            onClick={onGoRegister}
+            className="font-bold text-bakery-caramel hover:text-bakery-brown"
+          >
+            {t('register')}
+          </button>
+        </p>
+      )}
     </AuthShell>
   );
 };
