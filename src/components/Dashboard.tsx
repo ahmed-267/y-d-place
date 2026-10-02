@@ -17,6 +17,11 @@ import { OnboardingWizard } from './OnboardingWizard';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { ProductTour } from './ProductTour';
 import { Role, normalizeEnabledModules } from '../types';
+import { hasOwnerAccess } from '../utils/roles';
+import { hasActiveSubscription } from '../utils/subscription';
+import { BillingGate } from './BillingGate';
+import { supabase } from './supabaseClient';
+import { mapBusinessRow } from '../utils/dbMappers';
 
 const TAB_ICONS: Record<string, React.ReactNode> = {
   overview: <LayoutDashboard size={18} />,
@@ -69,10 +74,29 @@ export const Dashboard = () => {
     startOnboarding,
     completeOnboarding,
     rota,
-    openCashSession,
+    isDemoMode,
+    switchDemoRole,
+    setBusinessSettings,
+    addToast,
   } = useApp();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [navTrail, setNavTrail] = useState<string[]>([]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const billing = params.get('billing');
+    if (!billing || !businessSettings?.id || businessSettings.id === 'ydplace') return;
+
+    const refresh = async () => {
+      const { data } = await supabase.from('businesses').select('*').eq('id', businessSettings.id).maybeSingle();
+      if (data) setBusinessSettings(mapBusinessRow(data as Record<string, unknown>));
+      if (billing === 'success') addToast(t('billingSuccessToast'), 'success');
+      if (billing === 'cancel') addToast(t('billingCancelToast'), 'info');
+      window.history.replaceState(null, '', window.location.pathname);
+    };
+    void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on return from Stripe
+  }, []);
 
   useEffect(() => {
     if (!activeTab) return;
@@ -118,7 +142,7 @@ export const Dashboard = () => {
     if (!user) return [];
     const modules = normalizeEnabledModules(businessSettings?.enabledModules);
     return [
-      { id: 'overview', label: t('overview'), roles: ['owner'] },
+      { id: 'overview', label: t('overview'), roles: ['owner', 'manager'] },
       { id: 'cashier', label: t('cashier'), roles: ['owner', 'manager', 'staff'] },
       { id: 'tables', label: t('tablesTab'), roles: ['owner', 'manager', 'staff'] },
       {
@@ -127,14 +151,14 @@ export const Dashboard = () => {
         roles: ['owner', 'manager', 'staff'],
         badge: activeOrderCount > 0 ? activeOrderCount : undefined,
       },
-      { id: 'sales', label: t('sales'), roles: ['owner'] },
+      { id: 'sales', label: t('sales'), roles: ['owner', 'manager'] },
       { id: 'stock', label: t('stock'), roles: ['owner', 'manager', 'staff'] },
       { id: 'products', label: t('products'), roles: ['owner', 'manager', 'staff'] },
       { id: 'customers', label: t('customersTab'), roles: ['owner', 'manager'] },
       { id: 'staff', label: t('staff'), roles: ['owner', 'manager'] },
       { id: 'myshifts', label: t('myShifts'), roles: ['staff'] },
-      { id: 'finance', label: t('finance'), roles: ['owner'] },
-      { id: 'settings', label: t('settings'), roles: ['owner'] },
+      { id: 'finance', label: t('finance'), roles: ['owner', 'manager'] },
+      { id: 'settings', label: t('settings'), roles: ['owner', 'manager'] },
     ]
       .filter(tab => tab.roles.includes(user.role))
       .filter(tab => {
@@ -144,7 +168,7 @@ export const Dashboard = () => {
       }) as TabItem[];
   }, [user, t, activeOrderCount, businessSettings?.enabledModules]);
 
-  const gateEligible = user?.role === 'owner' && businessSettings?.id !== 'ydplace';
+  const gateEligible = hasOwnerAccess(user?.role) && businessSettings?.id !== 'ydplace';
   const setupCompleted = isBusinessSetupCompleted;
   const sellReady = setupCompleted || products.length >= 1;
   const setupGateActive = !!gateEligible && !sellReady;
@@ -191,6 +215,40 @@ export const Dashboard = () => {
   }, [user?.id]);
 
   if (!user) return null;
+
+  const setupLocked = isOnboarding && hasOwnerAccess(user.role) && !isBusinessSetupCompleted;
+  if (setupLocked) {
+    return (
+      <div className="h-screen max-h-screen flex flex-col overflow-hidden" style={{ background: 'var(--app-canvas-bg)' }}>
+        <header className="shrink-0 border-b border-bakery-beige px-4 sm:px-6 h-14 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <Layout size={18} className="text-bakery-brown shrink-0" />
+            <p className="font-serif font-black text-bakery-brown truncate">{businessSettings?.name || 'PreVisio'}</p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <LanguageSwitcher compact align="right" />
+            <button
+              type="button"
+              onClick={logout}
+              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-bold text-bakery-brown/60 hover:text-bakery-brown hover:bg-bakery-beige/70"
+            >
+              <LogOut size={14} />
+              {t('logout')}
+            </button>
+          </div>
+        </header>
+        <main className="flex-1 overflow-y-auto p-4 sm:p-6">
+          <div className="max-w-[1400px] mx-auto w-full">
+            <OnboardingWizard />
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  if (!isDemoMode && businessSettings && !hasActiveSubscription(businessSettings)) {
+    return <BillingGate />;
+  }
 
   const storeName = businessSettings?.name || 'PreVisio';
   const activeTabMeta = tabs.find(tab => tab.id === activeTab);
@@ -268,6 +326,37 @@ export const Dashboard = () => {
       </nav>
 
       <div className="px-4 pb-5 pt-4 space-y-2" style={{ borderTop: '1px solid color-mix(in srgb, var(--app-sidebar-fg) 12%, transparent)' }}>
+        {isDemoMode && (
+          <div className="space-y-2 px-1 pb-1">
+            <p className="text-[10px] font-black uppercase tracking-wider px-1" style={{ color: 'var(--app-sidebar-muted)' }}>
+              {t('demoRoleSwitcher')}
+            </p>
+            <div className="grid grid-cols-3 gap-1 rounded-xl p-1" style={{ background: 'color-mix(in srgb, var(--app-sidebar-fg) 8%, transparent)' }}>
+              {([
+                { role: 'owner' as const, label: t('owner') },
+                { role: 'manager' as const, label: t('manager') },
+                { role: 'staff' as const, label: t('staffRole') },
+              ]).map(opt => {
+                const active = user.role === opt.role;
+                return (
+                  <button
+                    key={opt.role}
+                    type="button"
+                    onClick={() => switchDemoRole(opt.role)}
+                    className="rounded-lg px-1.5 py-2 text-[10px] font-black uppercase tracking-wide transition-colors"
+                    style={
+                      active
+                        ? { background: 'var(--app-sidebar-chip)', color: 'var(--app-sidebar-accent)' }
+                        : { color: 'var(--app-sidebar-muted)' }
+                    }
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
         <div
           className="flex items-center gap-3 rounded-xl px-3 py-3"
           style={{ background: 'color-mix(in srgb, var(--app-sidebar-fg) 6%, transparent)' }}
@@ -385,13 +474,6 @@ export const Dashboard = () => {
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
-              <span
-                className={`hidden sm:inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg text-[10px] font-bold uppercase tracking-wider ${
-                  openCashSession ? 'bg-amber-100 text-amber-800' : 'bg-bakery-beige/60 text-bakery-brown/50'
-                }`}
-              >
-                {openCashSession ? t('tillStatusOpen') : t('tillStatusClosed')}
-              </span>
               <LanguageSwitcher compact align="right" />
             </div>
           </div>
@@ -399,7 +481,7 @@ export const Dashboard = () => {
 
         <main className="flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-5 lg:px-8 lg:py-5 w-full">
           <div className="max-w-[1400px] mx-auto w-full">
-            {isOnboarding && user.role === 'owner' && activeTab === 'overview' ? (
+            {isOnboarding && hasOwnerAccess(user.role) && activeTab === 'overview' ? (
               <OnboardingWizard />
             ) : (
               <>

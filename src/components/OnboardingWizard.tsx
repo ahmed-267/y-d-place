@@ -24,9 +24,10 @@ import { CitySelect } from './CitySelect';
 import { Modal } from './Modal';
 import { ScanProgressModal } from './ScanProgressModal';
 import { APP_LANGUAGE_OPTIONS } from '../utils/languages';
-import { requestProductTour } from '../utils/productTour';
+import { requestProductTour, setTourResumeTab } from '../utils/productTour';
 
-const ONBOARDING_STEP_KEY = 'previsio_onboarding_step';
+const onboardingStepKey = (userId?: string | number | null) =>
+  `previsio_onboarding_step_${userId ?? 'anon'}`;
 
 export const OnboardingWizard = () => {
   const {
@@ -67,9 +68,10 @@ export const OnboardingWizard = () => {
   };
 
   const totalSteps = 4;
+  const stepKey = onboardingStepKey(user?.id ?? user?.email);
   const [step, setStep] = useState(() => {
     try {
-      const stored = sessionStorage.getItem(ONBOARDING_STEP_KEY);
+      const stored = sessionStorage.getItem(stepKey) || sessionStorage.getItem('previsio_onboarding_step');
       const n = stored ? parseInt(stored, 10) : NaN;
       if (n >= 1 && n <= 4) return n;
     } catch {
@@ -84,11 +86,11 @@ export const OnboardingWizard = () => {
 
   useEffect(() => {
     try {
-      sessionStorage.setItem(ONBOARDING_STEP_KEY, String(step));
+      sessionStorage.setItem(stepKey, String(step));
     } catch {
       /* ignore */
     }
-  }, [step]);
+  }, [step, stepKey]);
 
   const [isProvisioning, setIsProvisioning] = useState(false);
   const [businessConfig, setBusinessConfig] = useState({
@@ -409,7 +411,8 @@ export const OnboardingWizard = () => {
       return;
     }
     try {
-      sessionStorage.removeItem(ONBOARDING_STEP_KEY);
+      sessionStorage.removeItem(stepKey);
+      sessionStorage.removeItem('previsio_onboarding_step');
     } catch {
       /* ignore */
     }
@@ -419,9 +422,10 @@ export const OnboardingWizard = () => {
         enabledModules: normalizeEnabledModules(modules),
       });
     }
+    const resumeTab = goCashier ? 'cashier' : 'overview';
+    setTourResumeTab(resumeTab);
     await completeOnboarding();
-    setActiveTab(goCashier ? 'cashier' : 'overview');
-    // Ensure tour starts after either exit path (pending flag + event survive Dashboard remount).
+    setActiveTab(resumeTab);
     window.setTimeout(() => requestProductTour(), 750);
   };
 

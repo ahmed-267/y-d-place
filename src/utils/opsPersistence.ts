@@ -50,6 +50,12 @@ export const loadPersistedOps = (businessId: string): PersistedOps | null => {
     if (!raw) return null;
     const data = JSON.parse(raw) as PersistedOps;
     if (data.businessId !== businessId) return null;
+    if (data.users) {
+      data.users = data.users.map(u => {
+        const { password: _p, ...rest } = u as User & { password?: string };
+        return rest;
+      });
+    }
     return data;
   } catch {
     return null;
@@ -58,7 +64,11 @@ export const loadPersistedOps = (businessId: string): PersistedOps | null => {
 
 export const savePersistedOps = (payload: PersistedOps) => {
   try {
-    localStorage.setItem(OPS_KEY, JSON.stringify({ ...payload, updatedAt: Date.now() }));
+    const users = (payload.users || []).map(u => {
+      const { password: _p, ...rest } = u as User & { password?: string };
+      return rest;
+    });
+    localStorage.setItem(OPS_KEY, JSON.stringify({ ...payload, users, updatedAt: Date.now() }));
   } catch {
     /* ignore quota */
   }

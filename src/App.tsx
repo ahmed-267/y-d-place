@@ -38,7 +38,7 @@ const pathToView = (path: string): AppView => {
 };
 
 const AppContent = () => {
-  const { user, isSessionLoading, isOnboarding, businessSettings } = useApp();
+  const { user, isSessionLoading, isOnboarding, isLoggingIn, businessSettings, startDemoSession, isPasswordRecovery } = useApp();
   const [orderBizId, setOrderBizId] = useState<string | null>(() => orderBusinessIdFromPath());
   const [view, setView] = useState<AppView>(() => pathToView(window.location.pathname));
   const [pendingAuthRoute, setPendingAuthRoute] = useState<AuthDestination | null>(null);
@@ -57,15 +57,23 @@ const AppContent = () => {
     if (isSessionLoading) return;
     if (view === 'publicOrder' || view === 'publicLanding' || view === 'notFound') return;
 
+    if (isPasswordRecovery) {
+      if (view !== 'login') setView('login');
+      return;
+    }
+
     if (user) {
+      if (isOnboarding) {
+        if (view !== 'onboarding') setView('onboarding');
+        setPendingAuthRoute(null);
+        return;
+      }
       if (pendingAuthRoute) {
         setView(pendingAuthRoute);
         setPendingAuthRoute(null);
         return;
       }
-      if (isOnboarding) {
-        if (view !== 'onboarding') setView('onboarding');
-      } else if (view === 'welcome' || view === 'register' || view === 'login' || view === 'onboarding') {
+      if (view === 'welcome' || view === 'register' || view === 'login' || view === 'onboarding') {
         setView('dashboard');
       }
       return;
@@ -76,7 +84,7 @@ const AppContent = () => {
     if (view === 'dashboard' || view === 'onboarding') {
       setView('welcome');
     }
-  }, [user, view, isSessionLoading, isOnboarding, pendingAuthRoute]);
+  }, [user, view, isSessionLoading, isOnboarding, pendingAuthRoute, isPasswordRecovery]);
 
   const goAuthenticated = (destination: AuthDestination) => {
     setPendingAuthRoute(destination);
@@ -113,7 +121,15 @@ const AppContent = () => {
     }
   }, [view, businessSettings?.id, orderBizId]);
 
-  if (isSessionLoading && view !== 'publicOrder' && view !== 'notFound') {
+  if ((isSessionLoading || isLoggingIn) && view !== 'publicOrder' && view !== 'notFound') {
+    return (
+      <div className="min-h-screen bg-bakery-cream flex items-center justify-center">
+        <Loader2 className="animate-spin text-bakery-brown" size={40} />
+      </div>
+    );
+  }
+
+  if ((view === 'dashboard' || view === 'onboarding') && !user) {
     return (
       <div className="min-h-screen bg-bakery-cream flex items-center justify-center">
         <Loader2 className="animate-spin text-bakery-brown" size={40} />
@@ -134,7 +150,11 @@ const AppContent = () => {
         />
       )}
       {view === 'welcome' && (
-        <WelcomeScreen onLogin={() => setView('login')} onRegister={() => setView('register')} />
+          <WelcomeScreen
+            onLogin={() => setView('login')}
+            onRegister={() => setView('register')}
+            onTryDemo={role => startDemoSession(role || 'owner')}
+          />
       )}
       {view === 'register' && (
         <RegistrationForm

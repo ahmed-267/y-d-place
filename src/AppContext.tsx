@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback, useRef } from 'react';
 import { User, Product, Ingredient, PreparedStock, Sale, Language, Expense, TaxSettings, WorkShift, BusinessSettings, Order, RotaShift, StaffAvailability, LandingPageConfig, ShiftLog, Role, CashSession, FloorPlan, PendingTableSession, emptyFloorPlan, normalizeFloorPlan, WasteLog, Customer, ParkedTicket, normalizeEnabledModules } from './types';
 import { DEFAULT_USERS, TRANSLATIONS, DEFAULT_CATEGORIES } from './constants';
 import { generateDemoData } from './utils/demoData';
@@ -26,31 +26,26 @@ import {
   saleItemsToRows,
 } from './utils/dbMappers';
 import {
-  buildLocalBusiness,
   clearLocalSession,
-  createLocalAccount,
-  findLocalAccount,
   getLocalAccountById,
   getLocalSession,
   isLocalBusinessId,
   isNetworkAuthError,
   loadLocalAccounts,
-  localAccountToUser,
-  setLocalSession,
   upsertLocalAccount,
+  wipeLocalAccounts,
 } from './utils/localAccounts';
 import { restoreStock } from './utils/stock';
 import { normalizeAppLanguage } from './utils/languages';
 import {
+  clearStaffRoster,
   clearStaffSession,
-  findRosterStaff,
-  loadStaffRoster,
-  loadStaffSession,
-  rosterToUser,
-  saveStaffSession,
   upsertStaffRosterEntry,
 } from './utils/staffRoster';
+import { isPasswordStrongEnough } from './utils/passwordStrength';
 
+const APP_USER_SAFE_COLUMNS =
+  'id, business_id, username, full_name, role, email, hourly_rate, numeric_id, businesses (*)';
 const LANDING_STORAGE_KEY = 'previsio_landing_page';
 const DEMO_SESSION_KEY = 'previsio_demo_session';
 
@@ -137,6 +132,10 @@ interface AppContextType {
   startOnboarding: () => void;
   completeOnboarding: () => void;
   loadDemoData: () => void;
+  startDemoSession: (role?: Role) => void;
+  switchDemoRole: (role: Role) => void;
+  isPasswordRecovery: boolean;
+  completePasswordRecovery: () => void;
   landingPageConfig: LandingPageConfig | null;
   setLandingPageConfig: React.Dispatch<React.SetStateAction<LandingPageConfig | null>>;
   hasLandingPage: boolean;
@@ -150,12 +149,12 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 export { AppContext };
 
-const findDemoUser = (identifier: string, password: string) =>
-  DEFAULT_USERS.find(
-    (u) =>
-      (u.username === identifier || u.email === identifier) &&
-      u.password === password
-  );
+const isRecoveryHash = () => {
+  if (typeof window === 'undefined') return false;
+  const hash = window.location.hash.replace(/^#/, '');
+  const params = new URLSearchParams(hash);
+  return params.get('type') === 'recovery';
+};
 
 export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [businessSettings, setBusinessSettingsState] = useState<BusinessSettings | null>(null);
@@ -201,6 +200,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   }, []);
   const [toasts, setToasts] = useState<{ id: number; message: string; type: 'success' | 'error' | 'info' }[]>([]);
   const [isOnboarding, setIsOnboarding] = useState(false);
+  const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
+  const passwordRecoveryRef = useRef(false);
   const [isBusinessSetupCompleted, setIsBusinessSetupCompleted] = useState(false);
   const [isSessionLoading, setIsSessionLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('overview');
@@ -414,7 +415,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
     const { data: usersData } = await supabase
       .from('app_users')
-      .select('*')
+      .select('id, business_id, username, full_name, role, email, hourly_rate, numeric_id')
       .eq('business_id', businessId);
     if (usersData?.length) {
       setUsers(usersData.map((row) => mapUserRow(row as Record<string, unknown>)));
@@ -497,7 +498,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   }, [addToast]);
 
   const applyStaffBusinessSession = useCallback(async (staffUser: User, businessId: string) => {
-    saveStaffSession({ username: staffUser.username, businessId });
+    clearStaffSession();
     setUser(staffUser);
     setActiveTab(staffUser.role === 'manager' ? 'orders' : 'cashier');
     setIsOnboarding(false);
@@ -558,48 +559,20 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   }, [applyDemoSession, applyPersistedOpsToState, fetchBusinessData]);
 
   useEffect(() => {
-    const restoreLocalRegisteredSession = () => {
-      const session = getLocalSession();
-      if (!session) return false;
-      const account = getLocalAccountById(session.accountId);
-      if (!account) {
-        clearLocalSession();
-        return false;
-      }
-      setIsDemoMode(false);
-      setUser(localAccountToUser(account));
-      setBusinessSettingsState(account.business);
-      if (account.business?.language) setLangState(normalizeAppLanguage(account.business.language));
-      setIsBusinessSetupCompleted(account.setupCompleted);
-      setIsOnboarding(!account.setupCompleted);
-      setActiveTab('overview');
-      if (account.business?.id) {
-        const persisted = loadPersistedOps(account.business.id);
-        if (persisted) {
-          if (persisted.products?.length) setProducts(persisted.products);
-          if (persisted.ingredients) setIngredients(persisted.ingredients);
-          if (persisted.preparedStock) setPreparedStock(persisted.preparedStock);
-          if (persisted.sales?.length) setSales(persisted.sales);
-          if (persisted.orders) setOrders(persisted.orders);
-          if (persisted.expenses) setExpenses(persisted.expenses);
-          if (persisted.workShifts) setWorkShifts(persisted.workShifts);
-          if (persisted.shiftLogs) setShiftLogs(persisted.shiftLogs);
-          if (persisted.users?.length) setUsers(persisted.users);
-          if (persisted.categories?.length) setCategories(persisted.categories);
-          if (persisted.rota) setRota(persisted.rota);
-          if (persisted.staffAvailability) setStaffAvailability(persisted.staffAvailability);
-          if (persisted.taxSettings) setTaxSettings(persisted.taxSettings);
-          if (persisted.cashSessions) setCashSessions(persisted.cashSessions);
-        } else if (!account.setupCompleted) {
-          setCategories(['General']);
-        }
-      } else {
-        setCategories(['General']);
-      }
-      return true;
-    };
-
     const checkCurrentSession = async () => {
+      if (isRecoveryHash()) {
+        passwordRecoveryRef.current = true;
+        setIsPasswordRecovery(true);
+        setIsSessionLoading(false);
+        return;
+      }
+
+      // Drop leftover offline accounts — they stored plaintext passwords.
+      wipeLocalAccounts();
+      clearStaffSession();
+      // Scrub legacy roster passwords if any remain
+      clearStaffRoster();
+
       // Restore local demo session first
       try {
         const demoRaw = localStorage.getItem(DEMO_SESSION_KEY);
@@ -607,44 +580,14 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           const { username } = JSON.parse(demoRaw) as { username: string };
           const demoUser = DEFAULT_USERS.find((u) => u.username === username);
           if (demoUser) {
-            applyDemoSession(demoUser as User);
+            await supabase.auth.signOut().catch(() => undefined);
+            applyDemoSession({ ...(demoUser as User), password: undefined });
             setIsSessionLoading(false);
             return;
           }
         }
       } catch {
         localStorage.removeItem(DEMO_SESSION_KEY);
-      }
-
-      // Restore invited / staff session bound to a business
-      try {
-        const staffSession = loadStaffSession();
-        if (staffSession) {
-          const roster = loadStaffRoster();
-          const entry = roster.find(
-            u => u.username === staffSession.username && u.businessId === staffSession.businessId
-          );
-          const demoUser = DEFAULT_USERS.find(u => u.username === staffSession.username);
-          if (entry) {
-            await applyStaffBusinessSession(rosterToUser(entry), staffSession.businessId);
-            setIsSessionLoading(false);
-            return;
-          }
-          if (demoUser && staffSession.businessId === DEMO_BUSINESS_ID) {
-            applyDemoSession(demoUser as User);
-            setIsSessionLoading(false);
-            return;
-          }
-          clearStaffSession();
-        }
-      } catch {
-        clearStaffSession();
-      }
-
-      // Restore offline / local registered accounts (used when Supabase is unreachable)
-      if (restoreLocalRegisteredSession()) {
-        setIsSessionLoading(false);
-        return;
       }
 
       try {
@@ -657,7 +600,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           const authUser = session.user;
           const { data: userProfile, error: profileError } = await supabase
             .from('app_users')
-            .select('*, businesses (*)')
+            .select(APP_USER_SAFE_COLUMNS)
             .eq('id', authUser.id)
             .single();
 
@@ -666,7 +609,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           }
 
           if (userProfile && userProfile.businesses) {
-            const business = mapBusinessRow(userProfile.businesses as Record<string, unknown>);
+            const business = mapBusinessRow(userProfile.businesses as unknown as Record<string, unknown>);
             setIsDemoMode(false);
             setBusinessSettingsState(business);
             setUser({
@@ -696,33 +639,37 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           }
         }
       } catch (error) {
-        console.warn('Supabase session check failed; staying logged out unless local session exists.', error);
-        if (restoreLocalRegisteredSession()) {
-          setIsSessionLoading(false);
-          return;
-        }
+        console.warn('Supabase session check failed; staying logged out.', error);
       }
       setIsSessionLoading(false);
     };
     checkCurrentSession();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      const isAuthAction = _event === 'SIGNED_IN' || _event === 'SIGNED_OUT';
+      const isAuthAction = _event === 'SIGNED_IN' || _event === 'SIGNED_OUT' || _event === 'PASSWORD_RECOVERY';
       try {
-        if (localStorage.getItem(DEMO_SESSION_KEY) || getLocalSession() || loadStaffSession()) {
-          // Demo / local / staff sessions own the UI; ignore Supabase auth churn
+        if (_event === 'PASSWORD_RECOVERY') {
+          passwordRecoveryRef.current = true;
+          setIsPasswordRecovery(true);
+          return;
+        }
+        if (localStorage.getItem(DEMO_SESSION_KEY)) {
+          // Demo session owns the UI; ignore Supabase auth churn
+          return;
+        }
+        if (passwordRecoveryRef.current && _event !== 'SIGNED_OUT') {
           return;
         }
         if (session) {
           const authUser = session.user;
           const { data: userProfile, error: profileError } = await supabase
             .from('app_users')
-            .select('*, businesses (*)')
+            .select(APP_USER_SAFE_COLUMNS)
             .eq('id', authUser.id)
             .single();
 
           if (userProfile && userProfile.businesses) {
-            const business = mapBusinessRow(userProfile.businesses as Record<string, unknown>);
+            const business = mapBusinessRow(userProfile.businesses as unknown as Record<string, unknown>);
             setIsDemoMode(false);
             setBusinessSettingsState(business);
             setUser({
@@ -740,7 +687,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
             if (profileError && profileError.code !== 'PGRST116') {
               console.error("Auth state change error fetching profile:", profileError.message);
             }
-            addToast('Could not load business profile. Please complete setup.', 'info');
             setIsDemoMode(false);
             setUser({
               id: authUser.id as unknown as number,
@@ -772,41 +718,18 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     return () => subscription.unsubscribe();
   }, [fetchBusinessData, applyDemoSession, applyStaffBusinessSession, addToast]);
 
-  const activateLocalAccount = (account: ReturnType<typeof createLocalAccount>, message = 'Account created on this device. Continue onboarding.') => {
-    setLocalSession(account.id);
-    setIsDemoMode(false);
-    setUser(localAccountToUser(account));
-    setBusinessSettingsState(account.business);
-    setIsBusinessSetupCompleted(account.setupCompleted);
-    setIsOnboarding(!account.setupCompleted);
-    setActiveTab('overview');
-    if (!account.business) setCategories(['General']);
-    addToast(message, 'success');
-    return { error: null };
-  };
-
   const registerAccount = async (payload: { fullName: string; username: string; email: string; password: string }) => {
-    if (!payload.password || payload.password.length < 6) {
+    if (!payload.password || payload.password.length < 8) {
       addToast(t('passwordTooShort'), 'error');
-      return { error: { message: 'Password must be at least 6 characters.' } };
+      return { error: { message: t('passwordMinError') } };
     }
 
-    const registerLocally = () => {
-      try {
-        const account = createLocalAccount(payload);
-        return activateLocalAccount(account);
-      } catch (localError) {
-        const message = localError instanceof Error ? localError.message : 'Could not create a local account.';
-        addToast(message, 'error');
-        return { error: { message } };
-      }
-    };
-
     try {
-      const { data: authData, error: authError } = await supabase.auth.signUp({
+      const { data, error: authError } = await supabase.auth.signUp({
         email: payload.email,
         password: payload.password,
         options: {
+          emailRedirectTo: `${window.location.origin}/login`,
           data: {
             full_name: payload.fullName,
             username: payload.username
@@ -815,125 +738,41 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       });
 
       if (authError) {
-        if (isNetworkAuthError(authError)) return registerLocally();
-        addToast(authError.message, 'error');
-        return { error: authError };
-      }
-
-      if (!authData.session) {
-        const signInResult = await Promise.race([
-          supabase.auth.signInWithPassword({
-            email: payload.email,
-            password: payload.password,
-          }),
-          new Promise<{ error: { message: string } }>((resolve) =>
-            setTimeout(() => resolve({ error: { message: 'Login timed out after sign-up. Please try logging in.' } }), 12000)
-          )
-        ]);
-
-        if ('error' in signInResult && signInResult.error) {
-          const msg = signInResult.error.message || '';
-          if (isNetworkAuthError(signInResult.error)) return registerLocally();
-          if (msg.toLowerCase().includes('email not confirmed')) {
-            addToast('Account created. Please confirm your email, then log in to continue onboarding.', 'info');
-          } else {
-            addToast(msg, 'error');
-          }
-          return { error: signInResult.error };
-        }
+        const message = isNetworkAuthError(authError)
+          ? t('authOffline')
+          : authError.message;
+        addToast(message, 'error');
+        return { error: { message } };
       }
 
       clearLocalSession();
       setIsDemoMode(false);
-      setIsOnboarding(true);
-      setActiveTab('overview');
-      addToast('Account created successfully.', 'success');
-      return { error: null };
+      return { error: null, session: data.session };
     } catch (error) {
-      if (isNetworkAuthError(error)) return registerLocally();
-      const message = error instanceof Error ? error.message : 'Registration failed.';
+      const message = isNetworkAuthError(error)
+        ? t('authOffline')
+        : error instanceof Error ? error.message : 'Registration failed.';
       addToast(message, 'error');
       return { error: { message } };
     }
   };
 
   const provisionBusinessProfile = async (settings: Omit<BusinessSettings, 'id'>) => {
-    const localSession = getLocalSession();
-    if (localSession) {
-      const account = getLocalAccountById(localSession.accountId);
-      if (!account) {
-        clearLocalSession();
-        return { error: { message: 'Local account session expired. Please register again.' } };
-      }
-      const business = account.business ?? buildLocalBusiness(settings, account);
-      const nextAccount = {
-        ...account,
-        business: {
-          ...business,
-          ...settings,
-          id: business.id,
-          ownerName: settings.ownerName || account.fullName,
-          ownerEmail: settings.ownerEmail || account.email,
-        },
-        setupCompleted: false,
-      };
-      upsertLocalAccount(nextAccount);
-      setBusinessSettingsState(nextAccount.business);
-      setUser(localAccountToUser(nextAccount));
-      if (nextAccount.business.language) setLangState(normalizeAppLanguage(nextAccount.business.language));
-      setIsOnboarding(true);
-      setIsBusinessSetupCompleted(false);
-      setActiveTab('overview');
-      addToast(t('businessRegistered'), 'success');
-      return { error: null };
-    }
+    clearLocalSession();
 
     let authUser: { id: string; email?: string | null; user_metadata?: Record<string, unknown> } | null = null;
     try {
       const { data: authState, error: sessionError } = await supabase.auth.getUser();
       if (sessionError || !authState.user) {
-        if (isNetworkAuthError(sessionError) && user) {
-          // Fall through to a one-off local business if we somehow lost the session key
-          const fallbackAccount = createLocalAccount({
-            fullName: user.fullName,
-            username: user.username,
-            email: user.email || `${user.username}@local.previsio`,
-            password: user.password || `local-${Date.now()}`,
-          });
-          setLocalSession(fallbackAccount.id);
-          const business = buildLocalBusiness(settings, fallbackAccount);
-          upsertLocalAccount({ ...fallbackAccount, business, setupCompleted: false });
-          setBusinessSettingsState(business);
-          setIsOnboarding(true);
-          setIsBusinessSetupCompleted(false);
-          addToast(t('businessRegistered'), 'success');
-          return { error: null };
-        }
-        return { error: sessionError || { message: 'No authenticated user found.' } };
+        const message = isNetworkAuthError(sessionError) ? t('authOffline') : (sessionError?.message || 'No authenticated user found.');
+        return { error: { message } };
       }
       authUser = authState.user;
     } catch (error) {
-      if (isNetworkAuthError(error) && user) {
-        try {
-          const fallbackAccount = createLocalAccount({
-            fullName: user.fullName,
-            username: user.username,
-            email: user.email || `${user.username}@local.previsio`,
-            password: user.password || `local-${Date.now()}`,
-          });
-          setLocalSession(fallbackAccount.id);
-          const business = buildLocalBusiness(settings, fallbackAccount);
-          upsertLocalAccount({ ...fallbackAccount, business, setupCompleted: false });
-          setBusinessSettingsState(business);
-          setIsOnboarding(true);
-          setIsBusinessSetupCompleted(false);
-          addToast(t('businessRegistered'), 'success');
-          return { error: null };
-        } catch (localError) {
-          return { error: localError };
-        }
-      }
-      return { error: error instanceof Error ? error : { message: 'No authenticated user found.' } };
+      const message = isNetworkAuthError(error)
+        ? t('authOffline')
+        : error instanceof Error ? error.message : 'No authenticated user found.';
+      return { error: { message } };
     }
 
     if (!authUser) {
@@ -960,7 +799,10 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         return { error: profileError };
       }
 
-      setBusinessSettingsState(mapBusinessRow(businessRow));
+      const business = mapBusinessRow(businessRow);
+      setBusinessSettingsState(business);
+      if (settings.language) setLangState(normalizeAppLanguage(settings.language));
+      else if (business.language) setLangState(normalizeAppLanguage(business.language));
       setUser({
         id: authUser.id as unknown as number,
         email: authUser.email,
@@ -968,8 +810,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         username: profilePayload.username,
         role: 'owner',
       });
-      setIsOnboarding(true);
-      setIsBusinessSetupCompleted(false);
+      setIsOnboarding(!Boolean((businessRow as { setup_completed?: boolean }).setup_completed));
+      setIsBusinessSetupCompleted(Boolean((businessRow as { setup_completed?: boolean }).setup_completed));
       setActiveTab('overview');
       return { error: null };
     };
@@ -1037,110 +879,82 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const login = async (payload: { identifier: string; password: string; mode: 'owner' | 'staff' }) => {
     setIsLoggingIn(true);
     try {
-      const demoUser = findDemoUser(payload.identifier, payload.password);
+      localStorage.removeItem(DEMO_SESSION_KEY);
+      clearStaffSession();
 
-      if (payload.mode === 'staff') {
-        if (demoUser) {
-          if (demoUser.role === 'owner') {
-            throw new Error('Use Owner Login for the demo owner account');
-          }
-          await applyStaffBusinessSession(demoUser as User, DEMO_BUSINESS_ID);
-          addToast(t('welcomeBack'), 'success');
-          setIsLoggingIn(false);
-          return;
-        }
-
-        const invited = findRosterStaff(payload.identifier, payload.password);
-        if (invited?.businessId) {
-          await applyStaffBusinessSession(rosterToUser(invited), invited.businessId);
-          addToast(t('welcomeBack'), 'success');
-          setIsLoggingIn(false);
-          return;
-        }
-
-        // Online cloud staff with local_password on app_users
-        try {
-          const { data: rows } = await supabase
-            .from('app_users')
-            .select('*, businesses (*)')
-            .eq('username', payload.identifier)
-            .limit(5);
-          const match = (rows || []).find(
-            (row: any) => row.local_password === payload.password || row.password === payload.password
-          );
-          if (match) {
-            const staffUser: User = {
-              id: typeof match.numeric_id === 'number' ? match.numeric_id : Date.now(),
-              username: String(match.username),
-              fullName: String(match.full_name || match.username),
-              email: match.email || undefined,
-              role: (match.role as Role) || 'staff',
-              hourlyRate: match.hourly_rate != null ? Number(match.hourly_rate) : 14,
-              password: payload.password,
-            };
-            const businessId = String(match.business_id || match.businesses?.id || '');
-            if (!businessId) throw new Error('Invalid staff credentials');
-            upsertStaffRosterEntry({ ...staffUser, businessId, password: payload.password });
-            await applyStaffBusinessSession(staffUser, businessId);
-            addToast(t('welcomeBack'), 'success');
-            setIsLoggingIn(false);
-            return;
-          }
-        } catch (err) {
-          if (!isNetworkAuthError(err)) {
-            /* fall through */
-          }
-        }
-
-        throw new Error('Invalid staff credentials');
+      const email = payload.identifier.trim().toLowerCase();
+      if (!email.includes('@')) {
+        throw new Error(payload.mode === 'staff' ? 'Use the staff member’s email to sign in.' : 'Enter a valid email.');
       }
 
-      if (demoUser) {
-        if (demoUser.role !== 'owner') {
-          throw new Error('Invalid owner credentials');
-        }
-        applyDemoSession(demoUser as User);
-        addToast(t('welcomeBack'), 'success');
-        setIsLoggingIn(false);
-        return;
-      }
-
-      const localAccount = findLocalAccount(payload.identifier, payload.password);
-      if (localAccount) {
-        activateLocalAccount(localAccount, t('welcomeBack'));
-        setIsLoggingIn(false);
-        return;
-      }
-
-      try {
-        const { error } = await supabase.auth.signInWithPassword({
-          email: payload.identifier,
-          password: payload.password,
-        });
-        if (error) {
-          if (isNetworkAuthError(error)) {
-            throw new Error('Cloud login is unavailable. If you registered on this device, use that email and password.');
-          }
-          throw error;
-        }
-        // onAuthStateChange finishes the session
-      } catch (error) {
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password: payload.password,
+      });
+      if (error) {
         if (isNetworkAuthError(error)) {
-          throw new Error('Cloud login is unavailable. If you registered on this device, use that email and password.');
+          throw new Error(t('authOffline'));
         }
         throw error;
       }
+      // onAuthStateChange finishes the session for owners and staff
     } catch (error) {
       setIsLoggingIn(false);
       throw error;
     }
   };
 
+  const completePasswordRecovery = () => {
+    passwordRecoveryRef.current = false;
+    setIsPasswordRecovery(false);
+    if (typeof window !== 'undefined' && window.location.hash) {
+      window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+  };
+
+  const startDemoSession = (role: Role = 'owner') => {
+    void supabase.auth.signOut().catch(() => undefined);
+    clearStaffSession();
+    const wanted: Role = role === 'manager' || role === 'staff' ? role : 'owner';
+    const demoUser = DEFAULT_USERS.find(u => u.role === wanted) || DEFAULT_USERS.find(u => u.role === 'owner');
+    applyDemoSession({
+      id: demoUser?.id ?? 1,
+      username: demoUser?.username || 'owner@123.com',
+      fullName: demoUser?.fullName || 'PreVisio Owner',
+      role: (demoUser?.role as Role) || 'owner',
+      email: demoUser?.email || (wanted === 'owner' ? 'owner@123.com' : undefined),
+      hourlyRate: wanted === 'owner' ? 25 : wanted === 'manager' ? 18 : 14,
+    } as User);
+    const roleLabel = wanted === 'staff' ? t('staffRole') : t(wanted);
+    addToast(`${t('demoDataLoaded')} (${roleLabel})`);
+  };
+
+  /** Flip between owner / manager / staff views without reloading demo data. */
+  const switchDemoRole = (role: Role) => {
+    if (!isDemoMode) return;
+    const wanted: Role = role === 'manager' || role === 'staff' ? role : 'owner';
+    const demoUser = DEFAULT_USERS.find(u => u.role === wanted);
+    if (!demoUser) return;
+    setUser({
+      id: demoUser.id,
+      username: demoUser.username,
+      fullName: demoUser.fullName,
+      role: demoUser.role as Role,
+      email: demoUser.email,
+      hourlyRate: wanted === 'owner' ? 25 : wanted === 'manager' ? 18 : 14,
+    });
+    localStorage.setItem(DEMO_SESSION_KEY, JSON.stringify({ username: demoUser.username }));
+    setActiveTab(wanted === 'staff' ? 'cashier' : wanted === 'manager' ? 'orders' : 'overview');
+    const roleLabel = wanted === 'staff' ? t('staffRole') : t(wanted);
+    addToast(`${t('demoSwitchedRole') || 'Now viewing'}: ${roleLabel}`, 'info');
+  };
+
   const logout = () => {
     setIsLoggingIn(true);
     localStorage.removeItem(DEMO_SESSION_KEY);
-    clearLocalSession();
+    wipeLocalAccounts();
     clearStaffSession();
+    clearStaffRoster();
     // Keep previsio_ops_v1 so demo/local till work survives logout (resetAllData still clears).
     setIsDemoMode(false);
     supabase.auth.signOut().catch(() => undefined).finally(() => setIsLoggingIn(false));
@@ -1166,50 +980,84 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const inviteStaff = async (payload: { fullName: string; username: string; password: string; role: Role; email?: string }) => {
-    if (!payload.username.trim() || !payload.password || payload.password.length < 6) {
-      return { error: t('passwordTooShort') };
+    const email = (payload.email || '').trim().toLowerCase();
+    const username = payload.username.trim();
+    const role = payload.role === 'owner' ? 'staff' : payload.role;
+
+    if (!username || !email) {
+      return { error: 'Email and username are required.' };
     }
-    if (users.some(u => u.username === payload.username) || DEFAULT_USERS.some(u => u.username === payload.username)) {
-      return { error: 'Username already taken.' };
+    if (!isPasswordStrongEnough(payload.password)) {
+      return { error: t('passwordTooWeak') || t('passwordTooShort') };
+    }
+    if (users.some(u => u.username === username || (u.email || '').toLowerCase() === email)) {
+      return { error: 'Username or email already taken.' };
     }
 
-    const newUser: User = {
+    const safeUser: User = {
       id: Date.now(),
       fullName: payload.fullName,
-      username: payload.username.trim(),
-      password: payload.password,
-      role: payload.role === 'owner' ? 'staff' : payload.role,
-      email: payload.email,
-      hourlyRate: payload.role === 'manager' ? 18 : 14,
+      username,
+      role,
+      email,
+      hourlyRate: role === 'manager' ? 18 : 14,
     };
 
-    if (!isDemoBusiness && businessSettings?.id) {
-      const { error } = await supabase.from('app_users').insert({
-        business_id: businessSettings.id,
-        username: newUser.username,
-        full_name: newUser.fullName,
-        role: newUser.role,
-        email: newUser.email,
-        // Local password for demo-compatible staff login until invite emails exist
-        local_password: newUser.password,
-      });
-      if (error && !error.message.includes('local_password')) {
-        // Table may not have local_password — still keep local roster
-        console.warn(error.message);
-      }
+    if (isDemoBusiness || isDemoMode) {
+      setUsers(prev => [...prev, safeUser]);
+      upsertStaffRosterEntry({ ...safeUser, businessId: DEMO_BUSINESS_ID });
+      return {
+        error: null,
+        credentials: { username: email, password: '(demo — use Try demo for staff)' },
+      };
     }
 
-    setUsers(prev => [...prev, newUser]);
-    upsertStaffRosterEntry({
-      ...newUser,
-      businessId: businessSettings?.id || DEMO_BUSINESS_ID,
-      password: payload.password,
-    });
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+    if (!token) {
+      return { error: 'You must be signed in as the owner to invite staff.' };
+    }
 
-    return {
-      error: null,
-      credentials: { username: newUser.username, password: payload.password },
-    };
+    try {
+      const res = await fetch('/api/invite-staff', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          fullName: payload.fullName,
+          username,
+          email,
+          password: payload.password,
+          role,
+        }),
+      });
+      const body = (await res.json()) as { error?: string; user?: { id: string; username: string; fullName: string; email: string; role: Role } };
+      if (!res.ok) {
+        return { error: body.error || 'Invite failed' };
+      }
+      const created = body.user;
+      const invited: User = {
+        id: Date.now(),
+        username: created?.username || username,
+        fullName: created?.fullName || payload.fullName,
+        email: created?.email || email,
+        role: (created?.role as Role) || role,
+        hourlyRate: role === 'manager' ? 18 : 14,
+      };
+      setUsers(prev => [...prev, invited]);
+      upsertStaffRosterEntry({
+        ...invited,
+        businessId: businessSettings?.id || '',
+      });
+      return {
+        error: null,
+        credentials: { username: email, password: '(sent — staff sign in with this email)' },
+      };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : 'Invite failed' };
+    }
   };
 
   const resetAllData = () => {
@@ -1273,17 +1121,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       addToast(t('demoDataYdPlaceOnly') || 'Demo data is only available for the Y\'D Place account.', 'error');
       return;
     }
-    applyDemoSession(
-      user ||
-        ({
-          id: 1,
-          username: 'owner@123.com',
-          fullName: 'PreVisio Owner',
-          role: 'owner',
-          password: 'owner123',
-          email: 'owner@123.com',
-        } as User)
-    );
+    applyDemoSession({
+      id: 1,
+      username: 'owner@123.com',
+      fullName: 'PreVisio Owner',
+      role: 'owner',
+      email: 'owner@123.com',
+    } as User);
     addToast(t('demoDataLoaded'));
   };
 
@@ -1857,7 +1701,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       toasts, addToast, logout, resetAllData, formatPrice,
       businessSettings, setBusinessSettings: setBusinessSettingsState, saveBusinessSettings,
       registerAccount, provisionBusinessProfile, login, inviteStaff, ensureLandingForDemo, isFirstTime, isBusinessSetupCompleted, setIsBusinessSetupCompleted,
-      isOnboarding, startOnboarding, completeOnboarding, loadDemoData, isDemoMode
+      isOnboarding, startOnboarding, completeOnboarding, loadDemoData, startDemoSession, switchDemoRole, isPasswordRecovery, completePasswordRecovery, isDemoMode
     }}>
       {children}
     </AppContext.Provider>

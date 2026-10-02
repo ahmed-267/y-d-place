@@ -1,7 +1,5 @@
 
-const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
-
-/** Prefer the Vite /api/ai proxy so keys stay server-side in dev. */
+/** Prefer the Vite / Netlify /api/ai proxy so keys stay server-side. */
 const requestViaProxy = async (
   prompt: string,
   mode: 'json' | 'text',
@@ -16,32 +14,16 @@ const requestViaProxy = async (
       signal,
       body: JSON.stringify({ prompt, schema, imageBase64, mode }),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.error('AI proxy failed', res.status, await res.text());
+      return null;
+    }
     const data = (await res.json()) as { content?: string | null };
     return data.content ?? null;
-  } catch {
+  } catch (err) {
+    console.error('AI proxy unreachable', err);
     return null;
   }
-};
-
-const getOpenRouterConfig = () => {
-  const apiKey = import.meta.env.VITE_OPENROUTER_API_KEY as string | undefined;
-  if (!apiKey) return null;
-
-  const model =
-    (import.meta.env.VITE_OPENROUTER_MODEL as string | undefined) ||
-    "openai/gpt-4o-mini";
-  const siteUrl = import.meta.env.VITE_OPENROUTER_SITE_URL as string | undefined;
-  const appName = import.meta.env.VITE_OPENROUTER_APP_NAME as string | undefined;
-
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${apiKey}`,
-    "Content-Type": "application/json",
-  };
-  if (siteUrl) headers["HTTP-Referer"] = siteUrl;
-  if (appName) headers["X-Title"] = appName;
-
-  return { headers, model };
 };
 
 const requestOpenRouterJSON = async (
@@ -51,54 +33,12 @@ const requestOpenRouterJSON = async (
   signal?: AbortSignal
 ) => {
   const proxied = await requestViaProxy(prompt, 'json', schema, imageBase64, signal);
-  if (proxied) {
-    try {
-      return JSON.parse(proxied);
-    } catch {
-      /* fall through */
-    }
-  }
-
-  const config = getOpenRouterConfig();
-  if (!config) {
-    console.error("Missing OpenRouter API key. Set OPENROUTER_API_KEY (server) or VITE_OPENROUTER_API_KEY.");
+  if (!proxied) return null;
+  try {
+    return JSON.parse(proxied);
+  } catch {
     return null;
   }
-
-  const content: Array<Record<string, unknown>> = [{ type: "text", text: prompt }];
-  if (imageBase64) {
-    content.push({ type: "image_url", image_url: { url: imageBase64 } });
-  }
-
-  const res = await fetch(OPENROUTER_URL, {
-    method: "POST",
-    headers: config.headers,
-    signal,
-    body: JSON.stringify({
-      model: config.model,
-      messages: [{ role: "user", content }],
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "structured_response",
-          strict: true,
-          schema,
-        },
-      },
-    }),
-  });
-
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`OpenRouter request failed: ${res.status} ${errText}`);
-  }
-
-  const data = (await res.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
-  };
-  const contentText = data.choices?.[0]?.message?.content;
-  if (!contentText) return null;
-  return JSON.parse(contentText);
 };
 
 const requestOpenRouterText = async (
@@ -106,39 +46,7 @@ const requestOpenRouterText = async (
   imageBase64?: string,
   signal?: AbortSignal
 ) => {
-  const proxied = await requestViaProxy(prompt, 'text', undefined, imageBase64, signal);
-  if (proxied != null) return proxied;
-
-  const config = getOpenRouterConfig();
-  if (!config) {
-    console.error("Missing OpenRouter API key. Set OPENROUTER_API_KEY (server) or VITE_OPENROUTER_API_KEY.");
-    return null;
-  }
-
-  const content: Array<Record<string, unknown>> = [{ type: "text", text: prompt }];
-  if (imageBase64) {
-    content.push({ type: "image_url", image_url: { url: imageBase64 } });
-  }
-
-  const res = await fetch(OPENROUTER_URL, {
-    method: "POST",
-    headers: config.headers,
-    signal,
-    body: JSON.stringify({
-      model: config.model,
-      messages: [{ role: "user", content }],
-    }),
-  });
-
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`OpenRouter request failed: ${res.status} ${errText}`);
-  }
-
-  const data = (await res.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
-  };
-  return data.choices?.[0]?.message?.content || null;
+  return requestViaProxy(prompt, 'text', undefined, imageBase64, signal);
 };
 
 const extractFirstJSONObject = (text: string): Record<string, unknown> | null => {
@@ -459,4 +367,39 @@ export const refineBrandStory = async (
     console.error('Refine brand story error:', error);
     return null;
   }
+};
+
+export type ReceiptExtraction = {
+  name: string;
+  amount: number;
+  date: string;
+  category: string;
+};
+
+export const extractReceiptExpense = async (
+  imageBase64: string,
+  signal?: AbortSignal
+): Promise<ReceiptExtraction | null> => {
+  const prompt =
+    'Extract expense details from this receipt. Return JSON with fields: name (store/vendor name), amount (number), date (YYYY-MM-DD), and category (one of: Utilities, Rent, Supplies, Staff, Transport, Marketing, Insurance, Equipment, Other).';
+  const schema = {
+    type: 'object',
+    properties: {
+      name: { type: 'string' },
+      amount: { type: 'number' },
+      date: { type: 'string' },
+      category: { type: 'string' },
+    },
+    required: ['name', 'amount', 'date', 'category'],
+    additionalProperties: false,
+  };
+  const result = await requestOpenRouterJSON(prompt, schema, imageBase64, signal);
+  if (!result || typeof result !== 'object') return null;
+  const r = result as Record<string, unknown>;
+  return {
+    name: String(r.name || ''),
+    amount: Number(r.amount || 0),
+    date: String(r.date || ''),
+    category: String(r.category || 'Other'),
+  };
 };

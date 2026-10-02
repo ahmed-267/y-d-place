@@ -7,6 +7,9 @@ import { DataTablePagination, useTablePagination } from './DataTablePagination';
 import { User, Role, WorkShift, RotaShift } from '../types';
 import { toSearchValue } from '../utils/search';
 import { SortableTh, useColumnSort, sortByColumn } from '../utils/tableSort';
+import { isPasswordStrongEnough } from '../utils/passwordStrength';
+import { PasswordStrengthMeter } from './PasswordStrengthMeter';
+import { hasOwnerAccess } from '../utils/roles';
 
 type TimeOffRange = {
   id: string;
@@ -31,6 +34,7 @@ const defaultAvailability = (): AvailabilityConfig => ({
 export const StaffTab = () => {
   const { users, setUsers, workShifts, setWorkShifts, t, addToast, formatPrice, businessSettings, user, rota, setRota, staffAvailability, setStaffAvailability, lang, inviteStaff } = useApp();
   const [lastInviteCreds, setLastInviteCreds] = useState<{ username: string; password: string } | null>(null);
+  const [invitePassword, setInvitePassword] = useState('');
   const [activeSection, setActiveSection] = useState<'staff' | 'shifts' | 'rota' | 'timeoff'>('staff');
   const [showAddModal, setShowAddModal] = useState(false);
   const [showAddShiftModal, setShowAddShiftModal] = useState(false);
@@ -83,12 +87,11 @@ export const StaffTab = () => {
   const canResetPassword = (viewer: User | null, target: User) => {
     if (!viewer) return false;
     if (viewer.id === target.id) return false;
-    if (viewer.role === 'owner') return target.role !== 'owner';
-    if (viewer.role === 'manager') return target.role === 'staff';
+    if (hasOwnerAccess(viewer.role)) return target.role !== 'owner';
     return false;
   };
 
-  const canEditRota = user?.role === 'owner' || user?.role === 'manager';
+  const canEditRota = hasOwnerAccess(user?.role);
 
   useEffect(() => {
     if (editStaff) {
@@ -154,17 +157,23 @@ export const StaffTab = () => {
     }
 
     if (result.credentials) {
-      setLastInviteCreds(result.credentials);
-      // Update hourly rate if provided
+      setLastInviteCreds({ username: result.credentials.username, password: '' });
       const rate = parseFloat(data.hourlyRate as string) || 0;
       if (rate > 0) {
-        setUsers(prev => prev.map(u => u.username === result.credentials!.username ? { ...u, hourlyRate: rate } : u));
+        setUsers(prev =>
+          prev.map(u =>
+            u.email === result.credentials!.username || u.username === (data.username as string)
+              ? { ...u, hourlyRate: rate }
+              : u
+          )
+        );
       }
     }
 
     setShowAddModal(false);
+    setInvitePassword('');
     addToast(
-      `${t('staffAdded')} ${t('staffLoginDetails').replace('{user}', result.credentials?.username || '').replace('{pass}', result.credentials?.password || '')}`,
+      `${t('staffAdded')} Staff sign in with email ${result.credentials?.username || data.email || ''}.`,
       'success'
     );
   };
@@ -174,27 +183,29 @@ export const StaffTab = () => {
     if (!editStaff) return;
     const canReset = canResetPassword(user, editStaff);
     if (canReset && (resetPassword || resetPasswordConfirm)) {
-      if (resetPassword.length < 4) {
-        addToast(t('passwordTooShort'), 'error');
+      if (!isPasswordStrongEnough(resetPassword)) {
+        addToast(t('passwordTooWeak') || t('passwordTooShort'), 'error');
         return;
       }
       if (resetPassword !== resetPasswordConfirm) {
-        addToast(t('passwordsDontMatch'), 'error');
+        addToast(t('passwordsDontMatch') || t('passwordsDoNotMatch'), 'error');
         return;
       }
+      addToast('Ask the staff member to use Forgot password on the login page to set a new password.', 'info');
+      setResetPassword('');
+      setResetPasswordConfirm('');
     }
 
     const updatedUsers = users.map(u => {
       if (u.id !== editStaff.id) return u;
-      const updated = { ...u, ...editStaff, password: u.password };
-      if (canReset && resetPassword) {
-        updated.password = resetPassword;
-      }
-      return updated;
+      const { password: _p, ...rest } = { ...u, ...editStaff } as User & { password?: string };
+      return rest;
     });
     setUsers(updatedUsers);
     addToast(t('staffUpdated'));
     setEditStaff(null);
+    setResetPassword('');
+    setResetPasswordConfirm('');
   };
 
   const handleEditShiftSave = (e: React.FormEvent) => {
@@ -744,7 +755,7 @@ export const StaffTab = () => {
           {lastInviteCreds && (
             <div className="mb-4 p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-sm text-emerald-900 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <p>
-                Staff can log in with username <span className="font-mono font-bold">{lastInviteCreds.username}</span> and password <span className="font-mono font-bold">{lastInviteCreds.password}</span> (Staff Login mode).
+                Staff can sign in with email <span className="font-mono font-bold">{lastInviteCreds.username}</span> (Staff Login). Share the password securely — it is not stored in this browser.
               </p>
               <button type="button" className="text-xs font-bold underline" onClick={() => setLastInviteCreds(null)}>Dismiss</button>
             </div>
@@ -790,7 +801,7 @@ export const StaffTab = () => {
                         <SortableTh label={t('name')} column="name" sortKey={staffSortKey} sortDirection={staffSortDir} onSort={toggleStaffSort} />
                         <SortableTh label={t('username')} column="username" sortKey={staffSortKey} sortDirection={staffSortDir} onSort={toggleStaffSort} />
                         <SortableTh label={t('role')} column="role" sortKey={staffSortKey} sortDirection={staffSortDir} onSort={toggleStaffSort} />
-                        {user?.role === 'owner' && (
+                        {hasOwnerAccess(user?.role) && (
                           <SortableTh label={t('hourlyRate')} column="hourlyRate" sortKey={staffSortKey} sortDirection={staffSortDir} onSort={toggleStaffSort} />
                         )}
                         <th className="p-4 text-right">{t('actions')}</th>
@@ -817,7 +828,7 @@ export const StaffTab = () => {
                               {t(u.role === 'staff' ? 'staffRole' : u.role)}
                             </span>
                           </td>
-                          {user?.role === 'owner' && (
+                          {hasOwnerAccess(user?.role) && (
                             <td className="p-4 font-bold">{u.hourlyRate ? formatPrice(u.hourlyRate) : t('dash')}</td>
                           )}
                           <td className="p-4 text-right">
@@ -1804,11 +1815,21 @@ export const StaffTab = () => {
             </div>
             <div>
               <label className="block text-sm font-bold mb-2">{t('email')}</label>
-              <input name="email" type="email" className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel" placeholder={t('emailPlaceholder')} />
+              <input name="email" type="email" className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel" placeholder={t('emailPlaceholder')} required />
             </div>
             <div>
               <label className="block text-sm font-bold mb-2">{t('password')}</label>
-              <input name="password" type="password" className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel" required />
+              <input
+                name="password"
+                type="password"
+                minLength={8}
+                className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel"
+                required
+                value={invitePassword}
+                onChange={e => setInvitePassword(e.target.value)}
+              />
+              <PasswordStrengthMeter password={invitePassword} t={t} />
+              <p className="mt-1 text-[11px] text-bakery-brown/45">{t('passwordMinHint')}</p>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
@@ -1816,7 +1837,6 @@ export const StaffTab = () => {
                 <select name="role" className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel">
                   <option value="staff">{t('staffRole')}</option>
                   <option value="manager">{t('manager')}</option>
-                  <option value="owner">{t('owner')}</option>
                 </select>
               </div>
               <div>
@@ -1863,7 +1883,6 @@ export const StaffTab = () => {
                 >
                   <option value="staff">{t('staffRole')}</option>
                   <option value="manager">{t('manager')}</option>
-                  <option value="owner">{t('owner')}</option>
                 </select>
               </div>
               <div>

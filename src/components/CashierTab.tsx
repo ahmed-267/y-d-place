@@ -69,8 +69,6 @@ export const CashierTab = () => {
     setActiveTab,
     businessSettings,
     sales,
-    clockIn,
-    openShiftLog,
     openTill,
     closeTill,
     openCashSession,
@@ -85,6 +83,7 @@ export const CashierTab = () => {
     setParkedTickets,
     customers,
     setCustomers,
+    isDemoMode,
   } = useApp();
   const [cart, setCart] = useState<CartLine[]>([]);
   const [selectedCategory, setSelectedCategory] = useState('All');
@@ -361,9 +360,6 @@ export const CashierTab = () => {
     return lines.slice(0, 4);
   }, [recipeNeeds, preparedStock, ingredients, t]);
 
-  const staffMustClockIn = user?.role === 'staff' && !openShiftLog;
-  const canTakeCash = paymentMethod !== 'Cash' || !!openCashSession || user?.role === 'owner' || user?.role === 'manager';
-
   const ticketLabels = () => ({
     receipt: t('receipt'),
     kitchenTicket: t('kitchenTicket'),
@@ -611,14 +607,6 @@ export const CashierTab = () => {
 
   const confirmOrder = (mode: 'kitchen' | 'complete' = 'kitchen', approvedByOverride?: string) => {
     if (!user) return;
-    if (staffMustClockIn) {
-      addToast(t('clockInRequired'), 'error');
-      return;
-    }
-    if (needsOpenTill && !openCashSession && user.role === 'staff') {
-      addToast(t('tillClosed'), 'error');
-      return;
-    }
     if (paymentMethod === 'Split' && !splitMatches) {
       addToast(t('splitMustMatch'), 'error');
       return;
@@ -807,21 +795,6 @@ export const CashierTab = () => {
         <div className="absolute inset-x-0 top-0 z-20 flex justify-center pointer-events-none">
           <div className="mt-2 px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-bold shadow-lg animate-fade-in">
             {t('sentToKitchenFlash')}
-          </div>
-        </div>
-      )}
-
-      {staffMustClockIn && (
-        <div className="absolute inset-x-0 top-0 z-30 px-2 pt-2">
-          <div className="mx-auto max-w-3xl rounded-2xl bg-amber-500 text-[#1E1B18] px-4 py-3 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <p className="text-sm font-black">{t('clockInRequired')}</p>
-            <button
-              type="button"
-              onClick={clockIn}
-              className="shrink-0 px-4 py-2 rounded-xl bg-[#1E1B18] text-white text-sm font-bold"
-            >
-              {t('clockInAction')}
-            </button>
           </div>
         </div>
       )}
@@ -1465,8 +1438,8 @@ export const CashierTab = () => {
             <button
               type="button"
               className="btn-primary w-full py-3 rounded-xl font-bold"
-              onClick={() => {
-                const mgr = verifyManagerPassword(managerUser, managerPass, users);
+              onClick={async () => {
+                const mgr = await verifyManagerPassword(managerUser, managerPass, users, { isDemoMode });
                 if (!mgr) {
                   addToast(t('invalidCredentials'), 'error');
                   return;

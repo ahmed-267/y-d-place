@@ -29,28 +29,49 @@ const parseEnabledModules = (raw: unknown): EnabledModules => {
 };
 
 /** Map a Supabase `businesses` row (snake_case) to BusinessSettings. */
-export const mapBusinessRow = (row: Record<string, unknown>): BusinessSettings => ({
-  id: String(row.id ?? ''),
-  name: String(row.name ?? ''),
-  ownerName: String(row.owner_name ?? row.ownerName ?? ''),
-  ownerEmail: String(row.owner_email ?? row.ownerEmail ?? ''),
-  ownerPhone: String(row.owner_phone ?? row.ownerPhone ?? ''),
-  venueType: String(row.venue_type ?? row.venueType ?? ''),
-  country: String(row.country ?? ''),
-  city: String(row.city ?? ''),
-  address: (row.address as string | undefined) || undefined,
-  openingHours: (row.opening_hours ?? row.openingHours) as string | undefined,
-  currencyCode: String(row.currency_code ?? row.currencyCode ?? 'EUR'),
-  currencySymbol: String(row.currency_symbol ?? row.currencySymbol ?? '€'),
-  language: (row.language as Language) || 'en',
-  enabledModules: parseEnabledModules(row.enabled_modules ?? row.enabledModules),
-  discountPolicy: normalizeDiscountPolicy(
-    (row.discount_policy ?? row.discountPolicy) as Record<string, unknown> | null | undefined
-  ),
-  brandTheme: normalizeBrandTheme(
-    (row.brand_theme ?? row.brandTheme) as Record<string, unknown> | null | undefined
-  ),
-});
+export const mapBusinessRow = (row: Record<string, unknown>): BusinessSettings => {
+  const trialRaw = row.trial_ends_at ?? row.trialEndsAt;
+  const periodRaw = row.current_period_ends_at ?? row.currentPeriodEndsAt;
+  const planRaw = String(row.plan ?? 'none');
+  const plan =
+    planRaw === 'trialing' ||
+    planRaw === 'pro' ||
+    planRaw === 'canceled' ||
+    planRaw === 'past_due'
+      ? planRaw
+      : 'none';
+
+  return {
+    id: String(row.id ?? ''),
+    name: String(row.name ?? ''),
+    ownerName: String(row.owner_name ?? row.ownerName ?? ''),
+    ownerEmail: String(row.owner_email ?? row.ownerEmail ?? ''),
+    ownerPhone: String(row.owner_phone ?? row.ownerPhone ?? ''),
+    venueType: String(row.venue_type ?? row.venueType ?? ''),
+    country: String(row.country ?? ''),
+    city: String(row.city ?? ''),
+    address: (row.address as string | undefined) || undefined,
+    openingHours: (row.opening_hours ?? row.openingHours) as string | undefined,
+    currencyCode: String(row.currency_code ?? row.currencyCode ?? 'EUR'),
+    currencySymbol: String(row.currency_symbol ?? row.currencySymbol ?? '€'),
+    language: (row.language as Language) || 'en',
+    enabledModules: parseEnabledModules(row.enabled_modules ?? row.enabledModules),
+    discountPolicy: normalizeDiscountPolicy(
+      (row.discount_policy ?? row.discountPolicy) as Record<string, unknown> | null | undefined
+    ),
+    brandTheme: normalizeBrandTheme(
+      (row.brand_theme ?? row.brandTheme) as Record<string, unknown> | null | undefined
+    ),
+    plan,
+    stripeCustomerId: (row.stripe_customer_id as string) || (row.stripeCustomerId as string) || undefined,
+    stripeSubscriptionId:
+      (row.stripe_subscription_id as string) || (row.stripeSubscriptionId as string) || undefined,
+    trialEndsAt: trialRaw ? new Date(String(trialRaw)).getTime() : undefined,
+    currentPeriodEndsAt: periodRaw ? new Date(String(periodRaw)).getTime() : undefined,
+    subscriptionStatus:
+      (row.subscription_status as string) || (row.subscriptionStatus as string) || undefined,
+  };
+};
 
 export const businessToRow = (settings: BusinessSettings) => ({
   name: settings.name,
@@ -214,6 +235,15 @@ export const mapWorkShiftRow = (row: Record<string, unknown>): WorkShift => ({
   breakMinutes: Number(row.break_minutes ?? row.breakMinutes ?? 0),
   totalHours: Number(row.total_hours ?? row.totalHours ?? 0),
   notes: (row.notes as string) || undefined,
+  payAmount:
+    row.pay_amount != null || row.payAmount != null
+      ? Number(row.pay_amount ?? row.payAmount)
+      : undefined,
+  kind: (row.kind as WorkShift['kind']) || undefined,
+  leaveReason:
+    (row.leave_reason as WorkShift['leaveReason']) ||
+    (row.leaveReason as WorkShift['leaveReason']) ||
+    undefined,
 });
 
 export const workShiftToRow = (shift: Omit<WorkShift, 'id'> | WorkShift, businessId: string) => ({
@@ -225,6 +255,7 @@ export const workShiftToRow = (shift: Omit<WorkShift, 'id'> | WorkShift, busines
   end_time: shift.endTime,
   break_minutes: shift.breakMinutes,
   total_hours: shift.totalHours,
+  // Keep core schema compatible; pay/leave live in client + local ops until DB columns exist.
   notes: shift.notes,
   business_id: businessId,
 });
@@ -289,6 +320,8 @@ export const createDemoBusiness = (): BusinessSettings => ({
   currencyCode: 'EUR',
   currencySymbol: '€',
   language: 'en',
+  plan: 'pro',
+  subscriptionStatus: 'active',
   enabledModules: {
     orders: true,
     sales: true,

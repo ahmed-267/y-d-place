@@ -8,16 +8,11 @@ import { ConfirmDialog } from './ConfirmDialog';
 import { DataTablePagination, useTablePagination } from './DataTablePagination';
 import { SortableTh, useColumnSort, sortByColumn } from '../utils/tableSort';
 import { ScanProgressModal } from './ScanProgressModal';
-import { compressImage } from '../utils/aiHelper';
+import { compressImage, extractReceiptExpense } from '../utils/aiHelper';
 import { getRegionalTaxProfile, regionalTaxLines } from '../utils/taxRegions';
 import { supabase } from './supabaseClient';
 
-type ReceiptExtraction = {
-  name: string;
-  amount: number;
-  date: string;
-  category: string;
-};
+import { hasOwnerAccess } from '../utils/roles';
 
 const EXPENSE_CATEGORIES: ExpenseCategory[] = [
   'Utilities', 'Rent', 'Supplies', 'Staff', 'Transport', 'Marketing', 'Insurance', 'Equipment', 'Other'
@@ -25,7 +20,7 @@ const EXPENSE_CATEGORIES: ExpenseCategory[] = [
 
 export const FinanceTab = () => {
   const { t, expenses, addExpense, updateExpense, deleteExpense, taxSettings, setTaxSettings, sales, addToast, businessSettings, formatPrice, setActiveTab, user } = useApp();
-  const isOwner = user?.role === 'owner';
+  const isOwner = hasOwnerAccess(user?.role);
   const priceStr = (n: number) => `${businessSettings?.currencySymbol || '€'}${n.toFixed(2)}`;
   const taxProfile = getRegionalTaxProfile(businessSettings?.country);
   const PLACEHOLDERS = useMemo(() => [
@@ -687,87 +682,24 @@ export const FinanceTab = () => {
       const compressed = await compressImage(selectedFile);
       setScanStatus('analyzing');
 
-      const apiKey = import.meta.env.VITE_OPENROUTER_API_KEY as string | undefined;
-      if (!apiKey) {
-        setScanStatus('error');
-        addToast(t('missingApiKey'), "error");
-        return;
-      }
-
-      const model =
-        (import.meta.env.VITE_OPENROUTER_MODEL as string | undefined) ||
-        "openai/gpt-4o-mini";
-      const siteUrl = import.meta.env.VITE_OPENROUTER_SITE_URL as string | undefined;
-      const appName = import.meta.env.VITE_OPENROUTER_APP_NAME as string | undefined;
-
-      const headers: Record<string, string> = {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      };
-      if (siteUrl) headers["HTTP-Referer"] = siteUrl;
-      if (appName) headers["X-Title"] = appName;
-
       const controller = new AbortController();
       abortControllerRef.current = controller;
-      
+
       const timeoutId = setTimeout(() => {
         controller.abort();
         setScanStatus('timeout');
       }, 30000);
 
-      const prompt =
-        "Extract expense details from this receipt. Return JSON with fields: name (store/vendor name), amount (number), date (YYYY-MM-DD), and category (one of: Utilities, Rent, Supplies, Staff, Transport, Marketing, Insurance, Equipment, Other).";
-
-      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers,
-        signal: controller.signal,
-        body: JSON.stringify({
-          model,
-          messages: [
-            {
-              role: "user",
-              content: [
-                { type: "text", text: prompt },
-                { type: "image_url", image_url: { url: compressed } },
-              ],
-            },
-          ],
-          response_format: {
-            type: "json_schema",
-            json_schema: {
-              name: "receipt_extraction",
-              strict: true,
-              schema: {
-                type: "object",
-                properties: {
-                  name: { type: "string" },
-                  amount: { type: "number" },
-                  date: { type: "string" },
-                  category: { type: "string" },
-                },
-                required: ["name", "amount", "date", "category"],
-                additionalProperties: false,
-              },
-            },
-          },
-        }),
-      });
-
-      if (!res.ok) {
-        const errText = await res.text();
-        throw new Error(`OpenRouter request failed: ${res.status} ${errText}`);
-      }
-
-      const data = (await res.json()) as {
-        choices?: Array<{ message?: { content?: string } }>;
-      };
-      const content = data.choices?.[0]?.message?.content || "{}";
-      
+      const result = await extractReceiptExpense(compressed, controller.signal);
       clearTimeout(timeoutId);
 
+      if (!result) {
+        setScanStatus('error');
+        addToast(t('missingApiKey') || t('scanReceiptFailed'), 'error');
+        return;
+      }
+
       setScanStatus('extracting');
-      const result = JSON.parse(content) as Partial<ReceiptExtraction>;
       setExpenseForm(prev => ({
         ...prev,
         name: result.name || prev.name,

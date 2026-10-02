@@ -1,247 +1,655 @@
-import React, { useState, useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useApp } from '../AppContext';
-import { Clock, Plus, Trash2, Calendar } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Clock, Plus, Umbrella, Wallet } from 'lucide-react';
 import { Modal } from './Modal';
 import { ConfirmDialog } from './ConfirmDialog';
 import { WorkShift } from '../types';
-import { SortableTh, useColumnSort, sortByColumn } from '../utils/tableSort';
+
+type CalendarMode = 'week' | 'month';
+type DayModalMode = 'worked' | 'leave' | null;
+
+const toDateKey = (d: Date) => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+
+const parseDateKey = (key: string) => {
+  const [y, m, d] = key.split('-').map(Number);
+  return new Date(y, (m || 1) - 1, d || 1);
+};
+
+const startOfWeekMonday = (d: Date) => {
+  const copy = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const day = copy.getDay(); // 0 Sun
+  const diff = day === 0 ? -6 : 1 - day;
+  copy.setDate(copy.getDate() + diff);
+  return copy;
+};
+
+const addDays = (d: Date, n: number) => {
+  const copy = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  copy.setDate(copy.getDate() + n);
+  return copy;
+};
+
+const calcHours = (date: string, startTime: string, endTime: string, breakMinutes: number) => {
+  if (!date || !startTime || !endTime) return 0;
+  const start = new Date(`${date}T${startTime}`);
+  const end = new Date(`${date}T${endTime}`);
+  let diff = (end.getTime() - start.getTime()) / (1000 * 60 * 60);
+  if (diff < 0) diff += 24;
+  return parseFloat(Math.max(0, diff - (breakMinutes || 0) / 60).toFixed(2));
+};
+
+const leaveLabelKey = (reason?: WorkShift['leaveReason']) => {
+  if (reason === 'sick') return 'leaveSick';
+  if (reason === 'holiday') return 'leaveHoliday';
+  if (reason === 'personal') return 'leavePersonal';
+  return 'leaveOther';
+};
 
 export const MyShiftsTab = () => {
-  const { user, workShifts, setWorkShifts, t, addToast } = useApp();
-  const [showAddModal, setShowAddModal] = useState(false);
+  const { user, workShifts, setWorkShifts, t, addToast, formatPrice } = useApp();
+  const hourlyRate = user?.hourlyRate ?? 0;
+
+  const [mode, setMode] = useState<CalendarMode>('week');
+  const [anchor, setAnchor] = useState(() => new Date());
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [dayModal, setDayModal] = useState<DayModalMode>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<WorkShift | null>(null);
 
   const [formData, setFormData] = useState({
-    date: new Date().toISOString().split('T')[0],
     startTime: '09:00',
     endTime: '17:00',
     breakMinutes: '30',
+    payAmount: '',
     notes: '',
+    leaveReason: 'sick' as NonNullable<WorkShift['leaveReason']>,
   });
 
-  type MyShiftSort = 'date' | 'start' | 'end' | 'break' | 'total' | 'notes';
-  const { sortKey, sortDirection, toggleSort } = useColumnSort<MyShiftSort>('date', 'desc');
+  const myShifts = useMemo(
+    () => workShifts.filter(s => s.userId === user?.id),
+    [workShifts, user?.id]
+  );
+
+  const shiftsByDate = useMemo(() => {
+    const map = new Map<string, WorkShift[]>();
+    myShifts.forEach(s => {
+      const list = map.get(s.date) || [];
+      list.push(s);
+      map.set(s.date, list);
+    });
+    return map;
+  }, [myShifts]);
+
+  const weekStart = useMemo(() => startOfWeekMonday(anchor), [anchor]);
+  const monthStart = useMemo(() => new Date(anchor.getFullYear(), anchor.getMonth(), 1), [anchor]);
+
+  const visibleDays = useMemo(() => {
+    if (mode === 'week') {
+      return Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+    }
+    const first = new Date(monthStart.getFullYear(), monthStart.getMonth(), 1);
+    const gridStart = startOfWeekMonday(first);
+    return Array.from({ length: 42 }, (_, i) => addDays(gridStart, i));
+  }, [mode, weekStart, monthStart]);
+
+  const periodShifts = useMemo(() => {
+    const keys = new Set(visibleDays.map(toDateKey));
+    if (mode === 'month') {
+      // Only count days in the displayed month for totals
+      return myShifts.filter(s => {
+        const d = parseDateKey(s.date);
+        return d.getMonth() === anchor.getMonth() && d.getFullYear() === anchor.getFullYear();
+      });
+    }
+    return myShifts.filter(s => keys.has(s.date));
+  }, [myShifts, visibleDays, mode, anchor]);
+
+  const totalHours = periodShifts
+    .filter(s => (s.kind || 'worked') === 'worked')
+    .reduce((a, s) => a + (s.totalHours || 0), 0);
+  const totalPay = periodShifts
+    .filter(s => (s.kind || 'worked') === 'worked')
+    .reduce((a, s) => a + (s.payAmount ?? (s.totalHours || 0) * hourlyRate), 0);
+  const leaveDays = periodShifts.filter(s => s.kind === 'leave').length;
 
   const calculatedHours = useMemo(() => {
-    const { date, startTime, endTime, breakMinutes } = formData;
-    if (!date || !startTime || !endTime) return 0;
+    if (!selectedDate) return 0;
+    return calcHours(
+      selectedDate,
+      formData.startTime,
+      formData.endTime,
+      parseInt(formData.breakMinutes) || 0
+    );
+  }, [selectedDate, formData]);
 
-    const start = new Date(`${date}T${startTime}`);
-    const end = new Date(`${date}T${endTime}`);
-    const brk = parseInt(breakMinutes) || 0;
+  const suggestedPay = useMemo(
+    () => parseFloat((calculatedHours * hourlyRate).toFixed(2)),
+    [calculatedHours, hourlyRate]
+  );
 
-    let diff = (end.getTime() - start.getTime()) / (1000 * 60 * 60);
-    if (diff < 0) diff += 24;
+  const openDay = (date: Date) => {
+    const key = toDateKey(date);
+    setSelectedDate(key);
+    const existing = (shiftsByDate.get(key) || []).find(s => (s.kind || 'worked') === 'worked');
+    const leave = (shiftsByDate.get(key) || []).find(s => s.kind === 'leave');
+    if (existing) {
+      setFormData({
+        startTime: existing.startTime || '09:00',
+        endTime: existing.endTime || '17:00',
+        breakMinutes: String(existing.breakMinutes ?? 30),
+        payAmount: existing.payAmount != null ? String(existing.payAmount) : '',
+        notes: existing.notes || '',
+        leaveReason: leave?.leaveReason || 'sick',
+      });
+      setDayModal('worked');
+    } else if (leave) {
+      setFormData(prev => ({
+        ...prev,
+        notes: leave.notes || '',
+        leaveReason: leave.leaveReason || 'sick',
+        payAmount: '',
+      }));
+      setDayModal('leave');
+    } else {
+      setFormData({
+        startTime: '09:00',
+        endTime: '17:00',
+        breakMinutes: '30',
+        payAmount: '',
+        notes: '',
+        leaveReason: 'sick',
+      });
+      setDayModal('worked');
+    }
+  };
 
-    const actualHours = Math.max(0, diff - brk / 60);
-    return parseFloat(actualHours.toFixed(2));
-  }, [formData]);
+  const existingForSelected = useMemo(() => {
+    if (!selectedDate) return { worked: null as WorkShift | null, leave: null as WorkShift | null };
+    const list = shiftsByDate.get(selectedDate) || [];
+    return {
+      worked: list.find(s => (s.kind || 'worked') === 'worked') || null,
+      leave: list.find(s => s.kind === 'leave') || null,
+    };
+  }, [selectedDate, shiftsByDate]);
 
-  const myShifts = useMemo(() => {
-    const list = workShifts.filter(s => s.userId === user?.id);
-    return sortByColumn(list, sortKey, sortDirection, (s: WorkShift, key) => {
-      if (key === 'date') return s.date;
-      if (key === 'start') return s.startTime;
-      if (key === 'end') return s.endTime;
-      if (key === 'break') return s.breakMinutes ?? 0;
-      if (key === 'total') return s.totalHours;
-      return s.notes || '';
-    });
-  }, [workShifts, user?.id, sortKey, sortDirection]);
-
-  const totalHours = myShifts.reduce((acc, s) => acc + s.totalHours, 0);
-
-  const handleAddShift = (e: React.FormEvent) => {
+  const saveWorked = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user) return;
+    if (!user || !selectedDate) return;
+    const hours = calculatedHours;
+    const pay =
+      formData.payAmount.trim() === ''
+        ? suggestedPay
+        : Math.max(0, parseFloat(formData.payAmount) || 0);
 
-    const newShift: WorkShift = {
-      id: `SHIFT-${Date.now()}`,
+    const payload: WorkShift = {
+      id: existingForSelected.worked?.id || `SHIFT-${Date.now()}`,
       userId: user.id,
       username: user.username,
       fullName: user.fullName,
-      date: formData.date,
+      date: selectedDate,
       startTime: formData.startTime,
       endTime: formData.endTime,
       breakMinutes: parseInt(formData.breakMinutes) || 0,
-      totalHours: calculatedHours,
+      totalHours: hours,
       notes: formData.notes,
+      payAmount: pay,
+      kind: 'worked',
     };
 
-    setWorkShifts([...workShifts, newShift]);
-    setShowAddModal(false);
-    setFormData({
-      date: new Date().toISOString().split('T')[0],
-      startTime: '09:00',
-      endTime: '17:00',
-      breakMinutes: '30',
-      notes: '',
-    });
+    // Replacing leave on same day if logging work
+    let next = workShifts.filter(
+      s => !(s.userId === user.id && s.date === selectedDate && s.kind === 'leave')
+    );
+    if (existingForSelected.worked) {
+      next = next.map(s => (s.id === existingForSelected.worked!.id ? payload : s));
+    } else {
+      next = [...next, payload];
+    }
+    setWorkShifts(next);
+    setDayModal(null);
+    setSelectedDate(null);
     addToast(t('shiftLogged'));
+  };
+
+  const saveLeave = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !selectedDate) return;
+    const payload: WorkShift = {
+      id: existingForSelected.leave?.id || `LEAVE-${Date.now()}`,
+      userId: user.id,
+      username: user.username,
+      fullName: user.fullName,
+      date: selectedDate,
+      startTime: '',
+      endTime: '',
+      breakMinutes: 0,
+      totalHours: 0,
+      notes: formData.notes,
+      kind: 'leave',
+      leaveReason: formData.leaveReason,
+      payAmount: 0,
+    };
+
+    // Leave replaces worked shift that day
+    let next = workShifts.filter(
+      s => !(s.userId === user.id && s.date === selectedDate && (s.kind || 'worked') === 'worked')
+    );
+    if (existingForSelected.leave) {
+      next = next.map(s => (s.id === existingForSelected.leave!.id ? payload : s));
+    } else {
+      next = [...next, payload];
+    }
+    setWorkShifts(next);
+    setDayModal(null);
+    setSelectedDate(null);
+    addToast(t('leaveLogged') || 'Leave saved.');
   };
 
   const handleDelete = () => {
     if (!deleteConfirm) return;
     setWorkShifts(workShifts.filter(s => s.id !== deleteConfirm.id));
     setDeleteConfirm(null);
+    setDayModal(null);
+    setSelectedDate(null);
     addToast(t('shiftDeleted'), 'info');
+  };
+
+  const periodLabel =
+    mode === 'week'
+      ? `${toDateKey(weekStart)} → ${toDateKey(addDays(weekStart, 6))}`
+      : anchor.toLocaleString(undefined, { month: 'long', year: 'numeric' });
+
+  const weekdayLabels = [
+    t('dayMon') || 'Mon',
+    t('dayTue') || 'Tue',
+    t('dayWed') || 'Wed',
+    t('dayThu') || 'Thu',
+    t('dayFri') || 'Fri',
+    t('daySat') || 'Sat',
+    t('daySun') || 'Sun',
+  ];
+
+  const renderDayCell = (date: Date) => {
+    const key = toDateKey(date);
+    const entries = shiftsByDate.get(key) || [];
+    const worked = entries.filter(s => (s.kind || 'worked') === 'worked');
+    const leave = entries.find(s => s.kind === 'leave');
+    const hours = worked.reduce((a, s) => a + (s.totalHours || 0), 0);
+    const pay = worked.reduce(
+      (a, s) => a + (s.payAmount ?? (s.totalHours || 0) * hourlyRate),
+      0
+    );
+    const inMonth = date.getMonth() === anchor.getMonth();
+    const isToday = key === toDateKey(new Date());
+
+    return (
+      <button
+        key={key}
+        type="button"
+        onClick={() => openDay(date)}
+        className={`min-h-[92px] sm:min-h-[110px] rounded-2xl border p-2.5 text-left transition-all hover:-translate-y-0.5 hover:shadow-md ${
+          leave
+            ? 'border-amber-200 bg-amber-50/80'
+            : worked.length
+              ? 'border-emerald-200 bg-emerald-50/70'
+              : 'border-bakery-beige bg-white'
+        } ${mode === 'month' && !inMonth ? 'opacity-35' : ''} ${
+          isToday ? 'ring-2 ring-bakery-caramel/50' : ''
+        }`}
+      >
+        <div className="flex items-start justify-between gap-1 mb-1.5">
+          <span className="text-sm font-black text-bakery-brown">{date.getDate()}</span>
+          {leave && <Umbrella size={14} className="text-amber-600 shrink-0" />}
+        </div>
+        {leave ? (
+          <div className="space-y-0.5">
+            <p className="text-[10px] font-black uppercase tracking-wide text-amber-700">
+              {t(leaveLabelKey(leave.leaveReason))}
+            </p>
+            <p className="text-[11px] text-bakery-brown/50 line-clamp-2">{leave.notes || t('unavailable')}</p>
+          </div>
+        ) : worked.length > 0 ? (
+          <div className="space-y-0.5">
+            <p className="text-[11px] font-bold text-emerald-800">{hours.toFixed(2)}h</p>
+            <p className="text-[11px] font-black text-bakery-caramel">{formatPrice(pay)}</p>
+            {worked[0].startTime && worked[0].endTime && (
+              <p className="text-[10px] text-bakery-brown/45">
+                {worked[0].startTime}–{worked[0].endTime}
+              </p>
+            )}
+          </div>
+        ) : (
+          <p className="text-[10px] text-bakery-brown/30 font-semibold mt-2">{t('dayOff') || 'Off'}</p>
+        )}
+      </button>
+    );
   };
 
   return (
     <div className="space-y-5 animate-fade-in pb-8 max-w-full overflow-hidden">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-bold font-serif text-bakery-brown">{t('myShifts')}</h2>
+          <p className="text-xs text-bakery-brown/45 mt-1">
+            {t('myShiftsCalendarHint') ||
+              'Tap a day to log hours and pay, or mark leave when you cannot work.'}
+          </p>
         </div>
-        <button
-          onClick={() => setShowAddModal(true)}
-          className="btn-primary flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold active:scale-95 text-sm"
-        >
-          <Plus size={18} />
-          {t('addShift')}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="inline-flex rounded-xl border border-bakery-beige bg-white p-1">
+            <button
+              type="button"
+              onClick={() => setMode('week')}
+              className={`px-3 py-2 rounded-lg text-xs font-black uppercase tracking-wide ${
+                mode === 'week' ? 'bg-bakery-brown text-white' : 'text-bakery-brown/50'
+              }`}
+            >
+              {t('weekView') || 'Week'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode('month')}
+              className={`px-3 py-2 rounded-lg text-xs font-black uppercase tracking-wide ${
+                mode === 'month' ? 'bg-bakery-brown text-white' : 'text-bakery-brown/50'
+              }`}
+            >
+              {t('monthView') || 'Month'}
+            </button>
+          </div>
+          <div className="inline-flex items-center gap-1 rounded-xl border border-bakery-beige bg-white px-1">
+            <button
+              type="button"
+              className="p-2 rounded-lg hover:bg-bakery-beige/50"
+              onClick={() =>
+                setAnchor(prev =>
+                  mode === 'week'
+                    ? addDays(prev, -7)
+                    : new Date(prev.getFullYear(), prev.getMonth() - 1, 1)
+                )
+              }
+            >
+              <ChevronLeft size={18} />
+            </button>
+            <span className="px-2 text-xs font-bold text-bakery-brown min-w-[140px] text-center">
+              {periodLabel}
+            </span>
+            <button
+              type="button"
+              className="p-2 rounded-lg hover:bg-bakery-beige/50"
+              onClick={() =>
+                setAnchor(prev =>
+                  mode === 'week'
+                    ? addDays(prev, 7)
+                    : new Date(prev.getFullYear(), prev.getMonth() + 1, 1)
+                )
+              }
+            >
+              <ChevronRight size={18} />
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={() => openDay(new Date())}
+            className="btn-primary flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold active:scale-95 text-sm"
+          >
+            <Plus size={16} />
+            {t('logToday') || 'Log today'}
+          </button>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-        <div className="card-bakery p-4 sm:p-6 flex items-center gap-4">
-          <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-bakery-beige flex items-center justify-center text-bakery-brown shrink-0">
-            <Clock size={20} className="sm:w-6 sm:h-6" />
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+        <div className="card-bakery p-4 flex items-center gap-3">
+          <div className="w-10 h-10 rounded-2xl bg-bakery-beige flex items-center justify-center text-bakery-brown shrink-0">
+            <Clock size={18} />
           </div>
           <div>
             <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40">{t('totalHours')}</p>
-            <p className="text-xl sm:text-2xl font-black text-bakery-brown">{totalHours.toFixed(2)}h</p>
+            <p className="text-xl font-black text-bakery-brown">{totalHours.toFixed(2)}h</p>
           </div>
         </div>
-        <div className="card-bakery p-4 sm:p-6 flex items-center gap-4">
-          <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-bakery-beige flex items-center justify-center text-bakery-brown shrink-0">
-            <Calendar size={20} className="sm:w-6 sm:h-6" />
+        <div className="card-bakery p-4 flex items-center gap-3">
+          <div className="w-10 h-10 rounded-2xl bg-bakery-beige flex items-center justify-center text-bakery-brown shrink-0">
+            <Wallet size={18} />
           </div>
           <div>
-            <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40">{t('shifts')}</p>
-            <p className="text-xl sm:text-2xl font-black text-bakery-brown">{myShifts.length}</p>
+            <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40">{t('pay') || 'Pay'}</p>
+            <p className="text-xl font-black text-bakery-caramel">{formatPrice(totalPay)}</p>
+          </div>
+        </div>
+        <div className="card-bakery p-4 flex items-center gap-3">
+          <div className="w-10 h-10 rounded-2xl bg-bakery-beige flex items-center justify-center text-bakery-brown shrink-0">
+            <Umbrella size={18} />
+          </div>
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40">{t('leaveDays') || 'Leave days'}</p>
+            <p className="text-xl font-black text-bakery-brown">{leaveDays}</p>
           </div>
         </div>
       </div>
 
-      <div className="card-bakery overflow-hidden">
-        <div className="overflow-x-auto scrollbar-hide">
-          <table className="w-full text-left text-sm min-w-[700px]">
-            <thead className="bg-bakery-beige/30 text-bakery-brown/40 uppercase text-[10px] font-black tracking-widest">
-              <tr>
-                <SortableTh label={t('date')} column="date" sortKey={sortKey} sortDirection={sortDirection} onSort={toggleSort} />
-                <SortableTh label={t('startTime')} column="start" sortKey={sortKey} sortDirection={sortDirection} onSort={toggleSort} />
-                <SortableTh label={t('endTime')} column="end" sortKey={sortKey} sortDirection={sortDirection} onSort={toggleSort} />
-                <SortableTh label={t('break')} column="break" sortKey={sortKey} sortDirection={sortDirection} onSort={toggleSort} />
-                <SortableTh label={t('totalHours')} column="total" sortKey={sortKey} sortDirection={sortDirection} onSort={toggleSort} />
-                <SortableTh label={t('notes')} column="notes" sortKey={sortKey} sortDirection={sortDirection} onSort={toggleSort} />
-                <th className="p-4 text-right">{t('actions')}</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-bakery-beige">
-              {myShifts.map(s => (
-                <tr key={s.id} className="hover:bg-bakery-cream/30 transition-colors">
-                  <td className="p-4 font-bold whitespace-nowrap">{s.date}</td>
-                  <td className="p-4 whitespace-nowrap">{s.startTime}</td>
-                  <td className="p-4 whitespace-nowrap">{s.endTime}</td>
-                  <td className="p-4 text-bakery-brown/40 whitespace-nowrap">{s.breakMinutes}m</td>
-                  <td className="p-4 font-black text-bakery-caramel whitespace-nowrap">{s.totalHours}h</td>
-                  <td className="p-4 text-xs max-w-[200px] truncate" title={s.notes}>
-                    {s.notes || t('dash')}
-                  </td>
-                  <td className="p-4 text-right">
-                    <button
-                      onClick={() => setDeleteConfirm(s)}
-                      className="p-2 text-rose-400 hover:text-rose-600 transition-colors active:scale-90"
-                    >
-                      <Trash2 size={18} />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {myShifts.length === 0 && (
-                <tr>
-                  <td colSpan={7} className="p-10 text-center text-bakery-brown/40 italic">
-                    {t('noShiftsLogged')}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+      {hourlyRate <= 0 && (
+        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2">
+          {t('hourlyRateMissingHint') ||
+            'No hourly rate set on your profile yet — enter pay manually when logging a shift.'}
+        </p>
+      )}
+
+      <div className="card-bakery p-3 sm:p-4">
+        <div className="grid grid-cols-7 gap-1.5 sm:gap-2 mb-2">
+          {weekdayLabels.map(label => (
+            <div
+              key={label}
+              className="text-center text-[10px] font-black uppercase tracking-widest text-bakery-brown/35 py-1"
+            >
+              {label}
+            </div>
+          ))}
+        </div>
+        <div className={`grid grid-cols-7 gap-1.5 sm:gap-2 ${mode === 'week' ? '' : ''}`}>
+          {visibleDays.map(renderDayCell)}
         </div>
       </div>
 
-      {showAddModal && (
-        <Modal title={t('addShift')} onClose={() => setShowAddModal(false)}>
-          <form onSubmit={handleAddShift} className="space-y-6">
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('date')}</label>
-                <input
-                  type="date"
-                  className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel font-bold"
-                  value={formData.date}
-                  onChange={e => setFormData({ ...formData, date: e.target.value })}
-                  required
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('startTime')}</label>
-                  <input
-                    type="time"
-                    className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel font-bold"
-                    value={formData.startTime}
-                    onChange={e => setFormData({ ...formData, startTime: e.target.value })}
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('endTime')}</label>
-                  <input
-                    type="time"
-                    className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel font-bold"
-                    value={formData.endTime}
-                    onChange={e => setFormData({ ...formData, endTime: e.target.value })}
-                    required
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4 items-end">
-                <div>
-                  <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">
-                    {t('break')} (min)
-                  </label>
-                  <input
-                    type="number"
-                    className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel font-bold"
-                    value={formData.breakMinutes}
-                    onChange={e => setFormData({ ...formData, breakMinutes: e.target.value })}
-                    required
-                  />
-                </div>
-                <div className="bg-bakery-accent/20 p-4 rounded-2xl border border-bakery-accent/30 text-center">
-                  <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-1">{t('calculatedHours')}</p>
-                  <p className="text-2xl font-black text-bakery-brown">{calculatedHours}h</p>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">{t('notes')}</label>
-                <textarea
-                  className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel min-h-[100px] font-medium"
-                  placeholder={t('optionalShiftNotes')}
-                  value={formData.notes}
-                  onChange={e => setFormData({ ...formData, notes: e.target.value })}
-                />
+      {dayModal && selectedDate && (
+        <Modal
+          title={
+            dayModal === 'leave'
+              ? t('markUnavailable') || 'Mark unavailable'
+              : t('logShift') || t('addShift')
+          }
+          onClose={() => {
+            setDayModal(null);
+            setSelectedDate(null);
+          }}
+        >
+          <div className="space-y-4">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm font-bold text-bakery-brown">{selectedDate}</p>
+              <div className="inline-flex rounded-xl border border-bakery-beige p-1 bg-bakery-cream/40">
+                <button
+                  type="button"
+                  onClick={() => setDayModal('worked')}
+                  className={`px-3 py-1.5 rounded-lg text-[11px] font-black uppercase ${
+                    dayModal === 'worked' ? 'bg-bakery-brown text-white' : 'text-bakery-brown/50'
+                  }`}
+                >
+                  {t('worked') || 'Worked'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDayModal('leave')}
+                  className={`px-3 py-1.5 rounded-lg text-[11px] font-black uppercase ${
+                    dayModal === 'leave' ? 'bg-bakery-brown text-white' : 'text-bakery-brown/50'
+                  }`}
+                >
+                  {t('unavailable') || 'Unavailable'}
+                </button>
               </div>
             </div>
 
-            <button type="submit" className="btn-primary w-full p-5 rounded-2xl font-bold text-lg shadow-lg active:scale-95">
-              {t('save')}
-            </button>
-          </form>
+            {dayModal === 'worked' ? (
+              <form onSubmit={saveWorked} className="space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">
+                      {t('startTime')}
+                    </label>
+                    <input
+                      type="time"
+                      className="w-full p-3 border border-bakery-beige rounded-2xl font-bold outline-none focus:ring-2 focus:ring-bakery-caramel"
+                      value={formData.startTime}
+                      onChange={e => setFormData({ ...formData, startTime: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">
+                      {t('endTime')}
+                    </label>
+                    <input
+                      type="time"
+                      className="w-full p-3 border border-bakery-beige rounded-2xl font-bold outline-none focus:ring-2 focus:ring-bakery-caramel"
+                      value={formData.endTime}
+                      onChange={e => setFormData({ ...formData, endTime: e.target.value })}
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">
+                      {t('break')} (min)
+                    </label>
+                    <input
+                      type="number"
+                      className="w-full p-3 border border-bakery-beige rounded-2xl font-bold outline-none focus:ring-2 focus:ring-bakery-caramel"
+                      value={formData.breakMinutes}
+                      onChange={e => setFormData({ ...formData, breakMinutes: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <div className="bg-bakery-accent/20 p-3 rounded-2xl border border-bakery-accent/30 text-center">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-1">
+                      {t('calculatedHours')}
+                    </p>
+                    <p className="text-2xl font-black text-bakery-brown">{calculatedHours}h</p>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">
+                    {t('pay') || 'Pay'}
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    className="w-full p-3 border border-bakery-beige rounded-2xl font-bold outline-none focus:ring-2 focus:ring-bakery-caramel"
+                    placeholder={
+                      hourlyRate > 0
+                        ? `${t('suggested') || 'Suggested'}: ${suggestedPay.toFixed(2)}`
+                        : t('enterPay') || 'Enter amount'
+                    }
+                    value={formData.payAmount}
+                    onChange={e => setFormData({ ...formData, payAmount: e.target.value })}
+                  />
+                  {hourlyRate > 0 && (
+                    <p className="mt-1 text-[11px] text-bakery-brown/45">
+                      {(t('payFromRateHint') || 'Based on {rate}/h × hours — leave blank to use this.').replace(
+                        '{rate}',
+                        String(hourlyRate)
+                      )}
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">
+                    {t('notes')}
+                  </label>
+                  <textarea
+                    className="w-full p-3 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel min-h-[80px]"
+                    value={formData.notes}
+                    onChange={e => setFormData({ ...formData, notes: e.target.value })}
+                    placeholder={t('optionalShiftNotes')}
+                  />
+                </div>
+
+                <div className="flex gap-2">
+                  {(existingForSelected.worked || existingForSelected.leave) && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setDeleteConfirm(existingForSelected.worked || existingForSelected.leave)
+                      }
+                      className="flex-1 py-3 rounded-2xl border border-rose-200 text-rose-600 font-bold"
+                    >
+                      {t('delete')}
+                    </button>
+                  )}
+                  <button type="submit" className="flex-[2] btn-primary py-3 rounded-2xl font-bold">
+                    {t('save')}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <form onSubmit={saveLeave} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">
+                    {t('leaveReason') || 'Reason'}
+                  </label>
+                  <select
+                    className="w-full p-3 border border-bakery-beige rounded-2xl font-bold outline-none focus:ring-2 focus:ring-bakery-caramel"
+                    value={formData.leaveReason}
+                    onChange={e =>
+                      setFormData({
+                        ...formData,
+                        leaveReason: e.target.value as NonNullable<WorkShift['leaveReason']>,
+                      })
+                    }
+                  >
+                    <option value="sick">{t('leaveSick') || 'Sick'}</option>
+                    <option value="holiday">{t('leaveHoliday') || 'Holiday / vacation'}</option>
+                    <option value="personal">{t('leavePersonal') || 'Personal'}</option>
+                    <option value="other">{t('leaveOther') || 'Other'}</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">
+                    {t('notes')}
+                  </label>
+                  <textarea
+                    className="w-full p-3 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel min-h-[80px]"
+                    value={formData.notes}
+                    onChange={e => setFormData({ ...formData, notes: e.target.value })}
+                    placeholder={t('leaveNotesPlaceholder') || 'Optional note for your manager'}
+                  />
+                </div>
+                <div className="flex gap-2">
+                  {(existingForSelected.worked || existingForSelected.leave) && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setDeleteConfirm(existingForSelected.leave || existingForSelected.worked)
+                      }
+                      className="flex-1 py-3 rounded-2xl border border-rose-200 text-rose-600 font-bold"
+                    >
+                      {t('delete')}
+                    </button>
+                  )}
+                  <button type="submit" className="flex-[2] btn-primary py-3 rounded-2xl font-bold">
+                    {t('save')}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
         </Modal>
       )}
 

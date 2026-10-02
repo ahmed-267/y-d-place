@@ -1,6 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { resolvePublicMenuSnapshot, pushOnlineOrder } from '../utils/opsPersistence';
-import { Order, Product, SaleItem } from '../types';
+import React, { useEffect, useState } from 'react';
+import { Product, SaleItem } from '../types';
 import { isAddonCategory } from '../utils/menuCategories';
 import { Modal } from './Modal';
 import { ShoppingBag, Check, Plus } from 'lucide-react';
@@ -12,13 +11,23 @@ type MenuProduct = Pick<
 
 type CartLine = SaleItem & { emoji: string; lineId: number };
 
+type MenuSnapshot = {
+  businessId: string;
+  businessName: string;
+  currencySymbol: string;
+  onlineOrdersEnabled: boolean;
+  products: MenuProduct[];
+};
+
 type Props = {
   businessId: string;
   onDone?: () => void;
 };
 
 export const PublicOrderPage: React.FC<Props> = ({ businessId, onDone }) => {
-  const snap = useMemo(() => resolvePublicMenuSnapshot(businessId), [businessId]);
+  const [snap, setSnap] = useState<MenuSnapshot | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
@@ -29,6 +38,37 @@ export const PublicOrderPage: React.FC<Props> = ({ businessId, onDone }) => {
   const [extraModalItem, setExtraModalItem] = useState<MenuProduct | null>(null);
   const [selectedExtras, setSelectedExtras] = useState<MenuProduct[]>([]);
   const [lineNote, setLineNote] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      setLoading(true);
+      setError('');
+      try {
+        const res = await fetch(`/api/public-menu?businessId=${encodeURIComponent(businessId)}`);
+        const body = (await res.json()) as MenuSnapshot & { error?: string };
+        if (!res.ok) {
+          if (!cancelled) {
+            setSnap(null);
+            setError(body.error || 'Menu unavailable');
+          }
+          return;
+        }
+        if (!cancelled) setSnap(body);
+      } catch {
+        if (!cancelled) {
+          setSnap(null);
+          setError('Could not load the menu. Try again shortly.');
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [businessId]);
 
   const allProducts = (snap?.products || []).filter(p => p.active !== false);
   const addonProducts = allProducts.filter(p => isAddonCategory(p.category));
@@ -116,7 +156,7 @@ export const PublicOrderPage: React.FC<Props> = ({ businessId, onDone }) => {
   const formatPrice = (n: number) => `${sym}${n.toFixed(2)}`;
   const orderingEnabled = snap?.onlineOrdersEnabled !== false;
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     if (!orderingEnabled) {
@@ -124,43 +164,53 @@ export const PublicOrderPage: React.FC<Props> = ({ businessId, onDone }) => {
       return;
     }
     if (!snap?.products?.length) {
-      setError('Menu not available yet. Ask the venue to open PreVisio once, then retry this link.');
+      setError('Menu not available yet.');
       return;
     }
     if (!cart.length || !name.trim() || !phone.trim() || !date || !time) {
       setError('Add items and fill name, phone, pickup date and time.');
       return;
     }
-    const items: SaleItem[] = cart.map(c => ({
-      productId: c.productId,
-      nameEN: c.nameEN,
-      qty: c.qty,
-      unitPrice: c.unitPrice,
-      lineTotal: c.lineTotal,
-      extras: c.extras,
-      note: c.note,
-    }));
-    const now = Date.now();
-    const order: Order = {
-      id: `ON-${now}`,
-      type: 'PreOrder',
-      status: 'Preparing',
-      createdAt: now,
-      lastUpdatedAt: now,
-      scheduledFor: `${date}T${time}`,
-      customerName: name.trim(),
-      customerPhone: phone.trim(),
-      items,
-      subtotal,
-      paymentMethod: 'Card',
-      createdByUsername: 'online',
-      createdByFullName: 'Online guest',
-      source: 'online',
-    };
-    pushOnlineOrder(businessId, order);
-    setDone(true);
-    setCart([]);
+
+    setSubmitting(true);
+    try {
+      const res = await fetch('/api/public-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          businessId,
+          customerName: name.trim(),
+          customerPhone: phone.trim(),
+          scheduledFor: `${date}T${time}`,
+          items: cart.map(c => ({
+            productId: c.productId,
+            qty: c.qty,
+            extraIds: (c.extras || []).map(ex => ex.productId),
+            note: c.note,
+          })),
+        }),
+      });
+      const body = (await res.json()) as { error?: string };
+      if (!res.ok) {
+        setError(body.error || 'Could not place order');
+        return;
+      }
+      setDone(true);
+      setCart([]);
+    } catch {
+      setError('Could not place order. Try again shortly.');
+    } finally {
+      setSubmitting(false);
+    }
   };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6 bg-[#F7F3ED] text-[#5d4037]">
+        <p className="text-sm font-bold opacity-60">Loading menu…</p>
+      </div>
+    );
+  }
 
   if (snap && !orderingEnabled) {
     return (
@@ -247,194 +297,178 @@ export const PublicOrderPage: React.FC<Props> = ({ businessId, onDone }) => {
         <div className="space-y-16">
           {!snap?.products?.length && (
             <div className="rounded-[2rem] border border-amber-200 bg-amber-50 p-6 text-sm">
-              Menu not found for this link yet. Ask the venue to open PreVisio on a device once, then refresh.
+              {error || 'Menu not available yet for this venue.'}
             </div>
           )}
 
           {featured.length > 0 && (
             <section>
-              <div className="text-center mb-10">
-                <h2 className="text-4xl sm:text-5xl font-black font-serif text-[#d4a373]">Featured Menu</h2>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
-                {featured.map(item => renderMenuCard(item))}
+              <h2 className="text-sm font-black uppercase tracking-[0.2em] opacity-40 mb-6">Featured</h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
+                {featured.map(renderMenuCard)}
               </div>
             </section>
           )}
 
-          {categories.map(category => {
-            const items = menuProducts.filter(p => p.category === category);
-            if (!items.length) return null;
-            return (
-              <section key={category}>
-                <div className="mb-8">
-                  <h2 className="text-3xl sm:text-4xl font-black font-serif">{category}</h2>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
-                  {items.map(item => renderMenuCard(item))}
-                </div>
-              </section>
-            );
-          })}
+          {categories.map(cat => (
+            <section key={cat}>
+              <h2 className="text-sm font-black uppercase tracking-[0.2em] opacity-40 mb-6">{cat}</h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
+                {menuProducts.filter(p => p.category === cat).map(renderMenuCard)}
+              </div>
+            </section>
+          ))}
         </div>
 
-        <aside className="h-fit lg:sticky lg:top-6 rounded-[2rem] border border-[#faedcd] bg-white p-6 sm:p-8 shadow-xl space-y-4">
-          <h2 className="text-2xl font-black font-serif">Your order</h2>
-          {cart.length === 0 ? (
-            <p className="text-sm opacity-50">Tap a menu item to add it.</p>
-          ) : (
-            <ul className="space-y-4">
-              {cart.map(c => (
-                <li key={c.lineId} className="space-y-1 border-b border-[#faedcd]/60 pb-3">
-                  <div className="flex justify-between gap-2 text-sm">
-                    <span className="font-bold truncate">
-                      {c.emoji} {c.nameEN}
-                    </span>
-                    <span className="font-bold shrink-0">{formatPrice(c.lineTotal)}</span>
-                  </div>
-                  {c.extras?.map(ex => (
-                    <p key={ex.productId} className="text-[11px] opacity-55 font-semibold">
-                      + {ex.nameEN}
-                    </p>
-                  ))}
-                  {c.note && <p className="text-[11px] italic opacity-50">{c.note}</p>}
-                  <div className="flex items-center gap-2 pt-1">
-                    <button
-                      type="button"
-                      onClick={() => updateQty(c.lineId, -1)}
-                      className="w-8 h-8 rounded-xl bg-[#faedcd] font-bold"
-                    >
-                      -
-                    </button>
-                    <span className="font-bold text-sm w-5 text-center">{c.qty}</span>
-                    <button
-                      type="button"
-                      onClick={() => updateQty(c.lineId, 1)}
-                      className="w-8 h-8 rounded-xl bg-[#faedcd] font-bold"
-                    >
-                      +
-                    </button>
-                    <input
-                      type="text"
-                      className="flex-1 text-[11px] p-2 border border-[#faedcd] rounded-xl outline-none"
-                      placeholder="e.g. no ice, allergy"
-                      value={c.note || ''}
-                      onChange={e => {
-                        const note = e.target.value;
-                        setCart(prev => prev.map(line => (line.lineId === c.lineId ? { ...line, note } : line)));
-                      }}
-                    />
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-          <p className="font-black text-2xl border-t border-[#faedcd] pt-3">{formatPrice(subtotal)}</p>
-          <form onSubmit={submit} className="space-y-3">
-            <input
-              className="w-full p-3.5 border border-[#faedcd] rounded-2xl text-sm font-medium"
-              placeholder="Your name"
-              value={name}
-              onChange={e => setName(e.target.value)}
-            />
-            <input
-              className="w-full p-3.5 border border-[#faedcd] rounded-2xl text-sm font-medium"
-              placeholder="Phone"
-              value={phone}
-              onChange={e => setPhone(e.target.value)}
-            />
-            <div className="grid grid-cols-2 gap-2">
+        <aside className="lg:sticky lg:top-8 h-fit space-y-6">
+          <form
+            onSubmit={submit}
+            className="rounded-[2rem] border border-[#faedcd] bg-white p-6 shadow-xl space-y-4"
+          >
+            <h2 className="text-xl font-black font-serif">Your order</h2>
+            {cart.length === 0 ? (
+              <p className="text-sm opacity-50">Tap a dish to add it.</p>
+            ) : (
+              <ul className="space-y-3 max-h-64 overflow-y-auto">
+                {cart.map(item => (
+                  <li key={item.lineId} className="flex items-start justify-between gap-3 text-sm">
+                    <div>
+                      <p className="font-bold">
+                        {item.emoji} {item.nameEN}
+                      </p>
+                      {item.extras && item.extras.length > 0 && (
+                        <p className="text-xs opacity-50">
+                          + {item.extras.map(e => e.nameEN).join(', ')}
+                        </p>
+                      )}
+                      {item.note && <p className="text-xs opacity-50 italic">{item.note}</p>}
+                      <div className="mt-1 flex items-center gap-2">
+                        <button
+                          type="button"
+                          className="w-7 h-7 rounded-full border border-[#faedcd] font-bold"
+                          onClick={() => updateQty(item.lineId, -1)}
+                        >
+                          −
+                        </button>
+                        <span className="font-bold">{item.qty}</span>
+                        <button
+                          type="button"
+                          className="w-7 h-7 rounded-full border border-[#faedcd] font-bold"
+                          onClick={() => updateQty(item.lineId, 1)}
+                        >
+                          +
+                        </button>
+                      </div>
+                    </div>
+                    <p className="font-black whitespace-nowrap">{formatPrice(item.lineTotal)}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <div className="border-t border-[#faedcd] pt-4 space-y-3">
               <input
-                type="date"
-                className="w-full p-3.5 border border-[#faedcd] rounded-2xl text-sm"
-                value={date}
-                onChange={e => setDate(e.target.value)}
+                className="w-full rounded-xl border border-[#faedcd] px-4 py-3 text-sm"
+                placeholder="Your name"
+                value={name}
+                onChange={e => setName(e.target.value)}
               />
               <input
-                type="time"
-                className="w-full p-3.5 border border-[#faedcd] rounded-2xl text-sm"
-                value={time}
-                onChange={e => setTime(e.target.value)}
+                className="w-full rounded-xl border border-[#faedcd] px-4 py-3 text-sm"
+                placeholder="Phone"
+                value={phone}
+                onChange={e => setPhone(e.target.value)}
               />
+              <div className="grid grid-cols-2 gap-3">
+                <input
+                  type="date"
+                  className="w-full rounded-xl border border-[#faedcd] px-4 py-3 text-sm"
+                  value={date}
+                  onChange={e => setDate(e.target.value)}
+                />
+                <input
+                  type="time"
+                  className="w-full rounded-xl border border-[#faedcd] px-4 py-3 text-sm"
+                  value={time}
+                  onChange={e => setTime(e.target.value)}
+                />
+              </div>
             </div>
-            {error && <p className="text-xs text-rose-600 font-bold">{error}</p>}
-            <button type="submit" className="w-full py-4 rounded-full bg-[#5d4037] text-white font-black text-sm">
-              Place pre-order
+
+            <div className="flex items-center justify-between font-black text-lg">
+              <span>Total</span>
+              <span>{formatPrice(subtotal)}</span>
+            </div>
+
+            {error && <p className="text-sm text-red-600 font-bold">{error}</p>}
+
+            <button
+              type="submit"
+              disabled={submitting}
+              className="w-full rounded-full bg-[#5d4037] text-white font-black py-3.5 text-sm disabled:opacity-50"
+            >
+              {submitting ? 'Sending…' : 'Place order'}
             </button>
           </form>
         </aside>
       </main>
 
       {extraModalItem && (
-        <Modal title="Add extras?" onClose={() => setExtraModalItem(null)}>
-          <div className="space-y-6">
-            <div className="flex items-center gap-4 p-4 bg-[#F7F3ED] rounded-2xl border border-[#faedcd]">
-              <span className="text-4xl">{extraModalItem.emoji}</span>
-              <div>
-                <p className="font-bold text-lg">{extraModalItem.nameEN}</p>
-                <p className="font-black text-[#d4a373]">{formatPrice(extraModalItem.price)}</p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {extrasForProduct(extraModalItem).map(e => {
-                const on = selectedExtras.some(se => se.id === e.id);
-                return (
-                  <label
-                    key={e.id}
-                    className={`flex items-center justify-between p-4 rounded-2xl border-2 cursor-pointer ${
-                      on ? 'border-[#5d4037] bg-[#F7F3ED]' : 'border-[#faedcd]'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="checkbox"
-                        className="hidden"
-                        checked={on}
-                        onChange={() => {
-                          setSelectedExtras(prev =>
-                            on ? prev.filter(se => se.id !== e.id) : [...prev, e]
-                          );
-                        }}
-                      />
-                      <span className="text-xl">{e.emoji}</span>
-                      <div className="text-left">
-                        <p className="font-bold text-sm">{e.nameEN}</p>
-                        <p className="text-[10px] opacity-50">{formatPrice(e.price)}</p>
-                      </div>
-                    </div>
-                    {on && <Plus size={16} />}
-                  </label>
-                );
-              })}
-            </div>
-
-            <input
-              type="text"
-              className="w-full text-sm p-2.5 border border-[#faedcd] rounded-xl outline-none"
-              placeholder="e.g. no ice, allergy"
-              value={lineNote}
-              onChange={e => setLineNote(e.target.value)}
-            />
-
-            <div className="flex gap-4">
-              <button
-                type="button"
-                onClick={() => confirmExtras(true)}
-                className="flex-1 py-4 rounded-2xl font-bold opacity-50"
-              >
-                Skip
-              </button>
-              <button
-                type="button"
-                onClick={() => confirmExtras(false)}
-                className="flex-1 bg-[#5d4037] text-white py-4 rounded-2xl font-bold"
-              >
-                Confirm
-              </button>
-            </div>
+      <Modal
+        title={extraModalItem.nameEN || 'Extras'}
+        onClose={() => setExtraModalItem(null)}
+      >
+        <div className="space-y-4">
+          <p className="text-sm opacity-60">Add extras or a note for this item.</p>
+          <div className="space-y-2">
+            {extrasForProduct(extraModalItem).map(ex => {
+              const selected = selectedExtras.some(s => s.id === ex.id);
+              return (
+                <button
+                  key={ex.id}
+                  type="button"
+                  onClick={() =>
+                    setSelectedExtras(prev =>
+                      selected ? prev.filter(s => s.id !== ex.id) : [...prev, ex]
+                    )
+                  }
+                  className={`w-full flex items-center justify-between rounded-xl border px-4 py-3 text-sm font-bold ${
+                    selected ? 'border-[#5d4037] bg-[#faedcd]' : 'border-[#faedcd]'
+                  }`}
+                >
+                  <span className="inline-flex items-center gap-2">
+                    <Plus size={14} /> {ex.nameEN}
+                  </span>
+                  <span>{formatPrice(ex.price)}</span>
+                </button>
+              );
+            })}
           </div>
-        </Modal>
+          <textarea
+            className="w-full rounded-xl border border-[#faedcd] px-4 py-3 text-sm"
+            rows={2}
+            placeholder="Note (optional)"
+            value={lineNote}
+            onChange={e => setLineNote(e.target.value)}
+          />
+          <div className="flex gap-3">
+            <button
+              type="button"
+              className="flex-1 rounded-full border border-[#faedcd] font-bold py-3 text-sm"
+              onClick={() => confirmExtras(true)}
+            >
+              No extras
+            </button>
+            <button
+              type="button"
+              className="flex-1 rounded-full bg-[#5d4037] text-white font-bold py-3 text-sm"
+              onClick={() => confirmExtras(false)}
+            >
+              Add to order
+            </button>
+          </div>
+        </div>
+      </Modal>
       )}
     </div>
   );

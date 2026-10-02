@@ -1,8 +1,48 @@
 [build]
   command = "npm run build"
   publish = "dist"
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
+
+# API routes → Netlify Functions (must be before SPA fallback)
+[[redirects]]
+  from = "/api/ai"
+  to = "/.netlify/functions/ai"
+  status = 200
 
 [[redirects]]
-  from = "/"
+  from = "/api/invite-staff"
+  to = "/.netlify/functions/invite-staff"
+  status = 200
+
+[[redirects]]
+  from = "/api/public-order"
+  to = "/.netlify/functions/public-order"
+  status = 200
+
+[[redirects]]
+  from = "/api/public-menu"
+  to = "/.netlify/functions/public-menu"
+  status = 200
+
+[[redirects]]
+  from = "/api/billing/checkout"
+  to = "/.netlify/functions/billing-checkout"
+  status = 200
+
+[[redirects]]
+  from = "/api/billing/portal"
+  to = "/.netlify/functions/billing-portal"
+  status = 200
+
+[[redirects]]
+  from = "/api/stripe-webhook"
+  to = "/.netlify/functions/stripe-webhook"
+  status = 200
+
+[[redirects]]
+  from = "/*"
   to = "/index.html"
   status = 200

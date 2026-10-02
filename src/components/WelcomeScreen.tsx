@@ -25,6 +25,7 @@ import { motion, useReducedMotion } from 'motion/react';
 type WelcomeScreenProps = {
   onLogin: () => void;
   onRegister: () => void;
+  onTryDemo?: (role?: 'owner' | 'manager' | 'staff') => void;
 };
 
 type Theme = { isDark: boolean };
@@ -180,18 +181,19 @@ const stats = [
 
 const plans = [
   {
-    name: 'Free',
-    price: '$0/mo',
-    description: 'Try PreVisio on a live floor.',
-    features: ['50 orders / month', 'Basic inventory', 'Single language'],
-    highlighted: false,
-  },
-  {
     name: 'Pro',
     price: '$39/mo',
-    description: 'Everything a busy kitchen needs.',
-    features: ['Unlimited orders', 'AI menu scan', 'Ingredient tracking', 'Finance & tax suite'],
+    description: '14-day free trial, then billed monthly. Full PreVisio for a busy kitchen.',
+    features: [
+      '14-day free trial — cancel anytime',
+      'Unlimited orders',
+      'AI menu scan',
+      'Ingredient tracking',
+      'Finance & tax suite',
+      'Staff, rota & shifts',
+    ],
     highlighted: true,
+    cta: 'Start free trial',
   },
   {
     name: 'Enterprise',
@@ -199,6 +201,7 @@ const plans = [
     description: 'For multi-location operators.',
     features: ['Fleet analytics', 'Priority support', 'Guided onboarding'],
     highlighted: false,
+    cta: 'Contact sales',
   },
 ];
 
@@ -209,9 +212,18 @@ const testimonials = [
 ];
 
 const faqItems = [
-  { question: 'Can I start free and upgrade later?', answer: 'Yes. Products, sales history, and team data all carry over when you upgrade.' },
+  {
+    question: 'Is there a free trial?',
+    answer:
+      'Yes. Pro includes a 14-day free trial. You will not be charged until the trial ends, and you can cancel anytime in billing settings.',
+  },
+  {
+    question: 'Can I cancel during the trial?',
+    answer:
+      'Yes. Cancel before the trial ends and you will not be charged. Your access lasts until the trial period ends.',
+  },
   { question: 'Does it work for mixed-language teams?', answer: 'EN, FR, NL, and Flemish are built in, and each person can pick their own.' },
-  { question: 'How long does setup take?', answer: 'Most kitchens are selling the same day — scan the menu, add staff, open the till.' },
+  { question: 'How long does setup take?', answer: 'Most kitchens are selling the same day — scan the menu, add staff, and start taking orders.' },
   { question: 'Do I need new hardware?', answer: 'No. PreVisio runs in the browser on the tablet, laptop, or phone you already use.' },
 ];
 
@@ -253,9 +265,10 @@ const FoodMarquee = ({ isDark }: Theme) => {
   );
 };
 
-export const WelcomeScreen = ({ onLogin, onRegister }: WelcomeScreenProps) => {
+export const WelcomeScreen = ({ onLogin, onRegister, onTryDemo }: WelcomeScreenProps) => {
   const [isDark, setIsDark] = useState(true);
   const [activeTab, setActiveTab] = useState(0);
+  const [showDemoRoles, setShowDemoRoles] = useState(false);
   const reduced = useReducedMotion();
 
   const glassCard = isDark
@@ -365,7 +378,76 @@ export const WelcomeScreen = ({ onLogin, onRegister }: WelcomeScreenProps) => {
                 >
                   Login
                 </button>
+                {onTryDemo && (
+                  <button
+                    type="button"
+                    onClick={() => setShowDemoRoles(prev => !prev)}
+                    className={`rounded-2xl px-9 py-4 text-lg font-bold transition-all active:scale-95 ${isDark ? 'text-white/80 hover:text-white' : 'text-black/60 hover:text-black'}`}
+                  >
+                    Try demo
+                  </button>
+                )}
               </div>
+              {onTryDemo && showDemoRoles && (
+                <motion.div
+                  initial={reduced ? undefined : { opacity: 0, y: 12 }}
+                  animate={reduced ? undefined : { opacity: 1, y: 0 }}
+                  className={`mx-auto mt-2 max-w-3xl rounded-[1.75rem] border p-4 text-left sm:p-5 ${
+                    isDark ? 'border-white/10 bg-white/[0.04]' : 'border-black/10 bg-white/80'
+                  }`}
+                >
+                  <p className={`mb-4 text-sm font-semibold ${muted}`}>
+                    See how each role works — you can switch anytime inside the demo.
+                  </p>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                    {(
+                      [
+                        {
+                          role: 'owner' as const,
+                          title: 'Owner portal',
+                          desc: 'Full business: overview, finance, settings, and approvals.',
+                          icon: WalletCards,
+                        },
+                        {
+                          role: 'manager' as const,
+                          title: 'Manager portal',
+                          desc: 'Floor ops: till, orders, menu, customers, and staff rota.',
+                          icon: ClipboardList,
+                        },
+                        {
+                          role: 'staff' as const,
+                          title: 'Staff portal',
+                          desc: 'Frontline: take orders, run tables, and check your shifts.',
+                          icon: Users,
+                        },
+                      ] as const
+                    ).map(opt => {
+                      const Icon = opt.icon;
+                      return (
+                        <button
+                          key={opt.role}
+                          type="button"
+                          onClick={() => onTryDemo(opt.role)}
+                          className={`group rounded-2xl border p-4 text-left transition-all hover:-translate-y-0.5 active:scale-[0.98] ${
+                            isDark
+                              ? 'border-white/10 bg-white/[0.03] hover:border-bakery-caramel/50 hover:bg-bakery-caramel/10'
+                              : 'border-black/10 bg-white hover:border-bakery-caramel/60 hover:bg-bakery-caramel/10'
+                          }`}
+                        >
+                          <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-bakery-caramel/20 text-bakery-caramel">
+                            <Icon size={18} />
+                          </div>
+                          <p className={`font-bold ${heading}`}>{opt.title}</p>
+                          <p className={`mt-1 text-xs leading-relaxed ${muted}`}>{opt.desc}</p>
+                          <span className="mt-3 inline-flex items-center gap-1 text-xs font-black uppercase tracking-wider text-bakery-caramel">
+                            Open <ArrowRight size={12} />
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </motion.div>
+              )}
               <div className={`flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm font-semibold ${muted}`}>
                 <span className="inline-flex items-center gap-2"><Check size={15} className="text-bakery-caramel" /> No card required</span>
                 <span className="inline-flex items-center gap-2"><Check size={15} className="text-bakery-caramel" /> Live in a day</span>
@@ -635,11 +717,13 @@ export const WelcomeScreen = ({ onLogin, onRegister }: WelcomeScreenProps) => {
             <Reveal className="mb-12 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
               <div>
                 <h2 className={`font-serif text-4xl font-black md:text-5xl ${heading}`}>Simple pricing</h2>
-                <p className={`mt-4 max-w-md text-lg ${body}`}>Start free, upgrade when the queue gets longer.</p>
+                <p className={`mt-4 max-w-md text-lg ${body}`}>
+                  14 days free, then $39/mo. Cancel anytime before you are charged.
+                </p>
               </div>
               <p className={`text-sm font-bold ${muted}`}>No contracts · Cancel anytime</p>
             </Reveal>
-            <div className="grid gap-5 lg:grid-cols-3 lg:items-stretch">
+            <div className="grid gap-5 md:grid-cols-2 lg:max-w-4xl lg:mx-auto lg:items-stretch">
               {plans.map((plan, i) => (
                 <Reveal key={plan.name} delay={i * 0.08}>
                   <article
@@ -674,7 +758,7 @@ export const WelcomeScreen = ({ onLogin, onRegister }: WelcomeScreenProps) => {
                             : 'border border-black/15 bg-white hover:bg-[#f3eee7]'
                       }`}
                     >
-                      {plan.name === 'Enterprise' ? 'Contact sales' : 'Start now'}
+                      {plan.cta}
                     </button>
                   </article>
                 </Reveal>

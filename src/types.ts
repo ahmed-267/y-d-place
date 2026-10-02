@@ -402,6 +402,13 @@ export interface BusinessSettings {
   enabledModules?: EnabledModules;
   discountPolicy?: DiscountPolicy;
   brandTheme?: BrandTheme;
+  /** Stripe-mirrored plan: trialing | pro | canceled | past_due | none */
+  plan?: 'trialing' | 'pro' | 'canceled' | 'past_due' | 'none';
+  stripeCustomerId?: string;
+  stripeSubscriptionId?: string;
+  trialEndsAt?: number;
+  currentPeriodEndsAt?: number;
+  subscriptionStatus?: string;
 }
 
 export interface TaxSettings {
@@ -448,6 +455,11 @@ export interface WorkShift {
   breakMinutes: number;
   totalHours: number;
   notes?: string;
+  /** Gross pay for this shift (hours × rate, or manual override). */
+  payAmount?: number;
+  /** Default worked; leave marks unavailable days (sick, holiday, etc.). */
+  kind?: 'worked' | 'leave';
+  leaveReason?: 'sick' | 'holiday' | 'personal' | 'other';
 }
 
 export interface RotaShift {

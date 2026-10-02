@@ -8,6 +8,7 @@ import { normalizeEnabledModules } from '../types';
 import { isCountableSale, salePayable } from '../utils/ticketMoney';
 import { downloadZReport } from '../utils/tickets';
 import { tillTotals } from '../utils/till';
+import { hasOwnerAccess } from '../utils/roles';
 
 Chart.register(ChartDataLabels);
 
@@ -639,7 +640,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
 
   return (
     <div className="space-y-4 animate-fade-in max-w-full overflow-hidden">
-      {(pendingSteps.length > 0 || lowStockItems.length > 0) && user?.role === 'owner' && (
+      {(pendingSteps.length > 0 || lowStockItems.length > 0) && hasOwnerAccess(user?.role) && (
         <section className="bg-white border border-bakery-beige rounded-2xl p-3 sm:p-4 space-y-3">
           {pendingSteps.length > 0 && (
             <div>
@@ -683,7 +684,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
         </section>
       )}
 
-      {user?.role === 'owner' && businessSettings?.id === 'ydplace' && sales.length === 0 && (
+      {hasOwnerAccess(user?.role) && businessSettings?.id === 'ydplace' && sales.length === 0 && (
         <div className="flex justify-end">
           <button
             type="button"
@@ -905,7 +906,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
         </div>
       </section>
 
-      {user?.role === 'owner' && (
+      {hasOwnerAccess(user?.role) && (
         <section className="space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <h3 className="text-base font-bold font-serif text-bakery-brown">{t('staffPerformance')}</h3>

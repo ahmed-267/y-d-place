@@ -44,8 +44,10 @@ export const ProductsTab = () => {
     addToast, 
     formatPrice, 
     businessSettings,
-    tc
+    tc,
+    user,
   } = useApp();
+  const canEditMenu = user?.role === 'owner' || user?.role === 'manager';
   const [editItem, setEditItem] = useState<Partial<Product> | null>(null);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
@@ -326,6 +328,7 @@ export const ProductsTab = () => {
 
   return (
     <div className="space-y-5 animate-fade-in max-w-full overflow-hidden">
+      {canEditMenu && (
       <div className="flex flex-wrap justify-end gap-2">
           <input 
             type="file" 
@@ -355,6 +358,12 @@ export const ProductsTab = () => {
             {t('addMenuProduct')}
           </button>
       </div>
+      )}
+      {!canEditMenu && (
+        <p className="text-xs font-semibold text-bakery-brown/50">
+          {t('staffMenuViewHint') || 'You can view the menu and turn items on or off. Editing is limited to managers and owners.'}
+        </p>
+      )}
 
       <div className="relative">
         <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-bakery-brown/40" size={18} />
@@ -593,7 +602,7 @@ export const ProductsTab = () => {
                 <SortableTh label={t('price')} column="price" sortKey={sortKey} sortDirection={sortDirection} onSort={toggleSort} />
                 <SortableTh label={t('ingredients')} column="ingredients" sortKey={sortKey} sortDirection={sortDirection} onSort={toggleSort} />
                 <SortableTh label={t('active')} column="active" sortKey={sortKey} sortDirection={sortDirection} onSort={toggleSort} />
-                <th className="p-4 text-right">{t('actions')}</th>
+                {canEditMenu && <th className="p-4 text-right">{t('actions')}</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-bakery-beige">
@@ -655,10 +664,12 @@ export const ProductsTab = () => {
                     <button 
                       onClick={() => toggleActive(p.id)} 
                       className={`transition-all p-2 active:scale-90 ${p.active ? 'text-emerald-500' : 'text-rose-500'}`}
+                      title={t('active')}
                     >
                       {p.active ? <ToggleRight size={28} /> : <ToggleLeft size={28} />}
                     </button>
                   </td>
+                  {canEditMenu && (
                   <td className="p-4 text-right">
                     <div className="flex justify-end gap-1 sm:gap-2">
                       <button onClick={() => setEditItem(p)} className="p-2 sm:p-3 text-bakery-brown hover:bg-bakery-beige rounded-xl transition-colors active:scale-90">
@@ -669,6 +680,7 @@ export const ProductsTab = () => {
                       </button>
                     </div>
                   </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -684,7 +696,7 @@ export const ProductsTab = () => {
         onPageSizeChange={productsPaging.setPageSize}
       />
 
-      {editItem && (
+      {canEditMenu && editItem && (
         <Modal title={editItem.id ? t('editMenuItem') : t('addMenuProduct')} onClose={() => setEditItem(null)}>
           <form onSubmit={handleSave} className="space-y-4">
             <div className="grid grid-cols-4 gap-4">

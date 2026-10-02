@@ -20,16 +20,18 @@ import {
   Palette,
   Shield,
   Compass,
+  CreditCard,
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
-import {
-  getLocalAccountById,
-  getLocalSession,
-  upsertLocalAccount,
-} from '../utils/localAccounts';
+import { wipeLocalAccounts } from '../utils/localAccounts';
 import { applyCountryDialCode, getDialCode } from '../utils/phone';
 import { APP_LANGUAGE_OPTIONS } from '../utils/languages';
 import { requestProductTour } from '../utils/productTour';
+import { PasswordStrengthMeter } from './PasswordStrengthMeter';
+import { isPasswordStrongEnough } from '../utils/passwordStrength';
+import { hasOwnerAccess } from '../utils/roles';
+import { hasActiveSubscription, subscriptionLabelKey } from '../utils/subscription';
+import { openPortal, startCheckout } from './BillingGate';
 
 const LANGUAGE_OPTIONS = APP_LANGUAGE_OPTIONS;
 
@@ -63,6 +65,7 @@ export const SettingsTab = () => {
     setUser,
     taxSettings,
     setTaxSettings,
+    isDemoMode,
   } = useApp();
 
   const [formData, setFormData] = useState<BusinessSettings>(businessSettings || emptyBusiness());
@@ -86,8 +89,18 @@ export const SettingsTab = () => {
     normalizeBrandTheme(businessSettings?.brandTheme)
   );
   const selectedPalette = resolveBrandPalette(themeForm);
-  type SettingsSection = 'profile' | 'hours' | 'locale' | 'modules' | 'appearance' | 'floor' | 'fiscal' | 'account';
+  type SettingsSection =
+    | 'profile'
+    | 'hours'
+    | 'locale'
+    | 'modules'
+    | 'appearance'
+    | 'floor'
+    | 'fiscal'
+    | 'billing'
+    | 'account';
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('profile');
+  const [billingBusy, setBillingBusy] = useState(false);
 
   useEffect(() => {
     if (businessSettings) setFormData({ ...emptyBusiness(), ...businessSettings });
@@ -116,7 +129,7 @@ export const SettingsTab = () => {
     });
   }, [taxSettings.vatRegime, taxSettings.municipalTaxRate]);
 
-  const isOwner = user?.role === 'owner';
+  const isOwner = hasOwnerAccess(user?.role);
   const taxProfile = getRegionalTaxProfile(formData.country || businessSettings?.country);
 
   const handleSave = async (e: React.FormEvent) => {
@@ -185,39 +198,24 @@ export const SettingsTab = () => {
     const next = passwordForm.newPassword.trim();
     const confirm = passwordForm.confirmPassword.trim();
 
-    if (!next || next.length < 6) {
-      addToast(t('passwordTooShort'), 'error');
+    if (!isPasswordStrongEnough(next)) {
+      addToast(t('passwordTooWeak'), 'error');
       return;
     }
     if (next !== confirm) {
-      addToast(t('passwordsDontMatch'), 'error');
+      addToast(t('passwordsDontMatch') || t('passwordsDoNotMatch'), 'error');
       return;
     }
 
     setPasswordSaving(true);
     try {
-      const localSession = getLocalSession();
-      if (localSession) {
-        const account = getLocalAccountById(localSession.accountId);
-        if (!account) {
-          addToast(t('invalidCredentials'), 'error');
-          return;
-        }
-        if (account.password !== current) {
-          addToast(t('currentPasswordIncorrect'), 'error');
-          return;
-        }
-        upsertLocalAccount({ ...account, password: next });
-        setUser({ ...user, password: next } as typeof user);
-        setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
-        addToast(t('passwordUpdated'), 'success');
-        return;
-      }
+      // Legacy offline accounts are wiped on boot — never persist plaintext passwords.
+      wipeLocalAccounts();
 
-      // Demo / in-memory users with local password field
+      // Demo / in-memory users with local password field (Try demo only)
       const userRecord = users.find(u => u.id === user.id) || user;
       const localPassword = (userRecord as { password?: string }).password;
-      if (localPassword != null) {
+      if (isDemoMode && localPassword != null) {
         if (localPassword !== current) {
           addToast(t('currentPasswordIncorrect'), 'error');
           return;
@@ -308,6 +306,7 @@ export const SettingsTab = () => {
     { id: 'appearance', label: t('appearanceSection'), icon: <Palette size={14} /> },
     { id: 'floor', label: t('floorRules'), icon: <Shield size={14} /> },
     { id: 'fiscal', label: t('fiscalDefaults'), icon: <Receipt size={14} /> },
+    { id: 'billing', label: t('billingSection'), icon: <CreditCard size={14} /> },
     { id: 'account', label: t('accountSection'), icon: <KeyRound size={14} /> },
   ];
 
@@ -332,7 +331,7 @@ export const SettingsTab = () => {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {settingsSection !== 'account' && (
+        {settingsSection !== 'account' && settingsSection !== 'billing' && (
         <div className="lg:col-span-2 space-y-6">
           {(settingsSection === 'profile' || settingsSection === 'hours' || settingsSection === 'locale') && (
           <form onSubmit={handleSave} className="card-bakery p-4 sm:p-8 space-y-8">
@@ -801,6 +800,115 @@ export const SettingsTab = () => {
         </div>
         )}
 
+        {settingsSection === 'billing' && (
+          <div className="lg:col-span-3 space-y-5 max-w-xl">
+            <div className="card-bakery p-5 sm:p-6 space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-bakery-caramel/20 text-bakery-caramel flex items-center justify-center">
+                  <CreditCard size={18} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-bakery-brown">{t('billingSection')}</h3>
+                  <p className="text-xs text-bakery-brown/50">{t('billingGateBody')}</p>
+                </div>
+              </div>
+
+              {isDemoMode ? (
+                <p className="text-sm font-semibold text-bakery-brown/60">{t('demoRoleSwitcher')}: Pro (demo)</p>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                    <div className="rounded-2xl border border-bakery-beige p-4">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-1">
+                        {t('billingStatus')}
+                      </p>
+                      <p className="font-black text-bakery-brown">
+                        {t(subscriptionLabelKey(businessSettings?.plan))}
+                        {hasActiveSubscription(businessSettings) ? ' ✓' : ''}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl border border-bakery-beige p-4">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-bakery-brown/40 mb-1">
+                        {businessSettings?.plan === 'trialing' ? t('billingTrialEnds') : t('billingPeriodEnds')}
+                      </p>
+                      <p className="font-bold text-bakery-brown">
+                        {(() => {
+                          const ts =
+                            businessSettings?.plan === 'trialing'
+                              ? businessSettings.trialEndsAt
+                              : businessSettings?.currentPeriodEndsAt;
+                          return ts ? new Date(ts).toLocaleString() : t('dash');
+                        })()}
+                      </p>
+                    </div>
+                  </div>
+
+                  {user?.role === 'owner' ? (
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      {(!businessSettings?.plan ||
+                        businessSettings.plan === 'none' ||
+                        businessSettings.plan === 'canceled' ||
+                        businessSettings.plan === 'past_due') && (
+                        <button
+                          type="button"
+                          disabled={billingBusy}
+                          className="btn-primary px-5 py-3 rounded-2xl font-bold text-sm disabled:opacity-50"
+                          onClick={async () => {
+                            setBillingBusy(true);
+                            try {
+                              const url = await startCheckout();
+                              if (url) window.location.href = url;
+                              else addToast(t('billingCheckoutMissing'), 'error');
+                            } catch (err) {
+                              addToast(
+                                err instanceof Error ? err.message : t('billingCheckoutFailed'),
+                                'error'
+                              );
+                            } finally {
+                              setBillingBusy(false);
+                            }
+                          }}
+                        >
+                          {t('billingStartTrial')}
+                        </button>
+                      )}
+                      {(businessSettings?.stripeCustomerId ||
+                        businessSettings?.stripeSubscriptionId ||
+                        businessSettings?.plan === 'trialing' ||
+                        businessSettings?.plan === 'pro') && (
+                        <button
+                          type="button"
+                          disabled={billingBusy}
+                          className="px-5 py-3 rounded-2xl border border-bakery-beige font-bold text-sm disabled:opacity-50"
+                          onClick={async () => {
+                            setBillingBusy(true);
+                            try {
+                              const url = await openPortal();
+                              if (url) window.location.href = url;
+                              else addToast(t('billingPortalMissing'), 'error');
+                            } catch (err) {
+                              addToast(
+                                err instanceof Error ? err.message : t('billingPortalFailed'),
+                                'error'
+                              );
+                            } finally {
+                              setBillingBusy(false);
+                            }
+                          }}
+                        >
+                          {t('billingManage')}
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-bakery-brown/60">{t('billingAskOwner')}</p>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
         {settingsSection === 'account' && (
           <div className="lg:col-span-3 space-y-5 max-w-xl">
             <div className="card-bakery p-5 sm:p-6">
@@ -910,6 +1018,7 @@ export const SettingsTab = () => {
                   required
                   autoComplete="new-password"
                 />
+                <PasswordStrengthMeter password={passwordForm.newPassword} t={t} />
               </div>
               <div>
                 <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">
@@ -926,7 +1035,7 @@ export const SettingsTab = () => {
               </div>
               <button
                 type="submit"
-                disabled={passwordSaving}
+                disabled={passwordSaving || !isPasswordStrongEnough(passwordForm.newPassword)}
                 className="btn-primary w-full py-3 rounded-2xl font-bold text-sm disabled:opacity-60"
               >
                 {passwordSaving ? t('processing') : t('updatePassword')}

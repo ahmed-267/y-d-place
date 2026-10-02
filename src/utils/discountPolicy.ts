@@ -1,5 +1,5 @@
 import { DiscountPolicy, normalizeDiscountPolicy, Role, User } from '../types';
-import { findRosterStaff, loadStaffRoster } from './staffRoster';
+import { createEphemeralSupabase } from '../components/supabaseClient';
 import { DEFAULT_USERS } from '../constants';
 
 export type DiscountCheck =
@@ -30,59 +30,78 @@ export const evaluateDiscount = (
   return { ok: false, reason: 'over_limit' };
 };
 
-export const verifyManagerPassword = (
+/**
+ * Verify manager/owner credentials without touching the active POS session.
+ * Demo mode may use bundled DEFAULT_USERS; production uses Supabase Auth on an ephemeral client.
+ */
+export const verifyManagerPassword = async (
   username: string,
   password: string,
-  users: User[]
-): User | null => {
+  users: User[],
+  opts?: { isDemoMode?: boolean }
+): Promise<User | null> => {
   const id = username.trim();
   const pass = password;
+  if (!id || !pass) return null;
 
-  const fromUsers = users.find(
-    u =>
-      (u.role === 'owner' || u.role === 'manager') &&
-      (u.username === id || u.email === id) &&
-      u.password === pass
-  );
-  if (fromUsers) return fromUsers;
-
-  const demo = DEFAULT_USERS.find(
-    u =>
-      (u.role === 'owner' || u.role === 'manager') &&
-      (u.username === id || u.email === id) &&
-      u.password === pass
-  );
-  if (demo) return demo as User;
-
-  const roster = findRosterStaff(id, pass);
-  if (roster && (roster.role === 'owner' || roster.role === 'manager')) {
-    return {
-      id: roster.id,
-      username: roster.username,
-      fullName: roster.fullName,
-      role: roster.role,
-      email: roster.email,
-      password: roster.password,
-    };
+  if (opts?.isDemoMode) {
+    const demo = DEFAULT_USERS.find(
+      u =>
+        (u.role === 'owner' || u.role === 'manager') &&
+        (u.username === id || u.email === id) &&
+        u.password === pass
+    );
+    if (demo) {
+      return {
+        id: demo.id,
+        username: demo.username,
+        fullName: demo.fullName,
+        role: demo.role,
+        email: demo.email,
+      } as User;
+    }
   }
 
-  // Roster may store managers with password; also allow any roster owner/manager match by username+password
-  const rosterHit = loadStaffRoster().find(
-    u =>
-      (u.role === 'owner' || u.role === 'manager') &&
-      u.username === id &&
-      u.password === pass
-  );
-  if (rosterHit) {
-    return {
-      id: rosterHit.id,
-      username: rosterHit.username,
-      fullName: rosterHit.fullName,
-      role: rosterHit.role,
-      email: rosterHit.email,
-      password: rosterHit.password,
-    };
-  }
+  // Prefer matching known team emails (username field may be an email)
+  const candidate =
+    users.find(
+      u =>
+        (u.role === 'owner' || u.role === 'manager') &&
+        (u.username === id || u.email === id)
+    ) || null;
 
-  return null;
+  const email = (candidate?.email || (id.includes('@') ? id : '')).trim();
+  if (!email) return null;
+
+  const ephemeral = createEphemeralSupabase();
+  try {
+    const { data, error } = await ephemeral.auth.signInWithPassword({ email, password: pass });
+    if (error || !data.user) return null;
+
+    const { data: profile } = await ephemeral
+      .from('app_users')
+      .select('id, username, full_name, role, email')
+      .eq('id', data.user.id)
+      .maybeSingle();
+
+    await ephemeral.auth.signOut();
+
+    const role = (profile?.role as Role) || candidate?.role;
+    if (role !== 'owner' && role !== 'manager') return null;
+
+    return {
+      id: candidate?.id ?? Date.now(),
+      username: String(profile?.username || candidate?.username || email),
+      fullName: String(profile?.full_name || candidate?.fullName || email),
+      role,
+      email: profile?.email || candidate?.email || email,
+    };
+  } catch {
+    try {
+      await ephemeral.auth.signOut();
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }
 };

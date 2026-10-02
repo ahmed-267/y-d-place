@@ -6,7 +6,10 @@ import {
   markTourDone,
   hasPendingTour,
   clearPendingTour,
+  getTourResumeTab,
+  clearTourResumeTab,
 } from '../utils/productTour';
+import { hasOwnerAccess } from '../utils/roles';
 
 type TourStep = {
   tabId: string;
@@ -42,31 +45,36 @@ export const ProductTour: React.FC<Props> = ({ visibleTabIds }) => {
     [visibleTabIds]
   );
 
+  const openTour = () => {
+    const resume = getTourResumeTab();
+    const filtered = ALL_STEPS.filter(s => visibleTabIds.includes(s.tabId));
+    const idx = resume ? filtered.findIndex(s => s.tabId === resume) : 0;
+    setIndex(idx >= 0 ? idx : 0);
+    setOpen(true);
+  };
+
   useEffect(() => {
     const onStart = () => {
       clearPendingTour();
-      setIndex(0);
-      setOpen(true);
+      openTour();
     };
     window.addEventListener(TOUR_START_EVENT, onStart);
     return () => window.removeEventListener(TOUR_START_EVENT, onStart);
-  }, []);
+  }, [visibleTabIds]);
 
   // Auto-start only right after registration/setup in this session — not on later logins.
-  // Keep the pending flag until open so App remount (onboarding → dashboard) cannot drop it.
   useEffect(() => {
-    if (!user || user.role !== 'owner') return;
+    if (!user || !hasOwnerAccess(user.role)) return;
     if (isOnboarding) return;
     if (!isBusinessSetupCompleted) return;
     if (!hasPendingTour()) return;
     const timer = window.setTimeout(() => {
       if (!hasPendingTour()) return;
       clearPendingTour();
-      setIndex(0);
-      setOpen(true);
+      openTour();
     }, 700);
     return () => window.clearTimeout(timer);
-  }, [user, isOnboarding, isBusinessSetupCompleted]);
+  }, [user, isOnboarding, isBusinessSetupCompleted, visibleTabIds]);
 
   useEffect(() => {
     if (!open || !steps.length) return;
@@ -81,6 +89,9 @@ export const ProductTour: React.FC<Props> = ({ visibleTabIds }) => {
 
   const finish = () => {
     markTourDone();
+    const resume = getTourResumeTab();
+    if (resume) setActiveTab(resume);
+    clearTourResumeTab();
     setOpen(false);
   };
 

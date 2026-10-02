@@ -109,6 +109,16 @@ export const clearLocalSession = () => {
   localStorage.removeItem(LOCAL_SESSION_KEY);
 };
 
+/** Wipe legacy offline accounts that stored plaintext passwords. */
+export const wipeLocalAccounts = () => {
+  try {
+    localStorage.removeItem(LOCAL_ACCOUNTS_KEY);
+    localStorage.removeItem(LOCAL_SESSION_KEY);
+  } catch {
+    /* ignore */
+  }
+};
+
 export const getLocalSession = (): LocalSession | null => {
   try {
     const raw = localStorage.getItem(LOCAL_SESSION_KEY);

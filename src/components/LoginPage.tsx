@@ -5,6 +5,8 @@ import { supabase } from './supabaseClient';
 import { AuthShell, authFieldClassName, authPrimaryButtonClassName } from './AuthShell';
 import { AuthDestination, resolvePostAuthDestination } from '../utils/authRouting';
 import { isNetworkAuthError } from '../utils/localAccounts';
+import { PasswordStrengthMeter } from './PasswordStrengthMeter';
+import { isPasswordStrongEnough } from '../utils/passwordStrength';
 
 const REMEMBER_EMAIL_KEY = 'previsio_remember_email';
 
@@ -14,15 +16,20 @@ type LoginPageProps = {
   onAuthenticated: (destination: AuthDestination) => void;
 };
 
+const isUnconfirmed = (message?: string) =>
+  (message || '').toLowerCase().includes('email not confirmed');
+
 export const LoginPage = ({ onBack, onGoRegister, onAuthenticated }: LoginPageProps) => {
-  const { addToast, login, t } = useApp();
+  const { addToast, login, t, isPasswordRecovery, completePasswordRecovery } = useApp();
   const [mode, setMode] = useState<'owner' | 'staff'>('owner');
   const [email, setEmail] = useState('');
-  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [unconfirmedEmail, setUnconfirmedEmail] = useState<string | null>(null);
 
   useEffect(() => {
     try {
@@ -44,8 +51,8 @@ export const LoginPage = ({ onBack, onGoRegister, onAuthenticated }: LoginPagePr
   const handleForgotPassword = async () => {
     setError(null);
     if (!email.trim()) {
-      setError('Enter your email above, then click Forgot password.');
-      addToast('Enter your email to reset your password.', 'error');
+      setError(t('enterEmailForReset'));
+      addToast(t('enterEmailForReset'), 'error');
       return;
     }
     try {
@@ -53,27 +60,73 @@ export const LoginPage = ({ onBack, onGoRegister, onAuthenticated }: LoginPagePr
         redirectTo: `${window.location.origin}/login`,
       });
       if (resetError) {
-        if (isNetworkAuthError(resetError)) {
-          addToast('Password reset is unavailable offline. Try again when connected.', 'error');
-        } else {
-          addToast(resetError.message, 'error');
-        }
+        addToast(isNetworkAuthError(resetError) ? t('authOffline') : resetError.message, 'error');
         return;
       }
-      addToast('Check your email for a password reset link.', 'success');
+      addToast(t('checkYourEmail'), 'success');
     } catch (err) {
-      addToast(err instanceof Error ? err.message : 'Could not send reset email.', 'error');
+      addToast(isNetworkAuthError(err) ? t('authOffline') : (err instanceof Error ? err.message : 'Could not send reset email.'), 'error');
+    }
+  };
+
+  const handleResendConfirmation = async () => {
+    const target = unconfirmedEmail || email.trim();
+    if (!target) return;
+    try {
+      const { error: resendError } = await supabase.auth.resend({ type: 'signup', email: target });
+      if (resendError) {
+        addToast(isNetworkAuthError(resendError) ? t('authOffline') : resendError.message, 'error');
+        return;
+      }
+      addToast(t('confirmationSent'), 'success');
+    } catch (err) {
+      addToast(isNetworkAuthError(err) ? t('authOffline') : 'Could not resend email.', 'error');
+    }
+  };
+
+  const handleRecoverySubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    if (!isPasswordStrongEnough(newPassword)) {
+      setError(t('passwordTooWeak'));
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      setError(t('passwordsDoNotMatch'));
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      const { error: updateError } = await supabase.auth.updateUser({ password: newPassword });
+      if (updateError) {
+        setError(updateError.message);
+        addToast(updateError.message, 'error');
+        return;
+      }
+      completePasswordRecovery();
+      await supabase.auth.signOut();
+      setPassword('');
+      setNewPassword('');
+      setConfirmNewPassword('');
+      addToast(t('passwordUpdated'), 'success');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not update password.';
+      setError(message);
+      addToast(message, 'error');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setUnconfirmedEmail(null);
     setIsSubmitting(true);
 
     try {
       if (mode === 'staff') {
-        await login({ identifier: username.trim(), password, mode: 'staff' });
+        await login({ identifier: email.trim(), password, mode: 'staff' });
         addToast(t('welcomeBack') || 'Welcome back.', 'success');
         onAuthenticated('dashboard');
         return;
@@ -97,25 +150,87 @@ export const LoginPage = ({ onBack, onGoRegister, onAuthenticated }: LoginPagePr
         return;
       }
 
-      try {
-        await login({ identifier: trimmedEmail, password, mode: 'owner' });
-        addToast(t('welcomeBack') || 'Welcome back.', 'success');
-      } catch (localErr) {
-        const message =
-          localErr instanceof Error
-            ? localErr.message
-            : authError?.message || 'Invalid email or password.';
-        setError(message);
-        addToast(message, 'error');
+      const message = authError?.message || 'Invalid email or password.';
+      if (isUnconfirmed(message)) {
+        setUnconfirmedEmail(trimmedEmail);
+        setError(t('confirmEmailToSignIn'));
+        addToast(t('confirmEmailToSignIn'), 'info');
+        return;
       }
+      const display = isNetworkAuthError(authError) ? t('authOffline') : message;
+      setError(display);
+      addToast(display, 'error');
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Sign in failed.';
+      const raw = err instanceof Error ? err.message : 'Sign in failed.';
+      const message = isNetworkAuthError(err) ? t('authOffline') : raw;
       setError(message);
       addToast(message, 'error');
     } finally {
       setIsSubmitting(false);
     }
   };
+
+  if (isPasswordRecovery) {
+    return (
+      <AuthShell onBackHome={onBack}>
+        <div className="mb-7">
+          <h1 className="text-2xl sm:text-[1.75rem] font-black font-serif tracking-tight text-bakery-brown">
+            {t('setNewPassword')}
+          </h1>
+          <p className="mt-2 text-sm text-bakery-brown/55 leading-relaxed">
+            {t('setNewPasswordHint')}
+          </p>
+        </div>
+        {error && (
+          <div role="alert" className="mb-5 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-3 text-sm text-rose-600">
+            {error}
+          </div>
+        )}
+        <form onSubmit={handleRecoverySubmit} className="space-y-4">
+          <div>
+            <label htmlFor="new-password" className="mb-1.5 block text-sm font-bold text-bakery-brown">
+              {t('password')}
+            </label>
+            <input
+              id="new-password"
+              type="password"
+              autoComplete="new-password"
+              required
+              minLength={8}
+              value={newPassword}
+              onChange={e => setNewPassword(e.target.value)}
+              className={authFieldClassName}
+              placeholder={t('passwordMinHint')}
+            />
+            <PasswordStrengthMeter password={newPassword} t={t} />
+          </div>
+          <div>
+            <label htmlFor="confirm-new-password" className="mb-1.5 block text-sm font-bold text-bakery-brown">
+              {t('confirmPassword')}
+            </label>
+            <input
+              id="confirm-new-password"
+              type="password"
+              autoComplete="new-password"
+              required
+              minLength={8}
+              value={confirmNewPassword}
+              onChange={e => setConfirmNewPassword(e.target.value)}
+              className={authFieldClassName}
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={isSubmitting || !isPasswordStrongEnough(newPassword)}
+            className={`${authPrimaryButtonClassName} mt-2`}
+          >
+            {isSubmitting ? <Loader2 size={18} className="animate-spin" /> : null}
+            {t('saveNewPassword')}
+          </button>
+        </form>
+      </AuthShell>
+    );
+  }
 
   return (
     <AuthShell onBackHome={onBack}>
@@ -154,40 +269,32 @@ export const LoginPage = ({ onBack, onGoRegister, onAuthenticated }: LoginPagePr
         </div>
       )}
 
+      {unconfirmedEmail && (
+        <button
+          type="button"
+          onClick={handleResendConfirmation}
+          className="mb-4 w-full text-sm font-bold text-bakery-caramel hover:text-bakery-brown"
+        >
+          {t('resendConfirmation')}
+        </button>
+      )}
+
       <form onSubmit={handleSubmit} className="space-y-4">
-        {mode === 'owner' ? (
-          <div>
-            <label htmlFor="login-email" className="mb-1.5 block text-sm font-bold text-bakery-brown">
-              {t('email')}
-            </label>
-            <input
-              id="login-email"
-              type="email"
-              autoComplete="email"
-              required
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              className={authFieldClassName}
-              placeholder={t('emailPlaceholder')}
-            />
-          </div>
-        ) : (
-          <div>
-            <label htmlFor="login-username" className="mb-1.5 block text-sm font-bold text-bakery-brown">
-              {t('staffUsername') || t('username') || 'Username'}
-            </label>
-            <input
-              id="login-username"
-              type="text"
-              autoComplete="username"
-              required
-              value={username}
-              onChange={e => setUsername(e.target.value)}
-              className={authFieldClassName}
-              placeholder="staff1"
-            />
-          </div>
-        )}
+        <div>
+          <label htmlFor="login-email" className="mb-1.5 block text-sm font-bold text-bakery-brown">
+            {t('email')}
+          </label>
+          <input
+            id="login-email"
+            type="email"
+            autoComplete="email"
+            required
+            value={email}
+            onChange={e => setEmail(e.target.value)}
+            className={authFieldClassName}
+            placeholder={t('emailPlaceholder')}
+          />
+        </div>
 
         <div>
           <label htmlFor="login-password" className="mb-1.5 block text-sm font-bold text-bakery-brown">
@@ -224,6 +331,12 @@ export const LoginPage = ({ onBack, onGoRegister, onAuthenticated }: LoginPagePr
               {t('forgotPassword')}
             </button>
           </div>
+        )}
+
+        {mode === 'staff' && (
+          <p className="text-xs text-bakery-brown/45">
+            Staff sign in with the email from their invite.
+          </p>
         )}
 
         <button type="submit" disabled={isSubmitting} className={`${authPrimaryButtonClassName} mt-2`}>
