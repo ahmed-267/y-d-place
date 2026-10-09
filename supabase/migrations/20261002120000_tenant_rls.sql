@@ -42,6 +42,11 @@ grant execute on function public.previsio_is_owner_of(text) to authenticated;
 alter table if exists public.app_users drop column if exists local_password;
 alter table if exists public.app_users drop column if exists password;
 
+-- App expects this JSONB map on businesses (onlineOrders, tables, etc.)
+alter table if exists public.businesses
+  add column if not exists enabled_modules jsonb
+  default '{"orders":true,"sales":true,"stock":true,"staff":true,"finance":true,"tables":false,"customers":false,"tips":false,"onlineOrders":false,"parkTickets":false}'::jsonb;
+
 -- Enable RLS on tenant tables (ignore if already enabled)
 do $$
 declare
@@ -228,14 +233,27 @@ end $$;
 
 -- Online orders are inserted only via server (service role) after price validation.
 -- Do not allow anon/authenticated direct inserts — that would bypass price checks.
-drop policy if exists previsio_orders_public_insert on public.orders;
+-- DROP POLICY still errors when the table itself is missing, so skip that case.
+do $$
+begin
+  drop policy if exists previsio_orders_public_insert on public.orders;
+exception when undefined_table then
+  raise notice 'skip orders public insert policy (table missing)';
+end $$;
 
 -- Public can read business name/currency for order page (minimal columns enforced by app select)
-drop policy if exists previsio_businesses_public_menu on public.businesses;
-create policy previsio_businesses_public_menu on public.businesses
-  for select to anon, authenticated
-  using (
-    coalesce((enabled_modules->>'onlineOrders')::boolean, false) = true
-  );
+do $$
+begin
+  drop policy if exists previsio_businesses_public_menu on public.businesses;
+  create policy previsio_businesses_public_menu on public.businesses
+    for select to anon, authenticated
+    using (
+      coalesce((enabled_modules->>'onlineOrders')::boolean, false) = true
+    );
+exception when undefined_table then
+  raise notice 'skip public businesses policy';
+when undefined_column then
+  raise notice 'skip public businesses policy (schema mismatch)';
+end $$;
 
 comment on function public.previsio_my_business_ids() is 'Tenant membership for RLS — PreVisio';

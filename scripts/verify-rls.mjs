@@ -1,14 +1,44 @@
 #!/usr/bin/env node
 /**
  * Read-only RLS probe: as anon, tenant tables must not return data.
+ * Loads .env.local / .env from the project root (same vars as Vite).
  * Usage:
+ *   npm run verify:rls
  *   VITE_SUPABASE_URL=... VITE_SUPABASE_ANON_KEY=... node scripts/verify-rls.mjs
  */
+import { readFileSync, existsSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+const loadEnvFile = (name) => {
+  const path = resolve(process.cwd(), name);
+  if (!existsSync(path)) return;
+  for (const line of readFileSync(path, 'utf8').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq <= 0) continue;
+    const key = trimmed.slice(0, eq).trim();
+    let value = trimmed.slice(eq + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    if (process.env[key] === undefined) process.env[key] = value;
+  }
+};
+
+loadEnvFile('.env.local');
+loadEnvFile('.env');
+
 const url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const anon = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
 
 if (!url || !anon) {
-  console.error('Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY');
+  console.error(
+    'Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in .env.local (or export them in the shell).'
+  );
   process.exit(1);
 }
 

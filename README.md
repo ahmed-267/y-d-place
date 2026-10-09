@@ -27,7 +27,7 @@ React, TypeScript, Vite, Tailwind, Supabase (auth and data), Netlify Functions, 
 You need **Node.js 20+** and npm.
 
 ```bash
-git clone git@gitlab.com:Ahmed267/y-d-place.git
+git clone https://github.com/ahmed-267/y-d-place.git
 cd y-d-place
 npm install
 cp .env.example .env.local
