@@ -10,11 +10,42 @@ export const getStripe = () => {
   return new Stripe(key, { timeout: 20000, maxNetworkRetries: 1 });
 };
 
-export const getAppUrl = () =>
-  (process.env.APP_URL || process.env.URL || process.env.VITE_OPENROUTER_SITE_URL || 'http://localhost:3000').replace(
-    /\/$/,
-    ''
+const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i;
+
+const normalizeOrigin = (value) => (value ? String(value).trim().replace(/\/$/, '') : '');
+
+/** Prefer the live site origin on Netlify; ignore localhost APP_URL when a deploy URL exists. */
+export const getAppUrl = (event) => {
+  const headers = event?.headers || {};
+  const configured = [];
+
+  const origin = normalizeOrigin(headers.origin || headers.Origin || '');
+  if (origin) configured.push(origin);
+
+  const forwardedHost = (headers['x-forwarded-host'] || headers.host || headers.Host || '')
+    .split(',')[0]
+    .trim();
+  const forwardedProto = (headers['x-forwarded-proto'] || 'https').split(',')[0].trim();
+  if (forwardedHost) {
+    configured.push(normalizeOrigin(`${forwardedProto}://${forwardedHost}`));
+  }
+
+  configured.push(
+    ...[
+      process.env.URL,
+      process.env.DEPLOY_PRIME_URL,
+      process.env.APP_URL,
+      process.env.VITE_OPENROUTER_SITE_URL,
+    ]
+      .map(normalizeOrigin)
+      .filter(Boolean),
   );
+
+  const remote = configured.find((url) => url && !LOCAL_ORIGIN.test(url));
+  if (remote) return remote;
+
+  return configured.find(Boolean) || 'http://localhost:3000';
+};
 
 export const planFromStripeStatus = (status) => {
   switch (status) {

@@ -137,7 +137,7 @@ const stats = [
 const plans = [
   {
     name: 'Pro',
-    price: '$39/mo',
+    price: '£39/mo',
     description: '14-day free trial, then billed monthly. Full PreVisio for a busy kitchen.',
     features: [
       '14-day free trial — cancel anytime',
@@ -579,7 +579,7 @@ export const WelcomeScreen = ({ onLogin, onRegister, onTryDemo }: WelcomeScreenP
               <div>
                 <h2 className={`font-serif text-4xl font-black md:text-5xl ${heading}`}>Simple pricing</h2>
                 <p className={`mt-4 max-w-md text-lg ${body}`}>
-                  14 days free, then $39/mo. Cancel anytime before you are charged.
+                  14 days free, then £39/mo. Cancel anytime before you are charged.
                 </p>
               </div>
               <p className={`text-sm font-bold ${muted}`}>No contracts · Cancel anytime</p>

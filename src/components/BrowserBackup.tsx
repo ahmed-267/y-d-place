@@ -80,6 +80,8 @@ export function BrowserBackup({ businessId }: { businessId: string }) {
     const link = document.createElement('a'); link.href = url; link.download = `previsio-recovery-${id}.json`; link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
+  if (import.meta.env.PROD) return null;
+
   return <aside className="border-b border-slate-200 bg-white px-4 py-2 text-xs text-slate-700">
     <button type="button" onClick={() => expanded ? setExpanded(false) : void list()} className="underline">{status}</button>
     {error && <p role="alert" className="text-red-700">{error} Automatic retries run every minute while the app is open.</p>}

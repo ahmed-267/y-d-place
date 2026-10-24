@@ -119,6 +119,7 @@ const EXTRA_TRANSLATIONS = {
   billingActivating: "Activating your trial…",
   billingActivatingSlow: "Payment received — refresh in a moment if setup does not continue.",
   billingStripeSecure: "Secure checkout powered by Stripe",
+  billingProPriceLabel: "£39/mo",
 
   setNewPassword: "Set a new password",
   setNewPasswordHint: "Choose a new password for your account.",

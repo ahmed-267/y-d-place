@@ -22,7 +22,7 @@ export const handler = async (event) => {
       auth.business,
       auth.user.email || auth.business.owner_email
     );
-    const appUrl = getAppUrl();
+    const appUrl = getAppUrl(event);
     const session = await stripe.billingPortal.sessions.create({
       customer: customerId,
       return_url: `${appUrl}/?billing=portal`,

@@ -34,10 +34,16 @@ export const handler = async (event) => {
       if (subscriptions.data.some(s => ['active', 'trialing', 'past_due', 'unpaid', 'incomplete', 'paused'].includes(s.status))) {
         return json(409, { error: 'An existing subscription must be managed through the billing portal' });
       }
+      const appUrl = getAppUrl(event);
       const openSessions = await stripe.checkout.sessions.list({ customer: customerId, status: 'open', limit: 10 });
       const pending = openSessions.data.find(s => s.mode === 'subscription');
-      if (pending?.url) return json(200, { url: pending.url });
-      const appUrl = getAppUrl();
+      if (pending?.url) {
+        const success = pending.success_url || '';
+        if (success.startsWith(`${appUrl}/`)) {
+          return json(200, { url: pending.url });
+        }
+        await stripe.checkout.sessions.expire(pending.id);
+      }
       const session = await stripe.checkout.sessions.create({
         mode: 'subscription',
         customer: customerId,

@@ -133,7 +133,7 @@ export const BillingGate: React.FC = () => {
           <div className="flex items-baseline justify-between gap-3">
             <div>
               <p className="text-xs font-bold uppercase tracking-widest text-bakery-brown/45">PreVisio Pro</p>
-              <p className="text-3xl font-black font-serif text-bakery-brown">$39<span className="text-base font-bold opacity-60">/mo</span></p>
+              <p className="text-3xl font-black font-serif text-bakery-brown">{t('billingProPriceLabel')}</p>
             </div>
             <p className="text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-full px-3 py-1">
               {t('billingTrialBadge')}
