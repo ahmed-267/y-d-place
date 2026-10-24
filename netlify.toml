@@ -3,6 +3,10 @@
   publish = "dist"
   functions = "netlify/functions"
 
+  # Brand name, default model id, and public site URL also appear in source/README.
+  [build.environment]
+    SECRETS_SCAN_OMIT_KEYS = "VITE_OPENROUTER_APP_NAME,VITE_OPENROUTER_MODEL,APP_URL,VITE_OPENROUTER_SITE_URL"
+
 [functions]
   node_bundler = "esbuild"
 
