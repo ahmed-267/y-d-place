@@ -1,3 +1,4 @@
+import { LeaveRequests } from './LeaveRequests';
 import React, { useMemo, useState } from 'react';
 import { useApp } from '../AppContext';
 import { ChevronLeft, ChevronRight, Clock, Plus, Umbrella, Wallet } from 'lucide-react';
@@ -52,6 +53,7 @@ const leaveLabelKey = (reason?: WorkShift['leaveReason']) => {
 
 export const MyShiftsTab = () => {
   const { user, workShifts, setWorkShifts, t, addToast, formatPrice } = useApp();
+  const readOnly = user?.role === 'staff';
   const hourlyRate = user?.hourlyRate ?? 0;
 
   const [mode, setMode] = useState<CalendarMode>('week');
@@ -134,6 +136,7 @@ export const MyShiftsTab = () => {
   const openDay = (date: Date) => {
     const key = toDateKey(date);
     setSelectedDate(key);
+    if (readOnly) { setDayModal('worked'); return; }
     const existing = (shiftsByDate.get(key) || []).find(s => (s.kind || 'worked') === 'worked');
     const leave = (shiftsByDate.get(key) || []).find(s => s.kind === 'leave');
     if (existing) {
@@ -176,9 +179,9 @@ export const MyShiftsTab = () => {
     };
   }, [selectedDate, shiftsByDate]);
 
-  const saveWorked = (e: React.FormEvent) => {
+  const saveWorked = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !selectedDate) return;
+    if (!user || !selectedDate || readOnly) return;
     const hours = calculatedHours;
     const pay =
       formData.payAmount.trim() === ''
@@ -200,7 +203,8 @@ export const MyShiftsTab = () => {
       kind: 'worked',
     };
 
-    // Replacing leave on same day if logging work
+    if (existingForSelected.leave) { addToast('Approved leave already exists on this day. Ask your manager to review it.', 'error'); return; }
+    // Keep approved leave unchanged.
     let next = workShifts.filter(
       s => !(s.userId === user.id && s.date === selectedDate && s.kind === 'leave')
     );
@@ -209,49 +213,16 @@ export const MyShiftsTab = () => {
     } else {
       next = [...next, payload];
     }
-    setWorkShifts(next);
+    if (!await setWorkShifts(next)) return;
     setDayModal(null);
     setSelectedDate(null);
     addToast(t('shiftLogged'));
   };
 
-  const saveLeave = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!user || !selectedDate) return;
-    const payload: WorkShift = {
-      id: existingForSelected.leave?.id || `LEAVE-${Date.now()}`,
-      userId: user.id,
-      username: user.username,
-      fullName: user.fullName,
-      date: selectedDate,
-      startTime: '',
-      endTime: '',
-      breakMinutes: 0,
-      totalHours: 0,
-      notes: formData.notes,
-      kind: 'leave',
-      leaveReason: formData.leaveReason,
-      payAmount: 0,
-    };
-
-    // Leave replaces worked shift that day
-    let next = workShifts.filter(
-      s => !(s.userId === user.id && s.date === selectedDate && (s.kind || 'worked') === 'worked')
-    );
-    if (existingForSelected.leave) {
-      next = next.map(s => (s.id === existingForSelected.leave!.id ? payload : s));
-    } else {
-      next = [...next, payload];
-    }
-    setWorkShifts(next);
-    setDayModal(null);
-    setSelectedDate(null);
-    addToast(t('leaveLogged') || 'Leave saved.');
-  };
-
-  const handleDelete = () => {
-    if (!deleteConfirm) return;
-    setWorkShifts(workShifts.filter(s => s.id !== deleteConfirm.id));
+  const handleDelete = async () => {
+    if (!deleteConfirm || readOnly) return;
+    if (deleteConfirm.kind === 'leave' && user?.role === 'staff') { addToast('Ask your manager to change approved leave.', 'error'); return false; }
+    if (!await setWorkShifts(workShifts.filter(s => s.id !== deleteConfirm.id))) return;
     setDeleteConfirm(null);
     setDayModal(null);
     setSelectedDate(null);
@@ -331,12 +302,15 @@ export const MyShiftsTab = () => {
 
   return (
     <div className="space-y-5 animate-fade-in pb-8 max-w-full overflow-hidden">
+      <details className="card-bakery overflow-hidden">
+        <summary className="cursor-pointer px-4 py-3 text-sm font-bold text-bakery-brown">{t('timeOffTab')}</summary>
+        <div className="p-3 pt-0"><LeaveRequests formOnly /></div>
+      </details>
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-bold font-serif text-bakery-brown">{t('myShifts')}</h2>
           <p className="text-xs text-bakery-brown/45 mt-1">
-            {t('myShiftsCalendarHint') ||
-              'Tap a day to log hours and pay, or mark leave when you cannot work.'}
+            View your shifts and request time off for manager approval.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -391,14 +365,14 @@ export const MyShiftsTab = () => {
               <ChevronRight size={18} />
             </button>
           </div>
-          <button
+          {!readOnly && <button
             type="button"
             onClick={() => openDay(new Date())}
             className="btn-primary flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold active:scale-95 text-sm"
           >
             <Plus size={16} />
             {t('logToday') || 'Log today'}
-          </button>
+          </button>}
         </div>
       </div>
 
@@ -432,7 +406,7 @@ export const MyShiftsTab = () => {
         </div>
       </div>
 
-      {hourlyRate <= 0 && (
+      {!readOnly && hourlyRate <= 0 && (
         <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2">
           {t('hourlyRateMissingHint') ||
             'No hourly rate set on your profile yet — enter pay manually when logging a shift.'}
@@ -455,11 +429,21 @@ export const MyShiftsTab = () => {
         </div>
       </div>
 
-      {dayModal && selectedDate && (
+      <LeaveRequests historyOnly />
+      {readOnly && dayModal && selectedDate && <Modal title="Shift details" onClose={()=>{setDayModal(null);setSelectedDate(null);}}>
+        <div className="space-y-3 text-bakery-brown"><p className="font-bold">{selectedDate}</p>
+          {(shiftsByDate.get(selectedDate)||[]).map(s=><div key={s.id} className="card-bakery p-4">
+            <p className="font-bold">{s.kind==='leave' ? t(leaveLabelKey(s.leaveReason)) : `${s.startTime}–${s.endTime}`}</p>
+            {s.kind!=='leave' && <p>{s.totalHours}h</p>}{s.notes && <p className="text-sm mt-2">{s.notes}</p>}
+          </div>)}
+          {!(shiftsByDate.get(selectedDate)||[]).length && <p>No shift recorded for this day.</p>}
+        </div>
+      </Modal>}
+      {!readOnly && dayModal && selectedDate && (
         <Modal
           title={
             dayModal === 'leave'
-              ? t('markUnavailable') || 'Mark unavailable'
+              ? 'Request time off'
               : t('logShift') || t('addShift')
           }
           onClose={() => {
@@ -487,7 +471,7 @@ export const MyShiftsTab = () => {
                     dayModal === 'leave' ? 'bg-bakery-brown text-white' : 'text-bakery-brown/50'
                   }`}
                 >
-                  {t('unavailable') || 'Unavailable'}
+                  Request time off
                 </button>
               </div>
             </div>
@@ -599,55 +583,7 @@ export const MyShiftsTab = () => {
                 </div>
               </form>
             ) : (
-              <form onSubmit={saveLeave} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">
-                    {t('leaveReason') || 'Reason'}
-                  </label>
-                  <select
-                    className="w-full p-3 border border-bakery-beige rounded-2xl font-bold outline-none focus:ring-2 focus:ring-bakery-caramel"
-                    value={formData.leaveReason}
-                    onChange={e =>
-                      setFormData({
-                        ...formData,
-                        leaveReason: e.target.value as NonNullable<WorkShift['leaveReason']>,
-                      })
-                    }
-                  >
-                    <option value="sick">{t('leaveSick') || 'Sick'}</option>
-                    <option value="holiday">{t('leaveHoliday') || 'Holiday / vacation'}</option>
-                    <option value="personal">{t('leavePersonal') || 'Personal'}</option>
-                    <option value="other">{t('leaveOther') || 'Other'}</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">
-                    {t('notes')}
-                  </label>
-                  <textarea
-                    className="w-full p-3 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel min-h-[80px]"
-                    value={formData.notes}
-                    onChange={e => setFormData({ ...formData, notes: e.target.value })}
-                    placeholder={t('leaveNotesPlaceholder') || 'Optional note for your manager'}
-                  />
-                </div>
-                <div className="flex gap-2">
-                  {(existingForSelected.worked || existingForSelected.leave) && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setDeleteConfirm(existingForSelected.leave || existingForSelected.worked)
-                      }
-                      className="flex-1 py-3 rounded-2xl border border-rose-200 text-rose-600 font-bold"
-                    >
-                      {t('delete')}
-                    </button>
-                  )}
-                  <button type="submit" className="flex-[2] btn-primary py-3 rounded-2xl font-bold">
-                    {t('save')}
-                  </button>
-                </div>
-              </form>
+              <LeaveRequests initialDate={selectedDate || ''} />
             )}
           </div>
         </Modal>

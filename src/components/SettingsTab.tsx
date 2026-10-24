@@ -1,3 +1,4 @@
+import { PasswordInput } from './PasswordInput';
 import React, { useEffect, useState } from 'react';
 import { useApp } from '../AppContext';
 import { CURRENCIES, VENUE_TYPES, CURRENCY_OPTIONS } from '../constants';
@@ -5,7 +6,7 @@ import { SUPPORTED_COUNTRIES } from '../data/supportedCountries';
 import { getRegionalTaxProfile, regionalTaxLines } from '../utils/taxRegions';
 import { CitySelect } from './CitySelect';
 import { BusinessSettings, Language, TaxSettings, EnabledModules, normalizeEnabledModules, normalizeDiscountPolicy, normalizeBrandTheme, DiscountPolicy, BrandTheme, DEFAULT_BRAND_THEME } from '../types';
-import { BRAND_PALETTES, resolveBrandPalette, contrastingInk, applyBrandThemeToDocument } from '../utils/brandTheme';
+import { appearancePalette, BRAND_PALETTES, resolveBrandPalette, contrastingInk, applyBrandThemeToDocument } from '../utils/brandTheme';
 import {
   Save,
   Building2,
@@ -66,6 +67,7 @@ export const SettingsTab = () => {
     taxSettings,
     setTaxSettings,
     isDemoMode,
+    accountAppearance,
   } = useApp();
 
   const [formData, setFormData] = useState<BusinessSettings>(businessSettings || emptyBusiness());
@@ -88,7 +90,7 @@ export const SettingsTab = () => {
   const [themeForm, setThemeForm] = useState<BrandTheme>(() =>
     normalizeBrandTheme(businessSettings?.brandTheme)
   );
-  const selectedPalette = resolveBrandPalette(themeForm);
+  const selectedPalette = appearancePalette(resolveBrandPalette(themeForm), accountAppearance);
   type SettingsSection =
     | 'profile'
     | 'hours'
@@ -141,33 +143,33 @@ export const SettingsTab = () => {
 
   const persistTheme = async (theme: BrandTheme) => {
     const normalized = normalizeBrandTheme(theme);
-    setThemeForm(normalized);
-    applyBrandThemeToDocument(normalized);
     if (!businessSettings) return;
-    await saveBusinessSettings({
+    if (!await saveBusinessSettings({
       ...businessSettings,
       brandTheme: normalized,
-    });
+    })) return;
+    setThemeForm(normalized);
+    applyBrandThemeToDocument(normalized);
   };
 
   const persistDiscount = async (next: DiscountPolicy) => {
     const normalized = normalizeDiscountPolicy(next);
-    setDiscountForm(normalized);
     if (!businessSettings) return;
-    await saveBusinessSettings({
+    if (!await saveBusinessSettings({
       ...businessSettings,
       discountPolicy: normalized,
-    });
+    })) return;
+    setDiscountForm(normalized);
   };
 
   const persistModules = async (next: EnabledModules) => {
     const normalized = normalizeEnabledModules(next);
-    setModulesForm(normalized);
     if (!businessSettings) return;
-    await saveBusinessSettings({
+    if (!await saveBusinessSettings({
       ...businessSettings,
       enabledModules: normalized,
-    });
+    })) return;
+    setModulesForm(normalized);
   };
 
   const toggleModule = (key: keyof EnabledModules) => {
@@ -546,7 +548,6 @@ export const SettingsTab = () => {
                   { key: 'customers' as const, title: t('moduleCustomers'), hint: t('moduleCustomersHint') },
                   { key: 'tips' as const, title: t('moduleTips'), hint: t('moduleTipsHint') },
                   { key: 'onlineOrders' as const, title: t('moduleOnlineOrders'), hint: t('moduleOnlineOrdersHint') },
-                  { key: 'parkTickets' as const, title: t('moduleParkTickets'), hint: t('moduleParkTicketsHint') },
                 ] as const
               ).map(opt => (
                 <button
@@ -618,7 +619,8 @@ export const SettingsTab = () => {
               </select>
             </label>
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
-              {BRAND_PALETTES.map(p => {
+              {BRAND_PALETTES.map(base => {
+                const p = appearancePalette(base, accountAppearance);
                 const active = selectedPalette.id === p.id;
                 return (
                   <button
@@ -997,8 +999,8 @@ export const SettingsTab = () => {
                 <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">
                   {t('currentPassword')}
                 </label>
-                <input
-                  type="password"
+                <PasswordInput
+
                   className="w-full p-3 border border-bakery-beige rounded-xl outline-none focus:ring-2 focus:ring-bakery-caramel text-sm"
                   value={passwordForm.currentPassword}
                   onChange={e => setPasswordForm({ ...passwordForm, currentPassword: e.target.value })}
@@ -1010,8 +1012,8 @@ export const SettingsTab = () => {
                 <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">
                   {t('newPassword')}
                 </label>
-                <input
-                  type="password"
+                <PasswordInput
+
                   className="w-full p-3 border border-bakery-beige rounded-xl outline-none focus:ring-2 focus:ring-bakery-caramel text-sm"
                   value={passwordForm.newPassword}
                   onChange={e => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
@@ -1024,8 +1026,8 @@ export const SettingsTab = () => {
                 <label className="block text-xs font-black uppercase tracking-widest text-bakery-brown/40 mb-2">
                   {t('confirmNewPassword')}
                 </label>
-                <input
-                  type="password"
+                <PasswordInput
+
                   className="w-full p-3 border border-bakery-beige rounded-xl outline-none focus:ring-2 focus:ring-bakery-caramel text-sm"
                   value={passwordForm.confirmPassword}
                   onChange={e => setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })}

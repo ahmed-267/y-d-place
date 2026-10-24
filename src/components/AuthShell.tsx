@@ -25,9 +25,7 @@ export const AuthShell = ({ onBackHome, children }: AuthShellProps) => {
 
         <div className="flex items-center gap-3 sm:gap-5">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-bakery-brown text-white flex items-center justify-center shadow-sm shadow-bakery-brown/20">
-              <Layout size={18} strokeWidth={2.25} />
-            </div>
+            <img src="/favicon.svg" alt="" className="w-9 h-9 rounded-xl shadow-sm shadow-bakery-brown/20" />
             <div className="leading-tight hidden sm:block">
               <p className="text-sm font-bold tracking-tight text-bakery-brown font-serif">PreVisio</p>
               <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-bakery-brown/40">

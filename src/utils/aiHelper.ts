@@ -1,3 +1,6 @@
+import { supabase } from '../components/supabaseClient';
+
+export class AIRequestError extends Error {}
 
 /** Prefer the Vite / Netlify /api/ai proxy so keys stay server-side. */
 const requestViaProxy = async (
@@ -5,24 +8,29 @@ const requestViaProxy = async (
   mode: 'json' | 'text',
   schema?: Record<string, unknown>,
   imageBase64?: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  operation = 'product-assistance'
 ): Promise<string | null> => {
   try {
+    const demo = Boolean(localStorage.getItem('previsio_demo_session'));
+    const { data } = await supabase.auth.getSession();
+    const localDemo = demo && import.meta.env.DEV;
+    if (!localDemo && !data.session) throw new AIRequestError('Sign in to your business account to scan your own menu.');
     const res = await fetch('/api/ai', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(localDemo ? { 'X-Previsio-Local-Demo': 'true' } : { Authorization: `Bearer ${data.session!.access_token}` }) },
       signal,
-      body: JSON.stringify({ prompt, schema, imageBase64, mode }),
+      body: JSON.stringify({ operation, prompt, schema, imageBase64, mode }),
     });
     if (!res.ok) {
-      console.error('AI proxy failed', res.status, await res.text());
-      return null;
+      const failure = await res.json().catch(() => ({}));
+      throw new AIRequestError(typeof failure.error === 'string' ? failure.error : 'The scanning service could not complete the request. Please try again.');
     }
-    const data = (await res.json()) as { content?: string | null };
-    return data.content ?? null;
+    const response = (await res.json()) as { content?: string | null };
+    return response.content ?? null;
   } catch (err) {
-    console.error('AI proxy unreachable', err);
-    return null;
+    if (err instanceof AIRequestError || (err as Error).name === 'AbortError') throw err;
+    throw new AIRequestError('Could not connect to the scanning service. Check your connection and try again.');
   }
 };
 
@@ -30,9 +38,10 @@ const requestOpenRouterJSON = async (
   prompt: string,
   schema: Record<string, unknown>,
   imageBase64?: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  operation = 'product-assistance'
 ) => {
-  const proxied = await requestViaProxy(prompt, 'json', schema, imageBase64, signal);
+  const proxied = await requestViaProxy(prompt, 'json', schema, imageBase64, signal, operation);
   if (!proxied) return null;
   try {
     return JSON.parse(proxied);
@@ -44,9 +53,10 @@ const requestOpenRouterJSON = async (
 const requestOpenRouterText = async (
   prompt: string,
   imageBase64?: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  operation = 'brand-story'
 ) => {
-  return requestViaProxy(prompt, 'text', undefined, imageBase64, signal);
+  return requestViaProxy(prompt, 'text', undefined, imageBase64, signal, operation);
 };
 
 const extractFirstJSONObject = (text: string): Record<string, unknown> | null => {
@@ -107,7 +117,7 @@ const normalizeMenuResult = (raw: Record<string, unknown>): ScanMenuResult | nul
             ? Number(priceValue.replace(/[^0-9.,-]/g, "").replace(",", "."))
             : NaN;
 
-      if (!name || !Number.isFinite(price)) return null;
+      if (!name || !Number.isFinite(price) || price < 0) return null;
 
       const category = typeof obj.category === "string" && obj.category.trim() ? obj.category.trim() : "Other";
       const emoji = typeof obj.emoji === "string" && obj.emoji.trim() ? obj.emoji.trim() : "🍽️";
@@ -140,7 +150,7 @@ const normalizeMenuResult = (raw: Record<string, unknown>): ScanMenuResult | nul
                     ? Number(quantityValue.replace(/[^0-9.,-]/g, "").replace(",", "."))
                     : NaN;
               const unit = typeof linkObj.unit === "string" && linkObj.unit.trim() ? linkObj.unit.trim() : "";
-              if (!ingredientName || !Number.isFinite(quantityUsed) || !unit) return null;
+              if (!ingredientName || !Number.isFinite(quantityUsed) || quantityUsed <= 0 || !unit) return null;
               return { ingredientName, quantityUsed, unit };
             })
             .filter(Boolean)
@@ -255,7 +265,8 @@ export const scanMenu = async (base64Image: string, signal?: AbortSignal): Promi
 
   const primaryPrompt = [
     "You are extracting a restaurant/café menu from a photo.",
-    "Return every clearly readable menu item with its price.",
+    "Read the entire image, including every column and section, from top to bottom. Return EVERY clearly readable priced menu item, not a sample or summary.",
+    "Before finishing, check every section for omitted items. Include separately priced sizes or variants as separate items with descriptive names.",
     "Rules:",
     "- Do NOT invent items that are not visible.",
     "- Prices must be numbers only (no currency symbols).",
@@ -266,30 +277,27 @@ export const scanMenu = async (base64Image: string, signal?: AbortSignal): Promi
   ].join("\n");
 
   try {
-    const result = await requestOpenRouterJSON(primaryPrompt, schema, base64Image, signal);
+    const result = await requestOpenRouterJSON(primaryPrompt, schema, base64Image, signal, 'menu-scan');
     if (result) {
       const normalized = normalizeMenuResult(result as Record<string, unknown>);
       if (normalized) return normalized;
     }
   } catch (error) {
-    if ((error as any).name === "AbortError") {
-      console.log("Scan aborted by user");
-      return null;
-    }
+    if (error instanceof AIRequestError || (error as Error).name === "AbortError") throw error;
     console.warn("Structured menu scan failed, attempting fallback.", error);
   }
 
   try {
     const fallbackPrompt =
       "Extract menu items from this image. Return ONLY JSON: {\"products\":[{\"name\":\"...\",\"price\":0,\"category\":\"Mains\",\"emoji\":\"🍽️\"}]}. Include every readable priced item; do not invent items.";
-    const raw = await requestOpenRouterText(fallbackPrompt, base64Image, signal);
+    const raw = await requestOpenRouterText(fallbackPrompt, base64Image, signal, 'menu-scan');
     if (!raw) return null;
     const parsed = extractFirstJSONObject(raw);
     if (!parsed) return null;
     return normalizeMenuResult(parsed);
   } catch (error) {
-    if ((error as any).name === "AbortError") {
-      console.log("Scan aborted by user");
+    if (error instanceof AIRequestError || (error as Error).name === "AbortError") {
+      throw error;
     } else {
       console.error("Error scanning menu:", error);
     }
@@ -393,9 +401,10 @@ export const extractReceiptExpense = async (
     required: ['name', 'amount', 'date', 'category'],
     additionalProperties: false,
   };
-  const result = await requestOpenRouterJSON(prompt, schema, imageBase64, signal);
+  const result = await requestOpenRouterJSON(prompt, schema, imageBase64, signal, 'receipt-scan');
   if (!result || typeof result !== 'object') return null;
   const r = result as Record<string, unknown>;
+  if (typeof r.name !== 'string' || !r.name.trim() || typeof r.amount !== 'number' || !Number.isFinite(r.amount) || r.amount < 0 || typeof r.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(r.date) || !Number.isFinite(Date.parse(r.date))) return null;
   return {
     name: String(r.name || ''),
     amount: Number(r.amount || 0),

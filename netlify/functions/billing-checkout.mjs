@@ -1,15 +1,12 @@
 import {
   getStripe,
+  withBillingLock,
   getAppUrl,
   TRIAL_DAYS,
   requireOwner,
   ensureStripeCustomer,
-  createServiceSupabase,
-  applySubscriptionToBusiness,
-  resolveBusinessIdFromSubscription,
-  planFromStripeStatus,
 } from './_billing.mjs';
-import { json, parseBody } from './_shared.mjs';
+import { json } from './_shared.mjs';
 
 export const handler = async (event) => {
   if (event.httpMethod !== 'POST') return json(405, { error: 'Method not allowed' });
@@ -26,35 +23,44 @@ export const handler = async (event) => {
   if (auth.error) return json(auth.status || 401, { error: auth.error });
 
   try {
-    const customerId = await ensureStripeCustomer(
-      stripe,
-      auth.business,
-      auth.user.email || auth.business.owner_email
-    );
+    return await withBillingLock(auth.admin, auth.business.id, async () => {
+      const customerId = await ensureStripeCustomer(
+        stripe,
+        auth.business,
+        auth.user.email || auth.business.owner_email
+      );
 
-    const appUrl = getAppUrl();
-    const session = await stripe.checkout.sessions.create({
-      mode: 'subscription',
-      customer: customerId,
-      client_reference_id: auth.business.id,
-      line_items: [{ price: priceId, quantity: 1 }],
-      subscription_data: {
-        trial_period_days: TRIAL_DAYS,
+      const subscriptions = await stripe.subscriptions.list({ customer: customerId, status: 'all', limit: 100 });
+      if (subscriptions.data.some(s => ['active', 'trialing', 'past_due', 'unpaid', 'incomplete', 'paused'].includes(s.status))) {
+        return json(409, { error: 'An existing subscription must be managed through the billing portal' });
+      }
+      const openSessions = await stripe.checkout.sessions.list({ customer: customerId, status: 'open', limit: 10 });
+      const pending = openSessions.data.find(s => s.mode === 'subscription');
+      if (pending?.url) return json(200, { url: pending.url });
+      const appUrl = getAppUrl();
+      const session = await stripe.checkout.sessions.create({
+        mode: 'subscription',
+        customer: customerId,
+        client_reference_id: auth.business.id,
+        line_items: [{ price: priceId, quantity: 1 }],
+        subscription_data: {
+          ...(subscriptions.data.length === 0 ? { trial_period_days: TRIAL_DAYS } : {}),
+          metadata: {
+            business_id: auth.business.id,
+            owner_user_id: auth.user.id,
+          },
+        },
         metadata: {
           business_id: auth.business.id,
           owner_user_id: auth.user.id,
         },
-      },
-      metadata: {
-        business_id: auth.business.id,
-        owner_user_id: auth.user.id,
-      },
-      success_url: `${appUrl}/?billing=success`,
-      cancel_url: `${appUrl}/?billing=cancel`,
-      allow_promotion_codes: true,
-    });
+        success_url: `${appUrl}/onboarding?billing=success`,
+        cancel_url: `${appUrl}/onboarding?billing=cancel`,
+        allow_promotion_codes: true,
+      }, { idempotencyKey: `checkout-${auth.business.id}-${Math.floor(Date.now() / 1800000)}` });
 
-    return json(200, { url: session.url });
+      return json(200, { url: session.url });
+    });
   } catch (err) {
     return json(500, { error: err instanceof Error ? err.message : 'Checkout failed' });
   }

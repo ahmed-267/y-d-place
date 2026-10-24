@@ -1,3 +1,4 @@
+import { numericId } from '../utils/numericId';
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../AppContext';
 import {
@@ -19,7 +20,7 @@ import {
   Wallet,
 } from 'lucide-react';
 import { IngredientLink, Product, PreparedStockLink, normalizeEnabledModules, EnabledModules, Language } from '../types';
-import { getAIAssistance, scanMenu, ScanMenuResult, compressImage } from '../utils/aiHelper';
+import { AIRequestError, getAIAssistance, scanMenu, ScanMenuResult, compressImage } from '../utils/aiHelper';
 import { CitySelect } from './CitySelect';
 import { Modal } from './Modal';
 import { ScanProgressModal } from './ScanProgressModal';
@@ -145,7 +146,7 @@ export const OnboardingWizard = () => {
   });
   const [isAIProcessing, setIsAIProcessing] = useState(false);
 
-  const addProduct = () => {
+  const addProduct = async () => {
     if (productForm.name && productForm.price) {
       const currentIngredients = [...ingredients];
       const currentPrepared = [...preparedStock];
@@ -200,9 +201,9 @@ export const OnboardingWizard = () => {
       if (!categories.includes(newProduct.category)) {
         setCategories([...categories, newProduct.category]);
       }
-      setIngredients(currentIngredients);
-      setPreparedStock(currentPrepared);
-      setProducts([...products, newProduct]);
+      if (!await setIngredients(currentIngredients)) return;
+      if (!await setPreparedStock(currentPrepared)) return;
+      if (!await setProducts([...products, newProduct])) return;
       setProductForm({
         name: '',
         category: categories[0] || newProduct.category || 'General',
@@ -233,6 +234,7 @@ export const OnboardingWizard = () => {
   };
 
   const [isScanning, setIsScanning] = useState(false);
+  const [scanError, setScanError] = useState('');
   const [scanStatus, setScanStatus] = useState<
     'uploading' | 'analyzing' | 'extracting' | 'finishing' | 'error' | 'success' | 'timeout'
   >('uploading');
@@ -263,15 +265,17 @@ export const OnboardingWizard = () => {
     if (!selectedFile) return;
     setIsScanning(true);
     setScanStatus('uploading');
+    setScanError('');
     setScanThumbnail(selectedFile);
     let stageTimer: ReturnType<typeof setTimeout> | undefined;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
     try {
-      const compressed = await compressImage(selectedFile, 768, 0.62);
+      const compressed = await compressImage(selectedFile, 2048, 0.85);
       setScanStatus('analyzing');
       stageTimer = setTimeout(() => setScanStatus('extracting'), 1500);
       const controller = new AbortController();
       abortControllerRef.current = controller;
-      const timeoutId = setTimeout(() => {
+      timeoutId = setTimeout(() => {
         controller.abort();
         setScanStatus('timeout');
       }, 45000);
@@ -285,13 +289,18 @@ export const OnboardingWizard = () => {
         setScanStatus('success');
       } else {
         setScanStatus('error');
+        setScanError(t('scanMenuNoItems'));
         addToast(t('scanMenuNoItems'), 'error');
       }
-    } catch {
-      if (stageTimer) clearTimeout(stageTimer);
+    } catch (error) {
+      if ((error as Error).name === 'AbortError') return;
       setScanStatus('error');
-      addToast(t('scanMenuFailed'), 'error');
+      const message = error instanceof AIRequestError ? error.message : t('scanMenuFailed');
+      setScanError(message);
+      addToast(message, 'error');
     } finally {
+      if (stageTimer) clearTimeout(stageTimer);
+      if (timeoutId) clearTimeout(timeoutId);
       abortControllerRef.current = null;
     }
   };
@@ -303,7 +312,7 @@ export const OnboardingWizard = () => {
     setSelectedFile(null);
   };
 
-  const saveScannedProducts = () => {
+  const saveScannedProducts = async () => {
     if (!scanResults) return;
     const currentIngredients = [...ingredients];
     const currentPreparedStock = [...preparedStock];
@@ -311,7 +320,7 @@ export const OnboardingWizard = () => {
       const preppedLinks = (p.preparedStockNeeds || []).map(needName => {
         let prepped = currentPreparedStock.find(ps => ps.name.toLowerCase() === needName.toLowerCase());
         if (!prepped) {
-          prepped = { id: Date.now() + Math.random(), name: needName, portions: 20, lowThreshold: 5 };
+          prepped = { id: numericId(), name: needName, portions: 20, lowThreshold: 5 };
           currentPreparedStock.push(prepped);
         }
         return { preparedStockId: prepped.id, portionsPerSale: 1 };
@@ -320,7 +329,7 @@ export const OnboardingWizard = () => {
         let ingredient = currentIngredients.find(i => i.name.toLowerCase() === link.ingredientName.toLowerCase());
         if (!ingredient) {
           ingredient = {
-            id: Date.now() + Math.random(),
+            id: numericId(),
             name: link.ingredientName,
             unit: link.unit,
             qty: 50,
@@ -331,7 +340,7 @@ export const OnboardingWizard = () => {
         return { ingredientId: ingredient.id, quantityUsed: link.quantityUsed, unit: link.unit };
       });
       return {
-        id: Date.now() + Math.random(),
+        id: numericId(),
         nameEN: p.name,
         translations: p.translations,
         category: p.category,
@@ -345,9 +354,9 @@ export const OnboardingWizard = () => {
     });
     const newCategories = [...new Set([...categories, ...scanResults.products.map(p => p.category)])];
     setCategories(newCategories);
-    setIngredients(currentIngredients);
-    setPreparedStock(currentPreparedStock);
-    setProducts([...products, ...newProducts]);
+    if (!await setIngredients(currentIngredients)) return;
+    if (!await setPreparedStock(currentPreparedStock)) return;
+    if (!await setProducts([...products, ...newProducts])) return;
     setScanResults(null);
     addToast(t('menuItemsAdded').replace('{count}', String(newProducts.length)), 'success');
   };
@@ -388,9 +397,10 @@ export const OnboardingWizard = () => {
       openingHours: businessSettings?.openingHours || '',
       address: businessSettings?.address || '',
     };
+    if (isProvisioning) return;
     setIsProvisioning(true);
+    try {
     const { error } = await provisionBusinessProfile(settingsPayload);
-    setIsProvisioning(false);
     if (error) {
       addToast(
         typeof error === 'object' && error && 'message' in error
@@ -401,6 +411,9 @@ export const OnboardingWizard = () => {
       return;
     }
     nextStep();
+    } catch (error) {
+      addToast(error instanceof Error ? error.message : 'Could not save your business. Please retry.', 'error');
+    } finally { setIsProvisioning(false); }
   };
 
   const canCompleteSetup = products.length >= 1;
@@ -417,14 +430,14 @@ export const OnboardingWizard = () => {
       /* ignore */
     }
     if (businessSettings) {
-      await saveBusinessSettings({
+      if (!await saveBusinessSettings({
         ...businessSettings,
         enabledModules: normalizeEnabledModules(modules),
-      });
+      })) return;
     }
     const resumeTab = goCashier ? 'cashier' : 'overview';
     setTourResumeTab(resumeTab);
-    await completeOnboarding();
+    if (!await completeOnboarding()) return;
     setActiveTab(resumeTab);
     window.setTimeout(() => requestProductTour(), 750);
   };
@@ -456,7 +469,6 @@ export const OnboardingWizard = () => {
     { key: 'customers', icon: <Users size={18} />, title: t('moduleCustomers'), hint: t('moduleCustomersHint') },
     { key: 'tips', icon: <Wallet size={18} />, title: t('moduleTips'), hint: t('moduleTipsHint') },
     { key: 'onlineOrders', icon: <ClipboardList size={18} />, title: t('moduleOnlineOrders'), hint: t('moduleOnlineOrdersHint') },
-    { key: 'parkTickets', icon: <ClipboardList size={18} />, title: t('moduleParkTickets'), hint: t('moduleParkTicketsHint') },
   ];
 
   return (
@@ -714,6 +726,7 @@ export const OnboardingWizard = () => {
                 <ScanProgressModal
                   isOpen={isScanning}
                   status={scanStatus}
+                  errorMessage={scanError}
                   imageThumbnail={scanThumbnail}
                   onClose={() => {
                     setIsScanning(false);
@@ -897,7 +910,6 @@ export const OnboardingWizard = () => {
                       modules.customers && t('moduleCustomers'),
                       modules.tips && t('moduleTips'),
                       modules.onlineOrders && t('moduleOnlineOrders'),
-                      modules.parkTickets && t('moduleParkTickets'),
                     ]
                       .filter(Boolean)
                       .join(' · ') || t('modulesAlwaysOn')}

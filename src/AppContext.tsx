@@ -1,5 +1,9 @@
+import { readAllPages } from './utils/pagedRows.mjs';
+import { BrowserBackup } from './components/BrowserBackup';
+import { mapOrderRow } from './utils/dbMappers';
+import { useCloudCollection, type CloudSetter } from './hooks/useCloudCollection';
 import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback, useRef } from 'react';
-import { User, Product, Ingredient, PreparedStock, Sale, Language, Expense, TaxSettings, WorkShift, BusinessSettings, Order, RotaShift, StaffAvailability, LandingPageConfig, ShiftLog, Role, CashSession, FloorPlan, PendingTableSession, emptyFloorPlan, normalizeFloorPlan, WasteLog, Customer, ParkedTicket, normalizeEnabledModules } from './types';
+import { User, Product, Ingredient, PreparedStock, Sale, Language, Expense, TaxSettings, WorkShift, BusinessSettings, Order, RotaShift, StaffAvailability, LandingPageConfig, ShiftLog, Role, CashSession, FloorPlan, PendingTableSession, emptyFloorPlan, normalizeFloorPlan, WasteLog, Customer, normalizeEnabledModules } from './types';
 import { DEFAULT_USERS, TRANSLATIONS, DEFAULT_CATEGORIES } from './constants';
 import { generateDemoData } from './utils/demoData';
 import { supabase } from './components/supabaseClient';
@@ -50,6 +54,8 @@ const LANDING_STORAGE_KEY = 'previsio_landing_page';
 const DEMO_SESSION_KEY = 'previsio_demo_session';
 
 interface AppContextType {
+  accountAppearance: 'light' | 'dark';
+  setAccountAppearance: (mode: 'light' | 'dark') => void;
   lang: Language;
   setLang: (l: Language) => void;
   t: (key: string) => string;
@@ -60,30 +66,31 @@ interface AppContextType {
   user: User | null;
   setUser: React.Dispatch<React.SetStateAction<User | null>>;
   products: Product[];
-  setProducts: React.Dispatch<React.SetStateAction<Product[]>>;
+  setProducts: CloudSetter<Product>;
   addSale: (sale: Omit<Sale, 'id' | 'timestamp' | 'cashierFullName' | 'cashierUsername'>) => Promise<void>;
-  recordSale: (sale: Sale) => Promise<void>;
-  markSaleStatus: (saleId: string, status: 'voided' | 'refunded', reason?: string) => void;
+  recordSale: (sale: Sale, order?: Order) => Promise<boolean>;
+  saveOrder: (order: Order) => Promise<boolean>;
+  markSaleStatus: (saleId: string, status: 'voided' | 'refunded', reason?: string, orderStatus?: 'Cancelled' | 'Preparing' | 'Ready') => Promise<boolean>;
   ingredients: Ingredient[];
-  setIngredients: React.Dispatch<React.SetStateAction<Ingredient[]>>;
+  setIngredients: CloudSetter<Ingredient>;
   preparedStock: PreparedStock[];
-  setPreparedStock: React.Dispatch<React.SetStateAction<PreparedStock[]>>;
+  setPreparedStock: CloudSetter<PreparedStock>;
   sales: Sale[];
   setSales: React.Dispatch<React.SetStateAction<Sale[]>>;
-  deleteSale: (saleId: string) => Promise<void>;
-  updateSale: (sale: Sale) => Promise<void>;
+  deleteSale: (saleId: string) => Promise<boolean>;
+  updateSale: (sale: Sale) => Promise<boolean>;
   orders: Order[];
-  setOrders: React.Dispatch<React.SetStateAction<Order[]>>;
+  setOrders: CloudSetter<Order>;
   users: User[];
-  setUsers: React.Dispatch<React.SetStateAction<User[]>>;
+  setUsers: CloudSetter<User>;
   categories: string[];
   setCategories: React.Dispatch<React.SetStateAction<string[]>>;
   expenses: Expense[];
-  addExpense: (expense: Omit<Expense, 'id'>) => Promise<void>;
-  updateExpense: (expense: Expense) => Promise<void>;
+  addExpense: (expense: Omit<Expense, 'id'>) => Promise<boolean>;
+  updateExpense: (expense: Expense) => Promise<boolean>;
   deleteExpense: (expenseId: string) => Promise<void>;
   workShifts: WorkShift[];
-  setWorkShifts: React.Dispatch<React.SetStateAction<WorkShift[]>>;
+  setWorkShifts: CloudSetter<WorkShift>;
   addWorkShift: (shift: Omit<WorkShift, 'id'>) => Promise<void>;
   updateWorkShift: (shift: WorkShift) => Promise<void>;
   deleteWorkShift: (shiftId: number | string) => Promise<void>;
@@ -96,7 +103,7 @@ interface AppContextType {
   openTill: (openingFloat: number) => void;
   closeTill: (countedCash: number) => CashSession | null;
   openCashSession: CashSession | null;
-  refundSale: (saleId: string, reason?: string) => void;
+  refundSale: (saleId: string, reason?: string) => Promise<boolean>;
   floorPlan: FloorPlan;
   setFloorPlan: React.Dispatch<React.SetStateAction<FloorPlan>>;
   pendingTableSession: PendingTableSession | null;
@@ -105,10 +112,8 @@ interface AppContextType {
   setWasteLogs: React.Dispatch<React.SetStateAction<WasteLog[]>>;
   customers: Customer[];
   setCustomers: React.Dispatch<React.SetStateAction<Customer[]>>;
-  parkedTickets: ParkedTicket[];
-  setParkedTickets: React.Dispatch<React.SetStateAction<ParkedTicket[]>>;
   rota: RotaShift[];
-  setRota: React.Dispatch<React.SetStateAction<RotaShift[]>>;
+  setRota: CloudSetter<RotaShift>;
   saveRota: (rota: RotaShift[]) => Promise<void>;
   staffAvailability: StaffAvailability[];
   setStaffAvailability: React.Dispatch<React.SetStateAction<StaffAvailability[]>>;
@@ -121,7 +126,7 @@ interface AppContextType {
   formatPrice: (amount: number, showCode?: boolean) => React.ReactNode;
   businessSettings: BusinessSettings | null;
   setBusinessSettings: React.Dispatch<React.SetStateAction<BusinessSettings | null>>;
-  saveBusinessSettings: (settings: BusinessSettings) => Promise<void>;
+  saveBusinessSettings: (settings: BusinessSettings) => Promise<boolean>;
   registerAccount: (payload: { fullName: string; username: string; email: string; password: string }) => Promise<{ error: any }>;
   provisionBusinessProfile: (settings: Omit<BusinessSettings, 'id'>) => Promise<{ error: any }>;
   isBusinessSetupCompleted: boolean;
@@ -130,7 +135,7 @@ interface AppContextType {
   isFirstTime: boolean;
   isOnboarding: boolean;
   startOnboarding: () => void;
-  completeOnboarding: () => void;
+  completeOnboarding: () => Promise<boolean>;
   loadDemoData: () => void;
   startDemoSession: (role?: Role) => void;
   switchDemoRole: (role: Role) => void;
@@ -141,6 +146,8 @@ interface AppContextType {
   hasLandingPage: boolean;
   isSessionLoading: boolean;
   isLoggingIn: boolean;
+  cloudLoadError: string | null;
+  refreshBusinessData: () => Promise<void>;
   isDemoMode: boolean;
   inviteStaff: (payload: { fullName: string; username: string; password: string; role: Role; email?: string }) => Promise<{ error: string | null; credentials?: { username: string; password: string } }>;
   ensureLandingForDemo: () => void;
@@ -177,7 +184,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [pendingTableSession, setPendingTableSession] = useState<PendingTableSession | null>(null);
   const [wasteLogs, setWasteLogs] = useState<WasteLog[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [parkedTickets, setParkedTickets] = useState<ParkedTicket[]>([]);
   const [taxSettings, setTaxSettings] = useState<TaxSettings>({ municipalTaxRate: 7, vatRegime: 'Standard' });
   const [landingPageConfig, setLandingPageConfigState] = useState<LandingPageConfig | null>(() => {
     try {
@@ -207,12 +213,20 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [activeTab, setActiveTab] = useState('overview');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isDemoMode, setIsDemoMode] = useState(false);
+  const [accountAppearance, setAppearance] = useState<'light' | 'dark'>(() => {
+    try { return localStorage.getItem('previsio_account_appearance') === 'dark' ? 'dark' : 'light'; }
+    catch { return 'light'; }
+  });
+  const setAccountAppearance = (mode: 'light' | 'dark') => {
+    setAppearance(mode);
+    try { localStorage.setItem('previsio_account_appearance', mode); } catch { /* Session preference still works. */ }
+  };
 
   const isDemoBusiness = isDemoMode || businessSettings?.id === DEMO_BUSINESS_ID || isLocalBusinessId(businessSettings?.id);
 
   useEffect(() => {
-    applyBrandThemeToDocument(businessSettings?.brandTheme);
-  }, [businessSettings?.brandTheme]);
+    applyBrandThemeToDocument(businessSettings?.brandTheme, user ? accountAppearance : 'light');
+  }, [businessSettings?.brandTheme, accountAppearance, user]);
 
   const setLandingPageConfig: React.Dispatch<React.SetStateAction<LandingPageConfig | null>> = (value) => {
     setLandingPageConfigState((prev) => {
@@ -228,23 +242,11 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const setLang = (l: Language) => {
-    const nextLang = normalizeAppLanguage(l);
-    setLangState(normalizeAppLanguage(nextLang));
-    setBusinessSettingsState(prev => {
-      if (!prev) return prev;
-      const next = { ...prev, language: nextLang };
-      // Persist same field Settings uses — quiet (no toast on header shortcut)
-      if (isLocalBusinessId(next.id) || next.id === DEMO_BUSINESS_ID) {
-        const localSession = getLocalSession();
-        if (localSession) {
-          const account = getLocalAccountById(localSession.accountId);
-          if (account) upsertLocalAccount({ ...account, business: next });
-        }
-      } else if (next.id) {
-        void supabase.from('businesses').update({ language: nextLang }).eq('id', next.id);
-      }
-      return next;
-    });
+    const language = normalizeAppLanguage(l);
+    setLangState(language);
+    if (businessSettings && user) {
+      try { localStorage.setItem(`previsio_language_${businessSettings.id}_${user.authId || user.id}`, language); } catch { /* Language selection still works for this session. */ }
+    }
   };
 
   const t = (key: string) => {
@@ -338,6 +340,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     const persisted = loadPersistedOps(DEMO_BUSINESS_ID);
     if (persisted) {
       if (persisted.orders) setOrders(persisted.orders);
+      if (persisted.expenses) setExpenses(persisted.expenses);
+      if (persisted.workShifts) setWorkShifts(persisted.workShifts);
       if (persisted.ingredients) setIngredients(persisted.ingredients);
       if (persisted.preparedStock) setPreparedStock(persisted.preparedStock);
       if (persisted.sales?.length) setSales(persisted.sales);
@@ -347,154 +351,72 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       if (persisted.shiftLogs) setShiftLogs(persisted.shiftLogs);
       if (persisted.wasteLogs) setWasteLogs(persisted.wasteLogs);
       if (persisted.customers) setCustomers(persisted.customers);
-      if (persisted.parkedTickets) setParkedTickets(persisted.parkedTickets);
     }
   }, []);
 
   const applyPersistedOpsToState = useCallback((businessId: string) => {
     const persisted = loadPersistedOps(businessId);
     if (!persisted) return;
-    if (persisted.products?.length) setProducts(persisted.products);
-    if (persisted.ingredients) setIngredients(persisted.ingredients);
-    if (persisted.preparedStock) setPreparedStock(persisted.preparedStock);
-    if (persisted.sales?.length) setSales(persisted.sales);
-    if (persisted.orders) setOrders(persisted.orders);
-    if (persisted.expenses) setExpenses(persisted.expenses);
-    if (persisted.workShifts) setWorkShifts(persisted.workShifts);
     if (persisted.shiftLogs) setShiftLogs(persisted.shiftLogs);
-    if (persisted.users?.length) setUsers(persisted.users);
     if (persisted.categories?.length) setCategories(persisted.categories);
-    if (persisted.rota) setRota(persisted.rota);
     if (persisted.staffAvailability) setStaffAvailability(persisted.staffAvailability);
     if (persisted.taxSettings) setTaxSettings(persisted.taxSettings);
     if (persisted.cashSessions) setCashSessions(persisted.cashSessions);
     if (persisted.floorPlan) setFloorPlan(normalizeFloorPlan(persisted.floorPlan));
     if (persisted.wasteLogs) setWasteLogs(persisted.wasteLogs);
     if (persisted.customers) setCustomers(persisted.customers);
-    if (persisted.parkedTickets) setParkedTickets(persisted.parkedTickets);
-    else {
-      // Migrate older session-only parked tickets once
-      try {
-        const legacy = JSON.parse(sessionStorage.getItem(`previsio_parked_${businessId}`) || '[]');
-        if (Array.isArray(legacy) && legacy.length) {
-          setParkedTickets(legacy);
-          sessionStorage.removeItem(`previsio_parked_${businessId}`);
-        }
-      } catch { /* ignore */ }
-    }
+
   }, []);
 
+  const [cloudLoadError, setCloudLoadError] = useState<string | null>(null);
+  const fetchGeneration = useRef(0);
+  const loadedBusiness = useRef<string | null>(null);
   const fetchBusinessData = useCallback(async (businessId: string) => {
-    const { data: productsData, error: productsError } = await supabase
-      .from('products')
-      .select('*')
-      .eq('business_id', businessId);
-    if (productsError) addToast(`Error fetching products: ${productsError.message}`, 'error');
-    else setProducts((productsData || []).map((row) => mapProductRow(row as Record<string, unknown>)));
-
-    const { data: salesData, error: salesError } = await supabase
-      .from('sales')
-      .select('*, sale_items(*)')
-      .eq('business_id', businessId);
-    if (salesError) addToast(`Error fetching sales: ${salesError.message}`, 'error');
-    else setSales((salesData || []).map((row) => mapSaleRow(row as Record<string, unknown>)));
-
-    const { data: expensesData, error: expensesError } = await supabase
-      .from('expenses')
-      .select('*')
-      .eq('business_id', businessId);
-    if (expensesError) addToast(`Error fetching expenses: ${expensesError.message}`, 'error');
-    else setExpenses((expensesData || []).map((row) => mapExpenseRow(row as Record<string, unknown>)));
-
-    const { data: shiftsData, error: shiftsError } = await supabase
-      .from('work_shifts')
-      .select('*')
-      .eq('business_id', businessId);
-    if (shiftsError) addToast(`Error fetching work shifts: ${shiftsError.message}`, 'error');
-    else setWorkShifts((shiftsData || []).map((row) => mapWorkShiftRow(row as Record<string, unknown>)));
-
-    const { data: usersData } = await supabase
-      .from('app_users')
-      .select('id, business_id, username, full_name, role, email, hourly_rate, numeric_id')
-      .eq('business_id', businessId);
-    if (usersData?.length) {
-      setUsers(usersData.map((row) => mapUserRow(row as Record<string, unknown>)));
+    const generation = ++fetchGeneration.current;
+    const switched = loadedBusiness.current !== businessId;
+    if (switched) {
+      loadedBusiness.current = null;
+      const previousCache = loadPersistedOps(businessId);
+      if (previousCache) {
+        try { localStorage.setItem(`previsio_recovery_${businessId}_${Date.now()}`, JSON.stringify(previousCache)); } catch { /* Keep legacy cache intact if quota is full. */ }
+      }
     }
-
-    const { data: ingredientsData } = await supabase
-      .from('ingredients')
-      .select('*')
-      .eq('business_id', businessId);
-    if (ingredientsData) {
-      setIngredients(
-        ingredientsData.map((row: any) => ({
-          id: Number(row.id),
-          name: String(row.name ?? ''),
-          unit: String(row.unit ?? 'pcs'),
-          qty: Number(row.qty ?? 0),
-          lowThreshold: Number(row.low_threshold ?? row.lowThreshold ?? 5),
-        }))
-      );
-    } else {
-      setIngredients([]);
+    const tables = ['products', 'sales', 'expenses', 'work_shifts', 'app_users', 'ingredients', 'prepared_stock', 'orders', 'rota_shifts'] as const;
+    let rows: Record<string, any[]>;
+    try {
+      const results = await Promise.all(tables.map(table => readAllPages((from, to) => supabase.from(table)
+        .select(table === 'sales' ? '*, sale_items(*)' : '*').eq('business_id', businessId).order('id').range(from, to))));
+      if (generation !== fetchGeneration.current) return;
+      rows = Object.fromEntries(tables.map((table, index) => [table, results[index]]));
+      if (['products', 'ingredients', 'prepared_stock'].some(table => rows[table].some(row => !Number.isSafeInteger(Number(row.id)))) ||
+          rows.app_users.some(row => row.numeric_id == null || !Number.isSafeInteger(Number(row.numeric_id)))) {
+        throw new Error('This database uses an incompatible schema. Apply the reviewed database upgrade before editing.');
+      }
+      setCloudLoadError(null);
+    } catch (error) {
+      if (generation !== fetchGeneration.current) return;
+      setCloudLoadError(error instanceof Error ? error.message : 'Business data could not be loaded.');
+      addToast('Business data could not be loaded. Reload before editing.', 'error');
+      return;
     }
-
-    const { data: preparedData } = await supabase
-      .from('prepared_stock')
-      .select('*')
-      .eq('business_id', businessId);
-    if (preparedData) {
-      setPreparedStock(
-        preparedData.map((row: any) => ({
-          id: Number(row.id),
-          name: String(row.name ?? ''),
-          portions: Number(row.portions ?? 0),
-          lowThreshold: Number(row.low_threshold ?? row.lowThreshold ?? 5),
-        }))
-      );
-    } else {
-      setPreparedStock([]);
+    setProducts(rows.products.map(mapProductRow));
+    setSales(rows.sales.filter(row => !row.archived_at).map(mapSaleRow));
+    setExpenses(rows.expenses.map(mapExpenseRow));
+    setWorkShifts(rows.work_shifts.map(mapWorkShiftRow));
+    setUsers(rows.app_users.map(mapUserRow));
+    setIngredients(rows.ingredients.map(row => ({ id: Number(row.id), revision: Number(row.revision || 0), name: row.name, unit: row.unit, qty: Number(row.qty), lowThreshold: Number(row.low_threshold ?? 5) })));
+    setPreparedStock(rows.prepared_stock.map(row => ({ id: Number(row.id), revision: Number(row.revision || 0), name: row.name, portions: Number(row.portions), lowThreshold: Number(row.low_threshold ?? 5) })));
+    setOrders(rows.orders.map(mapOrderRow));
+    setRota(rows.rota_shifts as RotaShift[]);
+    if (switched) {
+      const cached = loadPersistedOps(businessId);
+      setCategories(cached?.categories || ['General']);
+      setCashSessions(cached?.cashSessions || []); setShiftLogs(cached?.shiftLogs || []);
+      setFloorPlan(normalizeFloorPlan(cached?.floorPlan)); setWasteLogs(cached?.wasteLogs || []);
+      setCustomers(cached?.customers || []);
+      setStaffAvailability(cached?.staffAvailability || []);
     }
-
-    const { data: ordersData } = await supabase
-      .from('orders')
-      .select('*')
-      .eq('business_id', businessId);
-    if (ordersData) {
-      setOrders(
-        ordersData.map((row: any) => ({
-          id: String(row.id),
-          type: row.type || 'WalkIn',
-          status: row.status || 'Preparing',
-          createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
-          lastUpdatedAt: row.updated_at ? new Date(row.updated_at).getTime() : Date.now(),
-          scheduledFor: row.scheduled_for,
-          customerName: row.customer_name,
-          customerPhone: row.customer_phone,
-          items: row.items || [],
-          subtotal: Number(row.subtotal ?? 0),
-          paymentMethod: row.payment_method || 'Cash',
-          createdByUsername: row.created_by_username || '',
-          createdByFullName: row.created_by_fullname || '',
-          completedAt: row.completed_at ? new Date(row.completed_at).getTime() : undefined,
-          saleId: row.sale_id,
-        }))
-      );
-    } else {
-      setOrders([]);
-    }
-
-    const { data: businessRow } = await supabase
-      .from('businesses')
-      .select('categories')
-      .eq('id', businessId)
-      .maybeSingle();
-    const cats = (businessRow as any)?.categories;
-    setCategories(Array.isArray(cats) && cats.length ? cats : ['General']);
-
-    setRota([]);
-    setStaffAvailability([]);
-    setShiftLogs([]);
+    loadedBusiness.current = businessId;
   }, [addToast]);
 
   const applyStaffBusinessSession = useCallback(async (staffUser: User, businessId: string) => {
@@ -539,7 +461,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
             customers: false,
             tips: false,
             onlineOrders: false,
-            parkTickets: false,
           },
         });
       }
@@ -602,10 +523,10 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
             .from('app_users')
             .select(APP_USER_SAFE_COLUMNS)
             .eq('id', authUser.id)
-            .single();
+            .maybeSingle();
 
-          if (profileError && profileError.code !== 'PGRST116') {
-            console.error("Initial session check failed to get profile:", profileError.message);
+          if (profileError) {
+            throw new Error(`Unable to load your account: ${profileError.message}`);
           }
 
           if (userProfile && userProfile.businesses) {
@@ -613,7 +534,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
             setIsDemoMode(false);
             setBusinessSettingsState(business);
             setUser({
-              id: authUser.id as unknown as number,
+              id: Number(userProfile.numeric_id),
+              authId: authUser.id,
               email: authUser.email,
               fullName: userProfile.full_name,
               username: userProfile.username,
@@ -622,12 +544,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
             const setupDone = Boolean((userProfile.businesses as any)?.setup_completed);
             setIsBusinessSetupCompleted(setupDone);
             setIsOnboarding(!setupDone);
-            if (business.language) setLangState(normalizeAppLanguage(business.language));
+            setLangState(normalizeAppLanguage(localStorage.getItem(`previsio_language_${business.id}_${authUser.id}`) || business.language));
             fetchBusinessData(business.id);
           } else {
             setIsDemoMode(false);
             setUser({
               id: authUser.id as unknown as number,
+              authId: authUser.id,
               email: authUser.email,
               fullName: (authUser.user_metadata?.full_name as string) || authUser.email || 'Owner',
               username: (authUser.user_metadata?.username as string) || authUser.email || 'owner',
@@ -640,12 +563,25 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         }
       } catch (error) {
         console.warn('Supabase session check failed; staying logged out.', error);
+        addToast(error instanceof Error ? error.message : 'Unable to load your account. Please try signing in again.', 'error');
       }
       setIsSessionLoading(false);
     };
     checkCurrentSession();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    let disposed = false;
+    let authVersion = 0;
+    const timers = new Set<ReturnType<typeof setTimeout>>();
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      const version = ++authVersion;
+      // Return immediately: Supabase holds its auth lock while invoking this callback.
+      const timer = setTimeout(() => {
+        timers.delete(timer);
+        if (disposed || version !== authVersion) return;
+        void handleAuthEvent();
+      }, 0);
+      timers.add(timer);
+      async function handleAuthEvent() {
       const isAuthAction = _event === 'SIGNED_IN' || _event === 'SIGNED_OUT' || _event === 'PASSWORD_RECOVERY';
       try {
         if (_event === 'PASSWORD_RECOVERY') {
@@ -666,14 +602,16 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
             .from('app_users')
             .select(APP_USER_SAFE_COLUMNS)
             .eq('id', authUser.id)
-            .single();
+            .maybeSingle();
 
+          if (disposed || version !== authVersion) return;
           if (userProfile && userProfile.businesses) {
             const business = mapBusinessRow(userProfile.businesses as unknown as Record<string, unknown>);
             setIsDemoMode(false);
             setBusinessSettingsState(business);
             setUser({
-              id: authUser.id as unknown as number,
+              id: Number(userProfile.numeric_id),
+              authId: authUser.id,
               email: authUser.email,
               fullName: userProfile.full_name,
               username: userProfile.username,
@@ -682,14 +620,16 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
             const setupDone = Boolean((userProfile.businesses as any)?.setup_completed);
             setIsBusinessSetupCompleted(setupDone);
             setIsOnboarding(!setupDone);
+            setLangState(normalizeAppLanguage(localStorage.getItem(`previsio_language_${business.id}_${authUser.id}`) || business.language));
             fetchBusinessData(business.id);
           } else {
-            if (profileError && profileError.code !== 'PGRST116') {
-              console.error("Auth state change error fetching profile:", profileError.message);
+            if (profileError) {
+              throw new Error(`Unable to load your account: ${profileError.message}`);
             }
             setIsDemoMode(false);
             setUser({
               id: authUser.id as unknown as number,
+              authId: authUser.id,
               email: authUser.email,
               fullName: (authUser.user_metadata?.full_name as string) || authUser.email || 'Owner',
               username: (authUser.user_metadata?.username as string) || authUser.email || 'owner',
@@ -707,15 +647,16 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         }
       } catch (error) {
         console.error("Critical error in onAuthStateChange:", error);
-        addToast("An unexpected error occurred during login.", "error");
+        addToast(error instanceof Error ? error.message : "Unable to load your account. Please try again.", "error");
       } finally {
-        if (isAuthAction) {
+        if (!disposed && version === authVersion && isAuthAction) {
           setIsLoggingIn(false);
         }
       }
+      }
     });
 
-    return () => subscription.unsubscribe();
+    return () => { disposed = true; authVersion++; timers.forEach(clearTimeout); subscription.unsubscribe(); };
   }, [fetchBusinessData, applyDemoSession, applyStaffBusinessSession, addToast]);
 
   const registerAccount = async (payload: { fullName: string; username: string; email: string; password: string }) => {
@@ -779,105 +720,36 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       return { error: { message: 'No authenticated user found.' } };
     }
 
-    const { data: existingOwnedBusiness } = await supabase
-      .from('businesses')
-      .select('*')
-      .eq('owner_user_id', authUser.id)
-      .maybeSingle();
-
-    const attachOwnerProfile = async (businessId: string, businessRow: Record<string, unknown>) => {
-      const profilePayload = {
-        id: authUser.id,
-        business_id: businessId,
-        username: (authUser.user_metadata?.username as string) || authUser.email || 'owner',
-        full_name: (authUser.user_metadata?.full_name as string) || authUser.email || 'Owner',
-        role: 'owner',
-      };
-      const { error: profileError } = await supabase.from('app_users').upsert(profilePayload);
-      if (profileError) {
-        addToast(`Database Error: ${profileError.message}`, 'error');
-        return { error: profileError };
-      }
-
-      const business = mapBusinessRow(businessRow);
-      setBusinessSettingsState(business);
-      if (settings.language) setLangState(normalizeAppLanguage(settings.language));
-      else if (business.language) setLangState(normalizeAppLanguage(business.language));
-      setUser({
-        id: authUser.id as unknown as number,
-        email: authUser.email,
-        fullName: profilePayload.full_name,
-        username: profilePayload.username,
-        role: 'owner',
-      });
-      setIsOnboarding(!Boolean((businessRow as { setup_completed?: boolean }).setup_completed));
-      setIsBusinessSetupCompleted(Boolean((businessRow as { setup_completed?: boolean }).setup_completed));
-      setActiveTab('overview');
-      return { error: null };
-    };
-
-    if (existingOwnedBusiness?.id) {
-      return attachOwnerProfile(existingOwnedBusiness.id, existingOwnedBusiness as Record<string, unknown>);
+    // Validate required columns before writing anything. Never retry by dropping
+    // fields or bypassing the policies when the deployment schema is outdated.
+    for (const [table, columns] of [
+      ['businesses', 'id,address,discount_policy,brand_theme,setup_completed'],
+      ['app_users', 'id,numeric_id,email'],
+    ]) {
+      const { error } = await supabase.from(table).select(columns).limit(0);
+      if (error) return { error: { message: `Business setup cannot continue because the connected database is not ready: ${error.message}. The app administrator must apply the compatible database setup before you retry.` } };
     }
 
-    const { data: existingProfile } = await supabase
-      .from('app_users')
-      .select('business_id')
-      .eq('id', authUser.id)
-      .maybeSingle();
-
-    if (existingProfile?.business_id) {
-      const { data: existingBusiness } = await supabase
-        .from('businesses')
-        .select('*')
-        .eq('id', existingProfile.business_id)
-        .maybeSingle();
-
-      if (existingBusiness) {
-        setBusinessSettingsState(mapBusinessRow(existingBusiness as Record<string, unknown>));
-        setIsOnboarding(true);
-        setIsBusinessSetupCompleted(Boolean((existingBusiness as any).setup_completed));
-        return { error: null };
-      }
+    const { data, error } = await supabase.rpc('previsio_provision_business', {
+      settings: businessToRow(settings as BusinessSettings),
+    });
+    if (error) return { error };
+    if (!data?.business?.id || (!Number.isSafeInteger(Number(data.numeric_id)) || Number(data.numeric_id)<=0)) {
+      return { error: { message: 'Business setup returned an invalid profile. Please contact the app administrator.' } };
     }
-
-    const { data: bizData, error: bizError } = await supabase
-      .from('businesses')
-      .insert({
-        ...businessToRow(settings as BusinessSettings),
-        setup_completed: false,
-        owner_user_id: authUser.id
-      })
-      .select()
-      .single();
-
-    if (bizError) {
-      if (bizError.message?.includes('businesses_owner_user_id_key')) {
-        const { data: fallbackBusiness } = await supabase
-          .from('businesses')
-          .select('*')
-          .eq('owner_user_id', authUser.id)
-          .maybeSingle();
-        if (fallbackBusiness?.id) {
-          return attachOwnerProfile(fallbackBusiness.id, fallbackBusiness as Record<string, unknown>);
-        }
-      }
-      addToast(`Database Error: ${bizError.message}`, 'error');
-      return { error: bizError };
-    }
-    if (!bizData?.id) {
-      return { error: { message: 'Failed to retrieve business details after creation.' } };
-    }
-
-    const result = await attachOwnerProfile(bizData.id, bizData as Record<string, unknown>);
-    if (!result.error) {
-      addToast(t('businessRegistered'), 'success');
-    }
-    return result;
+    const business = mapBusinessRow(data.business);
+    setBusinessSettingsState(business);
+    setLangState(normalizeAppLanguage(settings.language || business.language));
+    setUser({ id: Number(data.numeric_id), authId: authUser.id, email: authUser.email,
+      fullName: data.full_name, username: data.username, role: 'owner' });
+    setIsOnboarding(!data.business.setup_completed);
+    setIsBusinessSetupCompleted(Boolean(data.business.setup_completed));
+    setActiveTab('overview');
+    addToast(t('businessRegistered'), 'success');
+    return { error: null };
   };
 
   const login = async (payload: { identifier: string; password: string; mode: 'owner' | 'staff' }) => {
-    setIsLoggingIn(true);
     try {
       localStorage.removeItem(DEMO_SESSION_KEY);
       clearStaffSession();
@@ -950,6 +822,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const logout = () => {
+    fetchGeneration.current += 1;
+    loadedBusiness.current = null;
     setIsLoggingIn(true);
     localStorage.removeItem(DEMO_SESSION_KEY);
     wipeLocalAccounts();
@@ -1033,13 +907,15 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           role,
         }),
       });
-      const body = (await res.json()) as { error?: string; user?: { id: string; username: string; fullName: string; email: string; role: Role } };
+      const body = (await res.json()) as { error?: string; user?: { id: string; numericId: number; revision: number; username: string; fullName: string; email: string; role: Role } };
       if (!res.ok) {
         return { error: body.error || 'Invite failed' };
       }
       const created = body.user;
       const invited: User = {
-        id: Date.now(),
+        id: Number(created?.numericId),
+        authId: created?.id,
+        revision: created?.revision ?? 0,
         username: created?.username || username,
         fullName: created?.fullName || payload.fullName,
         email: created?.email || email,
@@ -1101,19 +977,20 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         const { error } = await supabase
           .from('businesses')
           .update({ setup_completed: true })
-          .eq('id', businessSettings.id);
+          .eq('id', businessSettings.id).select('id').single();
         if (error) {
           addToast(`Error saving setup status: ${error.message}`, 'error');
+          return false;
         }
       } catch (error) {
-        if (!isNetworkAuthError(error)) {
-          addToast('Error saving setup status.', 'error');
-        }
+        addToast('Setup was not saved. Please reconnect and retry.', 'error');
+        return false;
       }
     }
     setIsOnboarding(false);
     setIsBusinessSetupCompleted(true);
     queueTourAfterSetup();
+    return true;
   };
 
   const loadDemoData = () => {
@@ -1132,86 +1009,83 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const saveBusinessSettings = async (settings: BusinessSettings) => {
-    setBusinessSettingsState(settings);
-    if (settings.language) setLangState(normalizeAppLanguage(settings.language));
-
     if (isDemoBusiness || settings.id === DEMO_BUSINESS_ID || isLocalBusinessId(settings.id)) {
       const localSession = getLocalSession();
       if (localSession) {
         const account = getLocalAccountById(localSession.accountId);
         if (account) upsertLocalAccount({ ...account, business: settings });
       }
+      setBusinessSettingsState(settings);
+      if (settings.language) setLangState(normalizeAppLanguage(settings.language));
       addToast(t('settingsUpdated'), 'success');
-      return;
+      return true;
     }
 
     try {
       const { error } = await supabase
         .from('businesses')
         .update(businessToRow(settings))
-        .eq('id', settings.id);
+        .eq('id', settings.id).select('id').single();
 
-      if (error) addToast(error.message, 'error');
-      else addToast(t('settingsUpdated'), 'success');
+      if (error) throw new Error(error.message);
+      setBusinessSettingsState(settings);
+      if (settings.language) setLangState(normalizeAppLanguage(settings.language));
+      addToast(t('settingsUpdated'), 'success');
+      return true;
     } catch (error) {
-      if (isNetworkAuthError(error)) {
-        addToast(t('settingsUpdated'), 'success');
-      } else {
-        addToast('Could not save settings.', 'error');
-      }
+      addToast('Settings were not saved. Please retry when connected.', 'error');
+      return false;
     }
   };
 
-  const recordSale = async (sale: Sale) => {
-    setSales(prev => (prev.some(s => s.id === sale.id) ? prev.map(s => (s.id === sale.id ? sale : s)) : [...prev, sale]));
-    if (
-      normalizeEnabledModules(businessSettings?.enabledModules).customers &&
-      (sale.customerPhone || sale.customerName)
-    ) {
-      setCustomers(prev =>
-        upsertCustomerFromOrder(prev, {
-          name: sale.customerName,
-          phone: sale.customerPhone,
-          at: sale.timestamp,
-        }).customers
-      );
-    }
-    if (isDemoBusiness || !businessSettings?.id) return;
-    try {
-      const { error } = await supabase.from('sales').upsert(saleToRow(sale, businessSettings.id));
-      if (error) {
-        console.warn('sale upsert', error.message);
-        return;
-      }
-      await supabase.from('sale_items').delete().eq('sale_id', sale.id);
-      const items = saleItemsToRows(sale);
-      if (items.length) {
-        const { error: itemsError } = await supabase.from('sale_items').insert(items);
-        if (itemsError) console.warn('sale_items insert', itemsError.message);
-      }
-    } catch (err) {
-      console.warn('recordSale failed', err);
-    }
+  const saveOrder = async (order: Order): Promise<boolean> => {
+    if (!businessSettings) return false;
+    if (isDemoBusiness) { setOrders(prev => [order, ...prev.filter(o => o.id !== order.id)]); return true; }
+    const existing = orders.find(o => o.id === order.id);
+    const { data, error } = await supabase.rpc('previsio_mutate', { collection: 'orders', biz: businessSettings.id,
+      changes: [{ row: orderToRow(order, businessSettings.id), expected: existing ? existing.revision ?? 0 : null }] });
+    if (error) { addToast(`Order not saved: ${error.message}`, 'error'); return false; }
+    const saved = mapOrderRow(data[0]);
+    setOrders(prev => [saved, ...prev.filter(o => o.id !== saved.id)]);
+    return true;
   };
 
-  const markSaleStatus = (saleId: string, status: 'voided' | 'refunded', reason?: string) => {
-    const refundedAt = status === 'refunded' ? Date.now() : undefined;
-    setSales(prev =>
-      prev.map(s =>
-        s.id === saleId
-          ? { ...s, status, voidReason: reason || s.voidReason, refundedAt: refundedAt ?? s.refundedAt }
-          : s
-      )
-    );
-    if (isDemoBusiness || !businessSettings?.id) return;
-    void supabase
-      .from('sales')
-      .update({
-        status,
-        void_reason: reason || null,
-        refunded_at: refundedAt ? new Date(refundedAt).toISOString() : null,
-      })
-      .eq('id', saleId);
+  const recordSale = async (sale: Sale, order?: Order): Promise<boolean> => {
+    if (!businessSettings?.id) return false;
+    if (!isDemoBusiness) {
+      const { error } = await supabase.rpc('previsio_record_sale', {
+        biz: businessSettings.id, sale: saleToRow(sale, businessSettings.id),
+        lines: saleItemsToRows(sale), order_row: order ? { ...orderToRow(order, businessSettings.id), revision: orders.find(o => o.id === order.id)?.revision ?? null } : null,
+      });
+      if (error) { addToast(`Sale not saved: ${error.message}`, 'error'); return false; }
+      await fetchBusinessData(businessSettings.id);
+    } else {
+      setSales(prev => prev.some(s => s.id === sale.id) ? prev : [...prev, sale]);
+      if (order) setOrders(prev => [order, ...prev.filter(o => o.id !== order.id)]);
+    }
+    if (normalizeEnabledModules(businessSettings.enabledModules).customers && (sale.customerPhone || sale.customerName)) {
+      setCustomers(prev => upsertCustomerFromOrder(prev, { name: sale.customerName, phone: sale.customerPhone, at: sale.timestamp }).customers);
+    }
+    return true;
+  };
+
+  const markSaleStatus = async (saleId: string, status: 'voided' | 'refunded', reason?: string, orderStatus: 'Cancelled' | 'Preparing' | 'Ready' = 'Cancelled'): Promise<boolean> => {
+    if (!businessSettings?.id) return false;
+    if (!isDemoBusiness) {
+      const { error } = await supabase.rpc('previsio_reverse_sale', { biz: businessSettings.id, sale_id: saleId, new_status: status, reason: reason || null, order_status: orderStatus });
+      if (error) { addToast(`Sale not changed: ${error.message}`, 'error'); return false; }
+      await fetchBusinessData(businessSettings.id);
+    } else {
+      const sale = sales.find(s => s.id === saleId);
+      if (!sale) return false;
+      if (sale.status !== 'voided' && sale.status !== 'refunded') {
+        const restored = restoreStock(sale.items, products, ingredients, preparedStock);
+        setIngredients(restored.ingredients); setPreparedStock(restored.preparedStock);
+        setSales(prev => prev.map(s => s.id === saleId ? { ...s, status, voidReason: reason, refundedAt: status === 'refunded' ? Date.now() : undefined } : s));
+      }
+      setOrders(prev => prev.map(o => o.saleId === saleId ? { ...o, status: orderStatus, saleId: orderStatus === 'Cancelled' ? o.saleId : undefined, completedAt: undefined, lastUpdatedAt: Date.now() } : o));
+    }
+    return true;
   };
 
   const addSale = async (sale: Omit<Sale, 'id' | 'timestamp' | 'cashierFullName' | 'cashierUsername'>) => {
@@ -1224,33 +1098,23 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       cashierFullName: user.fullName,
       status: sale.status || 'completed',
     };
-    await recordSale(full);
-    addToast(t('orderSent'));
+    if (await recordSale(full)) addToast(t('orderSent'));
   };
 
   const updateSale = async (sale: Sale) => {
-    setSales(prev => prev.map(s => (s.id === sale.id ? sale : s)));
-    if (isDemoBusiness || !businessSettings?.id) {
-      addToast(t('saleUpdated'));
-      return;
-    }
-    const { error } = await supabase.from('sales').upsert(saleToRow(sale, businessSettings.id));
-    if (error) addToast(error.message, 'error');
-    else addToast(t('saleUpdated'));
+    if (isDemoBusiness) { setSales(prev => prev.map(s => s.id === sale.id ? sale : s)); addToast(t('saleUpdated')); return true; }
+    if (!businessSettings) return false;
+    const { error } = await supabase.rpc('previsio_amend_sale', { biz: businessSettings.id, sale_id: sale.id, payment: sale.paymentMethod, expected_subtotal: sale.subtotal, archive: false });
+    if (error) { addToast(`Sale not changed: ${error.message}`, 'error'); return false; }
+    await fetchBusinessData(businessSettings.id); addToast(t('saleUpdated')); return true;
   };
 
   const deleteSale = async (saleId: string) => {
-    if (isDemoBusiness) {
-      setSales(prev => prev.filter(s => s.id !== saleId));
-      addToast(t('saleDeleted'));
-      return;
-    }
-    const { error } = await supabase.from('sales').delete().eq('id', saleId);
-    if (error) addToast(error.message, 'error');
-    else {
-      setSales(prev => prev.filter(s => s.id !== saleId));
-      addToast(t('saleDeleted'));
-    }
+    if (isDemoBusiness) { setSales(prev => prev.filter(s => s.id !== saleId)); addToast(t('saleDeleted')); return true; }
+    if (!businessSettings) return false;
+    const { error } = await supabase.rpc('previsio_amend_sale', { biz: businessSettings.id, sale_id: saleId, payment: null, expected_subtotal: null, archive: true });
+    if (error) { addToast(`Sale not removed: ${error.message}`, 'error'); return false; }
+    await fetchBusinessData(businessSettings.id); addToast(t('saleDeleted')); return true;
   };
 
   const openShiftLog = user ? shiftLogs.find(l => l.username === user.username && !l.logoutTime) || null : null;
@@ -1318,35 +1182,30 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     return closed;
   };
 
-  const refundSale = (saleId: string, reason?: string) => {
-    const sale = sales.find(s => s.id === saleId);
-    if (!sale || sale.status === 'refunded') return;
-    const restored = restoreStock(sale.items, products, ingredients, preparedStock);
-    setIngredients(restored.ingredients);
-    setPreparedStock(restored.preparedStock);
-    markSaleStatus(saleId, 'refunded', reason);
-    setOrders(prev =>
-      prev.map(o => (o.saleId === saleId ? { ...o, status: 'Cancelled' as const, voidReason: reason, lastUpdatedAt: Date.now() } : o))
-    );
+  const refundSale = async (saleId: string, reason?: string) => {
+    if (!await markSaleStatus(saleId, 'refunded', reason)) return false;
+    if (isDemoBusiness) setOrders(prev => prev.map(o => o.saleId === saleId ? { ...o, status: 'Cancelled', voidReason: reason, lastUpdatedAt: Date.now() } : o));
     addToast(t('refundSale'), 'info');
+    return true;
   };
 
   const addExpense = async (expense: Omit<Expense, 'id'>) => {
-    if (!businessSettings) return;
+    if (!businessSettings) return false;
     if (isDemoBusiness) {
       setExpenses(prev => [...prev, { ...expense, id: `EXP-${Date.now()}` }]);
       addToast(t('addExpense'), 'success');
-      return;
+      return true;
     }
     const { data, error } = await supabase
       .from('expenses')
       .insert([expenseToRow(expense, businessSettings.id)])
       .select()
       .single();
-    if (error) addToast(error.message, 'error');
+    if (error) { addToast(error.message, 'error'); return false; }
     else {
       setExpenses(prev => [...prev, mapExpenseRow(data as Record<string, unknown>)]);
       addToast(t('addExpense'), 'success');
+      return true;
     }
   };
 
@@ -1354,7 +1213,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     if (isDemoBusiness) {
       setExpenses(prev => prev.map(e => e.id === expense.id ? expense : e));
       addToast(t('editExpense'), 'success');
-      return;
+      return true;
     }
     const { data, error } = await supabase
       .from('expenses')
@@ -1362,10 +1221,11 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       .eq('id', expense.id)
       .select()
       .single();
-    if (error) addToast(error.message, 'error');
+    if (error) { addToast(error.message, 'error'); return false; }
     else {
       setExpenses(prev => prev.map(e => e.id === expense.id ? mapExpenseRow(data as Record<string, unknown>) : e));
       addToast(t('editExpense'), 'success');
+      return true;
     }
   };
 
@@ -1435,27 +1295,11 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  const saveRota = async (newRota: RotaShift[]) => {
-    if (!businessSettings) return;
-    if (isDemoBusiness) {
-      setRota(newRota);
-      addToast(t('rotaSaved'));
-      return;
-    }
-    const shiftsToSave = newRota.map(s => ({ ...s, business_id: businessSettings.id }));
-    const { error } = await supabase.from('rota_shifts').upsert(shiftsToSave);
-    if (error) {
-      setRota(newRota);
-      addToast(t('rotaSaved'));
-    } else {
-      setRota(newRota);
-      addToast(t('rotaSaved'));
-    }
-  };
+  const saveRota = async (newRota: RotaShift[]) => { cloudSetRota(newRota); };
 
   // Persist ops locally so kitchen/stock survive refresh (all tenants)
   useEffect(() => {
-    if (!businessSettings?.id) return;
+    if (!businessSettings?.id || (!isDemoBusiness && loadedBusiness.current !== businessSettings.id)) return;
     savePersistedOps({
       businessId: businessSettings.id,
       products,
@@ -1475,45 +1319,32 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       floorPlan,
       wasteLogs,
       customers,
-      parkedTickets,
       updatedAt: Date.now(),
     });
   }, [
     businessSettings?.id,
     products, ingredients, preparedStock, sales, orders, expenses,
     workShifts, shiftLogs, users, categories, rota, staffAvailability, taxSettings, cashSessions, floorPlan,
-    wasteLogs, customers, parkedTickets,
+    wasteLogs, customers,
   ]);
 
-  // Cloud upsert catalog + orders (best-effort; missing tables are ignored)
-  useEffect(() => {
-    if (!businessSettings?.id || isDemoBusiness) return;
-    const businessId = businessSettings.id;
-    const timer = window.setTimeout(() => {
-      void supabase.from('products').upsert(products.map(p => productToRow(p, businessId)));
-      void supabase.from('ingredients').upsert(
-        ingredients.map(i => ({
-          id: i.id,
-          business_id: businessId,
-          name: i.name,
-          unit: i.unit,
-          qty: i.qty,
-          low_threshold: i.lowThreshold,
-        }))
-      );
-      void supabase.from('prepared_stock').upsert(
-        preparedStock.map(p => ({
-          id: p.id,
-          business_id: businessId,
-          name: p.name,
-          portions: p.portions,
-          low_threshold: p.lowThreshold,
-        }))
-      );
-      void supabase.from('orders').upsert(orders.map(o => orderToRow(o, businessId)));
-    }, 900);
-    return () => window.clearTimeout(timer);
-  }, [businessSettings?.id, isDemoBusiness, products, ingredients, preparedStock, orders]);
+  const reportSaveError = (message: string) => addToast(message, 'error');
+  const cloudSetProducts = useCloudCollection('products', businessSettings?.id, isDemoBusiness,
+    products, setProducts, productToRow, reportSaveError);
+  const cloudSetIngredients = useCloudCollection('ingredients', businessSettings?.id, isDemoBusiness,
+    ingredients, setIngredients, (i, business_id) => ({ id: i.id, business_id, name: i.name, unit: i.unit, qty: i.qty, low_threshold: i.lowThreshold }), reportSaveError);
+  const cloudSetPreparedStock = useCloudCollection('prepared_stock', businessSettings?.id, isDemoBusiness,
+    preparedStock, setPreparedStock, (p, business_id) => ({ id: p.id, business_id, name: p.name, portions: p.portions, low_threshold: p.lowThreshold }), reportSaveError);
+  const cloudSetOrders = useCloudCollection('orders', businessSettings?.id, isDemoBusiness,
+    orders, setOrders, orderToRow, reportSaveError);
+
+  const cloudSetRota = useCloudCollection('rota_shifts', businessSettings?.id, isDemoBusiness,
+    rota, setRota, (r, business_id) => ({ id: r.id, business_id, userId: r.userId, username: r.username, fullName: r.fullName, date: r.date, startTime: r.startTime || null, endTime: r.endTime || null }), reportSaveError);
+
+  const cloudSetUsers = useCloudCollection('app_users', businessSettings?.id, isDemoBusiness,
+    users, setUsers, (u, business_id) => ({ id: u.authId || String(u.id), business_id, username: u.username, full_name: u.fullName, email: u.email || null, role: u.role, hourly_rate: u.hourlyRate ?? null }), reportSaveError);
+  const cloudSetWorkShifts = useCloudCollection('work_shifts', businessSettings?.id, isDemoBusiness,
+    workShifts, setWorkShifts, (w, business_id) => ({ id: w.id, ...workShiftToRow(w, business_id), pay_amount: w.payAmount ?? null, kind: w.kind || 'worked', leave_reason: w.leaveReason || null }), reportSaveError);
 
   // Merge online pre-orders from public order page inbox
   useEffect(() => {
@@ -1593,27 +1424,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
             setOrders(prev => prev.filter(o => o.id !== String(row.id)));
             return;
           }
-          const mapped: Order = {
-            id: String(row.id),
-            type: (row.type as Order['type']) || 'WalkIn',
-            status: (row.status as Order['status']) || 'Preparing',
-            createdAt: row.created_at ? new Date(String(row.created_at)).getTime() : Date.now(),
-            lastUpdatedAt: row.updated_at ? new Date(String(row.updated_at)).getTime() : Date.now(),
-            scheduledFor: (row.scheduled_for as string) || undefined,
-            customerName: (row.customer_name as string) || undefined,
-            customerPhone: (row.customer_phone as string) || undefined,
-            items: (row.items as Order['items']) || [],
-            subtotal: Number(row.subtotal ?? 0),
-            paymentMethod: (row.payment_method as Order['paymentMethod']) || 'Cash',
-            createdByUsername: String(row.created_by_username || ''),
-            createdByFullName: String(row.created_by_fullname || ''),
-            completedAt: row.completed_at ? new Date(String(row.completed_at)).getTime() : undefined,
-            saleId: (row.sale_id as string) || undefined,
-            discountAmount: row.discount_amount != null ? Number(row.discount_amount) : undefined,
-            tipAmount: row.tip_amount != null ? Number(row.tip_amount) : undefined,
-            voidReason: (row.void_reason as string) || undefined,
-            kitchenPrintedAt: row.kitchen_printed_at ? new Date(String(row.kitchen_printed_at)).getTime() : undefined,
-          };
+          const mapped = mapOrderRow(row);
           setOrders(prev => {
             const idx = prev.findIndex(o => o.id === mapped.id);
             if (idx < 0) return [mapped, ...prev];
@@ -1638,6 +1449,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           }
           const mapped: Ingredient = {
             id: Number(row.id),
+            revision: Number(row.revision ?? 0),
             name: String(row.name ?? ''),
             unit: String(row.unit ?? 'pcs'),
             qty: Number(row.qty ?? 0),
@@ -1663,6 +1475,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           }
           const mapped: PreparedStock = {
             id: Number(row.id),
+            revision: Number(row.revision ?? 0),
             name: String(row.name ?? ''),
             portions: Number(row.portions ?? 0),
             lowThreshold: Number(row.low_threshold ?? 5),
@@ -1686,23 +1499,25 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   return (
     <AppContext.Provider value={{
+      accountAppearance, setAccountAppearance,
       lang, setLang, t, tp, tc, activeTab, setActiveTab,
-      user, setUser, products, setProducts, ingredients, setIngredients,
-      preparedStock, setPreparedStock,
-      sales, setSales, deleteSale, updateSale, addSale, recordSale, markSaleStatus, orders, setOrders, users, setUsers, categories, setCategories,
+      user, setUser, products, setProducts: cloudSetProducts, ingredients, setIngredients: cloudSetIngredients,
+      preparedStock, setPreparedStock: cloudSetPreparedStock,
+      sales, setSales, deleteSale, updateSale, addSale, recordSale, saveOrder, markSaleStatus, orders, setOrders: cloudSetOrders, users, setUsers: cloudSetUsers, categories, setCategories,
       expenses, addExpense, updateExpense, deleteExpense,
-      workShifts, setWorkShifts, addWorkShift, updateWorkShift, deleteWorkShift,
+      workShifts, setWorkShifts: cloudSetWorkShifts, addWorkShift, updateWorkShift, deleteWorkShift,
       shiftLogs, setShiftLogs, clockIn, clockOut, openShiftLog,
       cashSessions, openTill, closeTill, openCashSession, refundSale,
       floorPlan, setFloorPlan, pendingTableSession, setPendingTableSession,
-      wasteLogs, setWasteLogs, customers, setCustomers, parkedTickets, setParkedTickets,
-      rota, setRota, saveRota, staffAvailability, setStaffAvailability, isSessionLoading,
+      wasteLogs, setWasteLogs, customers, setCustomers,
+      rota, setRota: cloudSetRota, saveRota, staffAvailability, setStaffAvailability, isSessionLoading,
       taxSettings, setTaxSettings, landingPageConfig, setLandingPageConfig, hasLandingPage: !!landingPageConfig, isLoggingIn,
       toasts, addToast, logout, resetAllData, formatPrice,
       businessSettings, setBusinessSettings: setBusinessSettingsState, saveBusinessSettings,
       registerAccount, provisionBusinessProfile, login, inviteStaff, ensureLandingForDemo, isFirstTime, isBusinessSetupCompleted, setIsBusinessSetupCompleted,
-      isOnboarding, startOnboarding, completeOnboarding, loadDemoData, startDemoSession, switchDemoRole, isPasswordRecovery, completePasswordRecovery, isDemoMode
+      isOnboarding, startOnboarding, completeOnboarding, loadDemoData, startDemoSession, switchDemoRole, isPasswordRecovery, completePasswordRecovery, isDemoMode, cloudLoadError, refreshBusinessData: async () => { if (businessSettings?.id && !isDemoBusiness) await fetchBusinessData(businessSettings.id); }
     }}>
+      {user && businessSettings?.id && !isDemoBusiness && <BrowserBackup key={`${businessSettings.id}:${user.authId || user.id}`} businessId={businessSettings.id} />}
       {children}
     </AppContext.Provider>
   );

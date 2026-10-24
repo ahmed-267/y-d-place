@@ -40,7 +40,7 @@ export const hasActiveSubscription = (
   const plan = normalizePlan(business.plan);
   if (plan === 'pro') return true;
   if (plan === 'trialing') {
-    if (!business.trialEndsAt) return true;
+    if (!business.trialEndsAt) return false;
     return business.trialEndsAt > Date.now();
   }
   return false;

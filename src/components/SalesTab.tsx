@@ -173,22 +173,22 @@ export const SalesTab = () => {
     });
   };
 
-  const handleDeleteSale = () => {
+  const handleDeleteSale = async () => {
     if (!deleteSaleConfirm) return;
-    deleteSale(deleteSaleConfirm.id);
+    if (!await deleteSale(deleteSaleConfirm.id)) return false;
     setDeleteSaleConfirm(null);
   };
 
-  const handleRefundSale = () => {
+  const handleRefundSale = async () => {
     if (!refundConfirm) return;
-    refundSale(refundConfirm.id);
+    if (!await refundSale(refundConfirm.id)) return false;
     setRefundConfirm(null);
   };
 
-  const handleEditSave = (e: React.FormEvent) => {
+  const handleEditSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editSale) return;
-    updateSale(editSale);
+    if (!await updateSale(editSale)) return;
     setEditSale(null);
   };
 
@@ -459,8 +459,9 @@ export const SalesTab = () => {
                 step="0.01"
                 className="w-full p-3 border rounded-xl"
                 value={editSale.subtotal}
-                onChange={e => setEditSale({ ...editSale, subtotal: parseFloat(e.target.value) || 0 })}
+                readOnly
               />
+              <p className="text-xs opacity-70 mt-2">Totals come from the original line items. Refund and create a corrected sale to change them.</p>
             </div>
             <button type="submit" className="btn-primary w-full p-4 rounded-2xl font-bold">
               {t('save')}

@@ -55,7 +55,7 @@ export const handler = async (event) => {
       return json(400, { error: createErr?.message || 'Could not create auth user' });
     }
 
-    const { error: profileErr } = await admin.from('app_users').upsert({
+    const { data: profile, error: profileErr } = await admin.from('app_users').upsert({
       id: created.user.id,
       business_id: caller.business_id,
       username,
@@ -63,7 +63,7 @@ export const handler = async (event) => {
       role,
       email,
       hourly_rate: role === 'manager' ? 18 : 14,
-    });
+    }).select('numeric_id, revision').single();
 
     if (profileErr) {
       await admin.auth.admin.deleteUser(created.user.id);
@@ -73,6 +73,8 @@ export const handler = async (event) => {
     return json(200, {
       user: {
         id: created.user.id,
+        numericId: profile.numeric_id,
+        revision: profile.revision,
         username,
         fullName: body.fullName || username,
         email,

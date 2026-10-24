@@ -1,3 +1,7 @@
+import { useSchedulingLeave } from '../hooks/useSchedulingLeave';
+import { PasswordInput } from './PasswordInput';
+import { usePendingLeaveCount } from '../hooks/usePendingLeaveCount';
+import { LeaveRequests } from './LeaveRequests';
 import React, { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../AppContext';
 import { Plus, Trash2, Clock, Edit2, Search, Calendar, ChevronLeft, ChevronRight, Sparkles, Save, X, Target, Users } from 'lucide-react';
@@ -32,6 +36,8 @@ const defaultAvailability = (): AvailabilityConfig => ({
 });
 
 export const StaffTab = () => {
+  const schedulingLeave = useSchedulingLeave();
+  const pendingLeaveCount = usePendingLeaveCount();
   const { users, setUsers, workShifts, setWorkShifts, t, addToast, formatPrice, businessSettings, user, rota, setRota, staffAvailability, setStaffAvailability, lang, inviteStaff } = useApp();
   const [lastInviteCreds, setLastInviteCreds] = useState<{ username: string; password: string } | null>(null);
   const [invitePassword, setInvitePassword] = useState('');
@@ -128,7 +134,7 @@ export const StaffTab = () => {
 
     let diff = (end.getTime() - start.getTime()) / (1000 * 60 * 60);
     if (diff < 0) diff += 24;
-    
+
     const actualHours = Math.max(0, diff - (brk / 60));
     return parseFloat(actualHours.toFixed(2));
   }, [shiftFormData]);
@@ -160,13 +166,13 @@ export const StaffTab = () => {
       setLastInviteCreds({ username: result.credentials.username, password: '' });
       const rate = parseFloat(data.hourlyRate as string) || 0;
       if (rate > 0) {
-        setUsers(prev =>
+        if (!await setUsers(prev =>
           prev.map(u =>
             u.email === result.credentials!.username || u.username === (data.username as string)
               ? { ...u, hourlyRate: rate }
               : u
           )
-        );
+        )) return;
       }
     }
 
@@ -178,7 +184,7 @@ export const StaffTab = () => {
     );
   };
 
-  const handleEditStaffSave = (e: React.FormEvent) => {
+  const handleEditStaffSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editStaff) return;
     const canReset = canResetPassword(user, editStaff);
@@ -201,44 +207,44 @@ export const StaffTab = () => {
       const { password: _p, ...rest } = { ...u, ...editStaff } as User & { password?: string };
       return rest;
     });
-    setUsers(updatedUsers);
+    if (!await setUsers(updatedUsers)) return;
     addToast(t('staffUpdated'));
     setEditStaff(null);
     setResetPassword('');
     setResetPasswordConfirm('');
   };
 
-  const handleEditShiftSave = (e: React.FormEvent) => {
+  const handleEditShiftSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editShift) return;
-    
+
     const start = new Date(`${editShift.date}T${editShift.startTime}`);
     const end = new Date(`${editShift.date}T${editShift.endTime}`);
     let diff = (end.getTime() - start.getTime()) / (1000 * 60 * 60);
     if (diff < 0) diff += 24;
     const actualHours = parseFloat(Math.max(0, diff - (editShift.breakMinutes / 60)).toFixed(2));
-    
+
     const updatedShift = { ...editShift, totalHours: actualHours };
-    setWorkShifts(workShifts.map(s => s.id === editShift.id ? updatedShift : s));
+    if (!await setWorkShifts(workShifts.map(s => s.id === editShift.id ? updatedShift : s))) return;
     addToast(t('shiftUpdated'));
     setEditShift(null);
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (!deleteConfirm) return;
-    setUsers(users.filter(u => u.id !== deleteConfirm.id));
+    if (!await setUsers(users.filter(u => u.id !== deleteConfirm.id))) return;
     addToast(t('staffRemoved'), 'info');
     setDeleteConfirm(null);
   };
 
-  const handleDeleteShift = () => {
+  const handleDeleteShift = async () => {
     if (!shiftDeleteConfirm) return;
-    setWorkShifts(workShifts.filter(s => s.id !== shiftDeleteConfirm.id));
+    if (!await setWorkShifts(workShifts.filter(s => s.id !== shiftDeleteConfirm.id))) return;
     setShiftDeleteConfirm(null);
     addToast(t('shiftDeleted'), 'info');
   };
 
-  const handleAddShift = (e: React.FormEvent) => {
+  const handleAddShift = async (e: React.FormEvent) => {
     e.preventDefault();
     const targetUser = users.find(u => u.id === parseInt(shiftFormData.userId));
     if (!targetUser) {
@@ -259,7 +265,7 @@ export const StaffTab = () => {
       notes: shiftFormData.notes
     };
 
-    setWorkShifts([...workShifts, newShift]);
+    if (!await setWorkShifts([...workShifts, newShift])) return;
     setShowAddShiftModal(false);
     setShiftFormData({
       userId: '',
@@ -513,12 +519,13 @@ export const StaffTab = () => {
 
   const editingStaff = editingCell ? staffForRota.find(u => u.id === editingCell.userId) : null;
 
-  const updateRotaList = (next: RotaShift[]) => {
+  const updateRotaList = async (next: RotaShift[]) => {
+    if (!schedulingLeave.ready || next.some(r=>isStaffOnTimeOff(r.userId,r.date))) { addToast('A shift overlaps pending or approved time off. Review the schedule first.', 'error'); return; }
     if (rotaPreview) {
       setRotaPreview(next);
       return;
     }
-    setRota(next);
+    if (!await setRota(next)) return;
     syncRotaToWorkShifts(next);
   };
 
@@ -607,7 +614,9 @@ export const StaffTab = () => {
 
   const isStaffOnTimeOff = (userId: number, dateKey: string) => {
     const cfg = getAvailabilityConfig(userId);
-    return cfg.timeOffs.some(r => dateKey >= r.from && dateKey <= r.to);
+    const member = users.find(u=>u.id===userId);
+    const identity = String(member?.authId || userId);
+    return schedulingLeave.rows.some(r=>r.user_id===identity && dateKey>=r.from_date && dateKey<=r.to_date) || workShifts.some(s => s.userId === userId && s.date === dateKey && s.kind === 'leave') || cfg.timeOffs.some(r => dateKey >= r.from && dateKey <= r.to);
   };
 
   const hasAvailabilityConflict = (userId: number, date: Date, shift?: RotaShift) => {
@@ -615,7 +624,7 @@ export const StaffTab = () => {
     const cfg = getAvailabilityConfig(userId);
     const dayIndex = (date.getDay() + 6) % 7;
     if (!cfg.days.includes(dayIndex)) return true;
-    if (isDateWithinException(date, cfg)) return true;
+    if (isStaffOnTimeOff(userId, toDateKey(date))) return true;
     if (!shift.startTime || !shift.endTime) return false;
     if (shift.startTime < cfg.startTime || shift.endTime > cfg.endTime) return true;
     return false;
@@ -630,7 +639,7 @@ export const StaffTab = () => {
     return parseFloat(Math.max(0, diff).toFixed(2));
   };
 
-  const syncRotaToWorkShifts = (sourceRota: RotaShift[]) => {
+  const syncRotaToWorkShifts = async (sourceRota: RotaShift[]) => {
     const generated = sourceRota.map((r) => ({
       id: `ROTA-SHIFT-${r.id}`,
       userId: r.userId,
@@ -643,13 +652,14 @@ export const StaffTab = () => {
       totalHours: computeShiftHours(r.date, r.startTime || '09:00', r.endTime || '17:00'),
       notes: 'Synced from Rota',
     })) as WorkShift[];
-    setWorkShifts(prev => {
+    if (!await setWorkShifts(prev => {
       const nonRota = prev.filter(s => !s.id.startsWith('ROTA-SHIFT-'));
       return [...nonRota, ...generated];
-    });
+    })) return;
   };
 
   const generateRotaForVisibleRange = () => {
+    if (!schedulingLeave.ready) { addToast('Time-off requests could not be checked. Please retry before scheduling.', 'error'); return; }
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const candidateDates = displayDates.filter(date => {
@@ -676,7 +686,7 @@ export const StaffTab = () => {
       const availableStaff = staffPool.filter(s => {
         const config = getAvailabilityConfig(s.id);
         if (!config.days.includes(dayIndex)) return false;
-        if (isDateWithinException(date, config)) return false;
+        if (isStaffOnTimeOff(s.id, toDateKey(date))) return false;
         return true;
       });
 
@@ -712,12 +722,14 @@ export const StaffTab = () => {
     setShowOverwriteConfirm(false);
   };
 
-  const savePreviewRota = () => {
+  const savePreviewRota = async () => {
     if (!rotaPreview) return;
+    if (!schedulingLeave.ready || rotaPreview.some(r=>isStaffOnTimeOff(r.userId,r.date))) { addToast('Time off changed. Generate the schedule again before saving.', 'error'); return; }
     const previewDates = new Set(rotaPreview.map(r => r.date));
     const retained = rota.filter(r => !previewDates.has(r.date));
     const merged = [...retained, ...rotaPreview];
-    setRota(merged);
+    if (merged.some(r=>isStaffOnTimeOff(r.userId,r.date))) { addToast('An existing shift overlaps time off. Remove that shift before saving the schedule.', 'error'); return; }
+    if (!await setRota(merged)) return;
     syncRotaToWorkShifts(merged);
     setRotaPreview(null);
     addToast(t('rotaSaved'));
@@ -746,6 +758,7 @@ export const StaffTab = () => {
             }`}
           >
             {section.label}
+            {section.id === 'timeoff' && pendingLeaveCount > 0 && <span className="ml-2 rounded-full bg-bakery-caramel px-2 py-0.5 text-xs text-bakery-brown" aria-label={`${pendingLeaveCount} pending time-off requests`}>{pendingLeaveCount}</span>}
           </button>
         ))}
       </div>
@@ -1560,6 +1573,7 @@ export const StaffTab = () => {
 
       {activeSection === 'timeoff' && (
         <section className="space-y-4">
+          <LeaveRequests review />
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h3 className="text-base font-bold font-serif text-bakery-brown">{t('timeOffTab')}</h3>
@@ -1819,9 +1833,9 @@ export const StaffTab = () => {
             </div>
             <div>
               <label className="block text-sm font-bold mb-2">{t('password')}</label>
-              <input
+              <PasswordInput
                 name="password"
-                type="password"
+
                 minLength={8}
                 className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel"
                 required
@@ -1902,8 +1916,8 @@ export const StaffTab = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-bold mb-2">{t('newPassword')}</label>
-                    <input
-                      type="password"
+                    <PasswordInput
+
                       className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel"
                       value={resetPassword}
                       onChange={e => setResetPassword(e.target.value)}
@@ -1912,8 +1926,8 @@ export const StaffTab = () => {
                   </div>
                   <div>
                     <label className="block text-sm font-bold mb-2">{t('confirmPassword')}</label>
-                    <input
-                      type="password"
+                    <PasswordInput
+
                       className="w-full p-4 border border-bakery-beige rounded-2xl outline-none focus:ring-2 focus:ring-bakery-caramel"
                       value={resetPasswordConfirm}
                       onChange={e => setResetPasswordConfirm(e.target.value)}

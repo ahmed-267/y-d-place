@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import Stripe from 'stripe';
 import { createClient } from '@supabase/supabase-js';
 
@@ -6,7 +7,7 @@ export const TRIAL_DAYS = 14;
 export const getStripe = () => {
   const key = process.env.STRIPE_SECRET_KEY;
   if (!key) return null;
-  return new Stripe(key);
+  return new Stripe(key, { timeout: 20000, maxNetworkRetries: 1 });
 };
 
 export const getAppUrl = () =>
@@ -40,6 +41,7 @@ export const createServiceSupabase = () => {
 };
 
 export const requireOwner = async (jwt) => {
+  if (!jwt) return { error: 'Sign in required', status: 401 };
   const url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
   const anon = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
   const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -81,10 +83,11 @@ export const ensureStripeCustomer = async (stripe, business, ownerEmail) => {
     email: ownerEmail || business.owner_email || undefined,
     name: business.name || undefined,
     metadata: { business_id: business.id },
-  });
+  }, { idempotencyKey: `previsio-customer-${business.id}` });
   const admin = createServiceSupabase();
   if (admin) {
-    await admin.from('businesses').update({ stripe_customer_id: customer.id }).eq('id', business.id);
+    const { error } = await admin.from('businesses').update({ stripe_customer_id: customer.id }).eq('id', business.id);
+    if (error) throw new Error('Could not save billing customer');
   }
   return customer.id;
 };
@@ -95,11 +98,12 @@ export const applySubscriptionToBusiness = async (admin, businessId, subscriptio
   const trialEnd = subscription.trial_end
     ? new Date(subscription.trial_end * 1000).toISOString()
     : null;
-  const periodEnd = subscription.current_period_end
-    ? new Date(subscription.current_period_end * 1000).toISOString()
+  const period = subscription.current_period_end ?? subscription.items?.data?.[0]?.current_period_end;
+  const periodEnd = period
+    ? new Date(period * 1000).toISOString()
     : null;
 
-  await admin
+  const { error } = await admin
     .from('businesses')
     .update({
       plan,
@@ -111,6 +115,7 @@ export const applySubscriptionToBusiness = async (admin, businessId, subscriptio
       current_period_ends_at: periodEnd,
     })
     .eq('id', businessId);
+  if (error) throw new Error('Subscription update failed; retry required');
 };
 
 export const resolveBusinessIdFromSubscription = async (admin, subscription) => {
@@ -119,12 +124,31 @@ export const resolveBusinessIdFromSubscription = async (admin, subscription) => 
   if (subscription.customer) {
     const customerId =
       typeof subscription.customer === 'string' ? subscription.customer : subscription.customer.id;
-    const { data } = await admin
+    const { data, error } = await admin
       .from('businesses')
       .select('id')
       .eq('stripe_customer_id', customerId)
       .maybeSingle();
+    if (error) throw new Error('Business lookup failed; retry required');
     return data?.id || null;
   }
   return null;
 };
+
+export const withBillingLock = async (admin, businessId, action) => {
+  const lockToken = randomUUID();
+  const { data: acquired, error } = await admin.rpc('previsio_claim_billing_lock', { biz: businessId, lock_token: lockToken });
+  if (error || !acquired) throw new Error('Billing reconciliation busy; retry required');
+  try {
+    return await action();
+  } finally {
+    await admin.rpc('previsio_release_billing_lock', { biz: businessId, lock_token: lockToken });
+  }
+};
+
+export const reconcileSubscription = async (admin, stripe, businessId, subscriptionId) =>
+  withBillingLock(admin, businessId, async () => {
+    // Fetch AFTER acquiring the shared lease, so old webhook payloads cannot overwrite newer status.
+    const current = await stripe.subscriptions.retrieve(subscriptionId);
+    await applySubscriptionToBusiness(admin, businessId, current);
+  });

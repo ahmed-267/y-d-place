@@ -1,18 +1,20 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import { AppearanceToggle } from './AppearanceToggle';
+import { usePendingLeaveCount } from '../hooks/usePendingLeaveCount';
+import React, { useState, useEffect, useMemo, lazy, Suspense } from 'react';
 import { useApp } from '../AppContext';
 import { LogOut, Menu, X, Layout, Lock, LayoutDashboard, ShoppingCart, ClipboardList, BarChart3, Package, UtensilsCrossed, Users, Wallet, Settings, CalendarDays, Tag, Grid3X3, Contact } from 'lucide-react';
-import { OverviewTab } from './OverviewTab';
-import { CashierTab } from './CashierTab';
-import { TablesTab } from './TablesTab';
-import { OrdersTab } from './OrdersTab';
-import { SalesTab } from './SalesTab';
-import { StockTab } from './StockTab';
-import { ProductsTab } from './ProductsTab';
-import { StaffTab } from './StaffTab';
-import { MyShiftsTab } from './MyShiftsTab';
-import { FinanceTab } from './FinanceTab';
-import { SettingsTab } from './SettingsTab';
-import { CustomersTab } from './CustomersTab';
+const OverviewTab = lazy(() => import('./OverviewTab').then(m => ({ default: m.OverviewTab })));
+const CashierTab = lazy(() => import('./CashierTab').then(m => ({ default: m.CashierTab })));
+const TablesTab = lazy(() => import('./TablesTab').then(m => ({ default: m.TablesTab })));
+const OrdersTab = lazy(() => import('./OrdersTab').then(m => ({ default: m.OrdersTab })));
+const SalesTab = lazy(() => import('./SalesTab').then(m => ({ default: m.SalesTab })));
+const StockTab = lazy(() => import('./StockTab').then(m => ({ default: m.StockTab })));
+const ProductsTab = lazy(() => import('./ProductsTab').then(m => ({ default: m.ProductsTab })));
+const StaffTab = lazy(() => import('./StaffTab').then(m => ({ default: m.StaffTab })));
+const MyShiftsTab = lazy(() => import('./MyShiftsTab').then(m => ({ default: m.MyShiftsTab })));
+const FinanceTab = lazy(() => import('./FinanceTab').then(m => ({ default: m.FinanceTab })));
+const SettingsTab = lazy(() => import('./SettingsTab').then(m => ({ default: m.SettingsTab })));
+const CustomersTab = lazy(() => import('./CustomersTab').then(m => ({ default: m.CustomersTab })));
 import { OnboardingWizard } from './OnboardingWizard';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { ProductTour } from './ProductTour';
@@ -60,6 +62,7 @@ const MODULE_TAB_MAP: Record<string, keyof ReturnType<typeof normalizeEnabledMod
 };
 
 export const Dashboard = () => {
+  const pendingLeaveCount = usePendingLeaveCount();
   const {
     user,
     t,
@@ -75,6 +78,7 @@ export const Dashboard = () => {
     completeOnboarding,
     rota,
     isDemoMode,
+    cloudLoadError,
     switchDemoRole,
     setBusinessSettings,
     addToast,
@@ -155,7 +159,7 @@ export const Dashboard = () => {
       { id: 'stock', label: t('stock'), roles: ['owner', 'manager', 'staff'] },
       { id: 'products', label: t('products'), roles: ['owner', 'manager', 'staff'] },
       { id: 'customers', label: t('customersTab'), roles: ['owner', 'manager'] },
-      { id: 'staff', label: t('staff'), roles: ['owner', 'manager'] },
+      { id: 'staff', label: t('staff'), roles: ['owner', 'manager'], badge: pendingLeaveCount || undefined },
       { id: 'myshifts', label: t('myShifts'), roles: ['staff'] },
       { id: 'finance', label: t('finance'), roles: ['owner', 'manager'] },
       { id: 'settings', label: t('settings'), roles: ['owner', 'manager'] },
@@ -166,7 +170,7 @@ export const Dashboard = () => {
         if (!flag || flag === 'always') return true;
         return modules[flag];
       }) as TabItem[];
-  }, [user, t, activeOrderCount, businessSettings?.enabledModules]);
+  }, [user, t, activeOrderCount, pendingLeaveCount, businessSettings?.enabledModules]);
 
   const gateEligible = hasOwnerAccess(user?.role) && businessSettings?.id !== 'ydplace';
   const setupCompleted = isBusinessSetupCompleted;
@@ -216,17 +220,22 @@ export const Dashboard = () => {
 
   if (!user) return null;
 
+  if (!isDemoMode && businessSettings && !hasActiveSubscription(businessSettings)) {
+    return <BillingGate />;
+  }
+
   const setupLocked = isOnboarding && hasOwnerAccess(user.role) && !isBusinessSetupCompleted;
   if (setupLocked) {
     return (
       <div className="h-screen max-h-screen flex flex-col overflow-hidden" style={{ background: 'var(--app-canvas-bg)' }}>
         <header className="shrink-0 border-b border-bakery-beige px-4 sm:px-6 h-14 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 min-w-0">
-            <Layout size={18} className="text-bakery-brown shrink-0" />
+            <img src="/favicon.svg" alt="" className="h-[18px] w-[18px] rounded-md shrink-0" />
             <p className="font-serif font-black text-bakery-brown truncate">{businessSettings?.name || 'PreVisio'}</p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            <LanguageSwitcher compact align="right" />
+            <AppearanceToggle />
+              <LanguageSwitcher compact align="right" />
             <button
               type="button"
               onClick={logout}
@@ -239,15 +248,23 @@ export const Dashboard = () => {
         </header>
         <main className="flex-1 overflow-y-auto p-4 sm:p-6">
           <div className="max-w-[1400px] mx-auto w-full">
+            <Suspense fallback={<p role="status">Loading…</p>}>
             <OnboardingWizard />
+            </Suspense>
           </div>
         </main>
       </div>
     );
   }
 
-  if (!isDemoMode && businessSettings && !hasActiveSubscription(businessSettings)) {
-    return <BillingGate />;
+  if (!isDemoMode && cloudLoadError) {
+    return <main className="max-w-xl mx-auto p-8 space-y-4">
+      <h1 className="text-xl font-bold">Business data could not be loaded</h1>
+      <p role="alert">{cloudLoadError}</p>
+      <p>Editing is paused to avoid working with incomplete records. Check the connection and reload.</p>
+      <button className="underline mr-4" onClick={() => window.location.reload()}>Reload</button>
+      <button className="underline" onClick={logout}>Sign out</button>
+    </main>;
   }
 
   const storeName = businessSettings?.name || 'PreVisio';
@@ -474,6 +491,7 @@ export const Dashboard = () => {
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
+              <AppearanceToggle />
               <LanguageSwitcher compact align="right" />
             </div>
           </div>
@@ -481,6 +499,7 @@ export const Dashboard = () => {
 
         <main className="flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-5 lg:px-8 lg:py-5 w-full">
           <div className="max-w-[1400px] mx-auto w-full">
+            <Suspense fallback={<p role="status">Loading…</p>}>
             {isOnboarding && hasOwnerAccess(user.role) && activeTab === 'overview' ? (
               <OnboardingWizard />
             ) : (
@@ -506,6 +525,7 @@ export const Dashboard = () => {
                 {activeTab === 'settings' && <SettingsTab />}
               </>
             )}
+            </Suspense>
           </div>
         </main>
       </div>

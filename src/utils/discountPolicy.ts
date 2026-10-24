@@ -1,5 +1,5 @@
 import { DiscountPolicy, normalizeDiscountPolicy, Role, User } from '../types';
-import { createEphemeralSupabase } from '../components/supabaseClient';
+import { supabase, createEphemeralSupabase } from '../components/supabaseClient';
 import { DEFAULT_USERS } from '../constants';
 
 export type DiscountCheck =
@@ -38,8 +38,8 @@ export const verifyManagerPassword = async (
   username: string,
   password: string,
   users: User[],
-  opts?: { isDemoMode?: boolean }
-): Promise<User | null> => {
+  opts?: { isDemoMode?: boolean; businessId?: string; orderId?: string; maximum?: number }
+): Promise<(User & { approvalToken?: string }) | null> => {
   const id = username.trim();
   const pass = password;
   if (!id || !pass) return null;
@@ -80,16 +80,22 @@ export const verifyManagerPassword = async (
 
     const { data: profile } = await ephemeral
       .from('app_users')
-      .select('id, username, full_name, role, email')
+      .select('id, business_id, username, full_name, role, email')
       .eq('id', data.user.id)
       .maybeSingle();
 
+    if (!profile || profile.business_id !== opts?.businessId) { await ephemeral.auth.signOut(); return null; }
+    const { data: approval, error: approvalError } = await ephemeral.rpc('previsio_approve_discount', {
+      biz: opts.businessId, order_id: opts.orderId, maximum: opts.maximum,
+    });
     await ephemeral.auth.signOut();
+    if (approvalError || !approval) return null;
 
     const role = (profile?.role as Role) || candidate?.role;
     if (role !== 'owner' && role !== 'manager') return null;
 
     return {
+      approvalToken: approval,
       id: candidate?.id ?? Date.now(),
       username: String(profile?.username || candidate?.username || email),
       fullName: String(profile?.full_name || candidate?.fullName || email),

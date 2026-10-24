@@ -1,3 +1,4 @@
+import { PasswordInput } from './PasswordInput';
 import React, { useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { useApp } from '../AppContext';
@@ -39,7 +40,7 @@ export const RegistrationForm = ({ onBack, onGoLogin, onAuthenticated }: Registr
     if (!pendingEmail) return;
     setIsResending(true);
     try {
-      const { error: resendError } = await supabase.auth.resend({ type: 'signup', email: pendingEmail });
+      const { error: resendError } = await supabase.auth.resend({ type: 'signup', email: pendingEmail, options: { emailRedirectTo: `${window.location.origin}/login` } });
       if (resendError) {
         const message = isNetworkAuthError(resendError) ? t('authOffline') : resendError.message;
         addToast(message, 'error');
@@ -95,7 +96,7 @@ export const RegistrationForm = ({ onBack, onGoLogin, onAuthenticated }: Registr
       }
 
       if (data.session?.user) {
-        onAuthenticated('onboarding');
+        // Route only after AppContext has successfully loaded this account.
         return;
       }
 
@@ -121,7 +122,7 @@ export const RegistrationForm = ({ onBack, onGoLogin, onAuthenticated }: Registr
             {t('checkYourEmail')}
           </h1>
           <p className="mt-2 text-sm text-bakery-brown/55 leading-relaxed">
-            {t('checkYourEmailBody').replace('{email}', pendingEmail)}
+            If this address needs confirmation, check {pendingEmail}, including your spam folder. If you already registered, sign in or reset your password instead of registering again.
           </p>
         </div>
         <button
@@ -187,9 +188,9 @@ export const RegistrationForm = ({ onBack, onGoLogin, onAuthenticated }: Registr
           <label htmlFor="register-password" className="mb-1.5 block text-sm font-bold text-bakery-brown">
             {t('password')}
           </label>
-          <input
+          <PasswordInput
             id="register-password"
-            type="password"
+
             autoComplete="new-password"
             required
             minLength={8}
@@ -205,9 +206,9 @@ export const RegistrationForm = ({ onBack, onGoLogin, onAuthenticated }: Registr
           <label htmlFor="register-confirm-password" className="mb-1.5 block text-sm font-bold text-bakery-brown">
             {t('confirmPassword')}
           </label>
-          <input
+          <PasswordInput
             id="register-confirm-password"
-            type="password"
+
             autoComplete="new-password"
             required
             minLength={8}

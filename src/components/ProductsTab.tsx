@@ -1,3 +1,4 @@
+import { numericId } from '../utils/numericId';
 
 import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { useApp } from '../AppContext';
@@ -23,7 +24,7 @@ import { ConfirmDialog } from './ConfirmDialog';
 import { DataTablePagination, useTablePagination } from './DataTablePagination';
 import { ScanProgressModal } from './ScanProgressModal';
 import { Product, Ingredient, IngredientLink } from '../types';
-import { getAIAssistance, scanMenu, ScanMenuResult, compressImage } from '../utils/aiHelper';
+import { AIRequestError, getAIAssistance, scanMenu, ScanMenuResult, compressImage } from '../utils/aiHelper';
 import { motion, AnimatePresence } from 'motion/react';
 import { toSearchValue, priceMatchesQuery } from '../utils/search';
 import { SortableTh, useColumnSort, sortByColumn } from '../utils/tableSort';
@@ -55,6 +56,7 @@ export const ProductsTab = () => {
 
   const [isAIProcessing, setIsAIProcessing] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
+  const [scanError, setScanError] = useState('');
   const [scanStatus, setScanStatus] = useState<'uploading' | 'analyzing' | 'extracting' | 'finishing' | 'error' | 'success' | 'timeout'>('uploading');
   const [scanThumbnail, setScanThumbnail] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
@@ -120,18 +122,20 @@ export const ProductsTab = () => {
 
     setIsScanning(true);
     setScanStatus('uploading');
+    setScanError('');
     setScanThumbnail(selectedFile);
     let stageTimer: ReturnType<typeof setTimeout> | undefined;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
     try {
-      const compressed = await compressImage(selectedFile, 768, 0.62);
+      const compressed = await compressImage(selectedFile, 2048, 0.85);
       setScanStatus('analyzing');
       stageTimer = setTimeout(() => setScanStatus('extracting'), 1500);
 
       const controller = new AbortController();
       abortControllerRef.current = controller;
 
-      const timeoutId = setTimeout(() => {
+      timeoutId = setTimeout(() => {
         controller.abort();
         setScanStatus('timeout');
       }, 45000);
@@ -147,13 +151,18 @@ export const ProductsTab = () => {
         setScanStatus('success');
       } else {
         setScanStatus('error');
+        setScanError(t('scanMenuNoItems'));
         addToast(t('scanMenuNoItems'), "error");
       }
-    } catch (err) {
-      if (stageTimer) clearTimeout(stageTimer);
+    } catch (error) {
+      if ((error as Error).name === 'AbortError') return;
       setScanStatus('error');
-      addToast(t('scanMenuFailed'), "error");
+      const message = error instanceof AIRequestError ? error.message : t('scanMenuFailed');
+      setScanError(message);
+      addToast(message, 'error');
     } finally {
+      if (stageTimer) clearTimeout(stageTimer);
+      if (timeoutId) clearTimeout(timeoutId);
       abortControllerRef.current = null;
     }
   };
@@ -167,21 +176,21 @@ export const ProductsTab = () => {
     setSelectedFile(null);
   };
 
-  const saveScannedProducts = () => {
+  const saveScannedProducts = async () => {
     if (!scanResults) return;
     
     const currentIngredients = [...ingredients];
     const currentPreparedStock = [...preparedStock];
     
     const newProducts: Product[] = scanResults.products.map(p => {
-      const productId = Date.now() + Math.random();
+      const productId = numericId();
 
       // Handle Prepared Stock
       const preppedLinks = (p.preparedStockNeeds || []).map(needName => {
         let prepped = currentPreparedStock.find(ps => ps.name.toLowerCase() === needName.toLowerCase());
         if (!prepped) {
           prepped = {
-            id: Date.now() + Math.random(),
+            id: numericId(),
             name: needName,
             portions: 20,
             lowThreshold: 5
@@ -198,7 +207,7 @@ export const ProductsTab = () => {
         let ingredient = currentIngredients.find(i => i.name.toLowerCase() === link.ingredientName.toLowerCase());
         if (!ingredient) {
           ingredient = {
-            id: Date.now() + Math.random(),
+            id: numericId(),
             name: link.ingredientName,
             unit: link.unit,
             qty: 50, // Default initial stock for 10+ orders
@@ -231,9 +240,9 @@ export const ProductsTab = () => {
     const newCategories = [...new Set([...categories, ...scanResults.products.map(p => p.category)])];
     setCategories(newCategories);
     
-    setIngredients(currentIngredients);
-    setPreparedStock(currentPreparedStock);
-    setProducts([...products, ...newProducts]);
+    if (!await setIngredients(currentIngredients)) return;
+    if (!await setPreparedStock(currentPreparedStock)) return;
+    if (!await setProducts([...products, ...newProducts])) return;
     setScanResults(null);
     addToast(t('menuItemsAdded').replace('{count}', String(newProducts.length)), 'success');
   };
@@ -260,7 +269,7 @@ export const ProductsTab = () => {
       setIsAIProcessing(false);
     }
   };
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editItem) return;
 
@@ -286,22 +295,22 @@ export const ProductsTab = () => {
     };
 
     if (editItem.id) {
-      setProducts(products.map(p => p.id === editItem.id ? newProduct : p));
+      if (!await setProducts(products.map(p => p.id === editItem.id ? newProduct : p))) return;
       addToast(t('menuItemUpdated'));
     } else {
-      setProducts([...products, newProduct]);
+      if (!await setProducts([...products, newProduct])) return;
       addToast(t('menuItemAdded'));
     }
     setEditItem(null);
   };
 
-  const toggleActive = (id: number) => {
-    setProducts(products.map(p => p.id === id ? { ...p, active: !p.active } : p));
+  const toggleActive = async (id: number) => {
+    if (!await setProducts(products.map(p => p.id === id ? { ...p, active: !p.active } : p))) return;
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (!deleteConfirm) return;
-    setProducts(products.filter(p => p.id !== deleteConfirm.id));
+    if (!await setProducts(products.filter(p => p.id !== deleteConfirm.id))) return;
     addToast(t('menuItemDeleted').replace('{name}', deleteConfirm.nameEN), "info");
     setDeleteConfirm(null);
   };
@@ -378,7 +387,8 @@ export const ProductsTab = () => {
 
       <ScanProgressModal 
         isOpen={isScanning} 
-        status={scanStatus} 
+        status={scanStatus}
+        errorMessage={scanError}
         imageThumbnail={scanThumbnail}
         onClose={() => { setIsScanning(false); setSelectedFile(null); }}
         onCancel={cancelScan}

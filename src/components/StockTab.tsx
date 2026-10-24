@@ -212,7 +212,7 @@ const StockTabContent = () => {
     );
   };
 
-  const handleAddIngredient = (e: React.FormEvent) => {
+  const handleAddIngredient = async (e: React.FormEvent) => {
     e.preventDefault();
     const ingredient = {
       id: Date.now(),
@@ -221,13 +221,13 @@ const StockTabContent = () => {
       qty: parseFloat(newIngredient.quantity) || 0,
       lowThreshold: parseFloat(newIngredient.lowThreshold) || 2,
     };
-    setIngredients([...ingredients, ingredient]);
+    if (!await setIngredients([...ingredients, ingredient])) return;
     addToast(t('ingredientAdded').replace('{name}', newIngredient.name));
     setShowAddIngredient(false);
     setNewIngredient({ name: '', unit: 'kg', quantity: '', lowThreshold: '2' });
   };
 
-  const handleAddPrepped = (e: React.FormEvent) => {
+  const handleAddPrepped = async (e: React.FormEvent) => {
     e.preventDefault();
     const prepped = {
       id: Date.now(),
@@ -235,13 +235,13 @@ const StockTabContent = () => {
       portions: parseFloat(newPrepped.portions) || 0,
       lowThreshold: parseFloat(newPrepped.lowThreshold) || 5,
     };
-    setPreparedStock([...preparedStock, prepped]);
+    if (!await setPreparedStock([...preparedStock, prepped])) return;
     addToast(t('preppedAdded').replace('{name}', newPrepped.name));
     setShowAddPrepped(false);
     setNewPrepped({ name: '', portions: '', lowThreshold: '5' });
   };
 
-  const handleRestock = (e: React.FormEvent) => {
+  const handleRestock = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!restockItem) return;
     const amount = parseFloat(restockAmount);
@@ -250,21 +250,21 @@ const StockTabContent = () => {
     const unitCost = !isNaN(unitCostRaw) && unitCostRaw >= 0 ? unitCostRaw : undefined;
 
     if (restockItem.type === 'ingredient') {
-      setIngredients(
+      if (!await setIngredients(
         ingredients.map(i =>
           i.id === restockItem.id
             ? { ...i, qty: i.qty + amount, ...(unitCost != null ? { lastUnitCost: unitCost } : {}) }
             : i
         )
-      );
+      )) return;
     } else {
-      setPreparedStock(
+      if (!await setPreparedStock(
         preparedStock.map(p =>
           p.id === restockItem.id
             ? { ...p, portions: p.portions + amount, ...(unitCost != null ? { lastUnitCost: unitCost } : {}) }
             : p
         )
-      );
+      )) return;
     }
 
     addToast(t('stockReceived'));
@@ -273,7 +273,7 @@ const StockTabContent = () => {
     setRestockUnitCost('');
   };
 
-  const handleWaste = (e: React.FormEvent) => {
+  const handleWaste = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!wasteItem || !user) return;
     const amount = parseFloat(wasteAmount);
@@ -285,14 +285,14 @@ const StockTabContent = () => {
         addToast(t('stockWasteInsufficient'), 'error');
         return;
       }
-      setIngredients(ingredients.map(i => (i.id === wasteItem.id ? { ...i, qty: i.qty - amount } : i)));
+      if (!await setIngredients(ingredients.map(i => (i.id === wasteItem.id ? { ...i, qty: i.qty - amount } : i)))) return;
     } else {
       const prep = preparedStock.find(p => p.id === wasteItem.id);
       if (!prep || prep.portions < amount) {
         addToast(t('stockWasteInsufficient'), 'error');
         return;
       }
-      setPreparedStock(preparedStock.map(p => (p.id === wasteItem.id ? { ...p, portions: p.portions - amount } : p)));
+      if (!await setPreparedStock(preparedStock.map(p => (p.id === wasteItem.id ? { ...p, portions: p.portions - amount } : p)))) return;
     }
 
     const unitCost = wasteItem.unitCost ?? 0;
@@ -320,12 +320,12 @@ const StockTabContent = () => {
     setWasteReason('spoilage');
   };
 
-  const handleEditSave = (e: React.FormEvent) => {
+  const handleEditSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editStockItem) return;
 
     if (editStockItem.type === 'ingredient') {
-      setIngredients(
+      if (!await setIngredients(
         ingredients.map(i =>
           i.id === editStockItem.id
             ? {
@@ -337,9 +337,9 @@ const StockTabContent = () => {
               }
             : i
         )
-      );
+      )) return;
     } else {
-      setPreparedStock(
+      if (!await setPreparedStock(
         preparedStock.map(p =>
           p.id === editStockItem.id
             ? {
@@ -350,19 +350,19 @@ const StockTabContent = () => {
               }
             : p
         )
-      );
+      )) return;
     }
 
     addToast(`${editStockItem.name} updated!`);
     setEditStockItem(null);
   };
 
-  const handleDeleteStock = () => {
+  const handleDeleteStock = async () => {
     if (!deleteStockConfirm) return;
     if (deleteStockConfirm.type === 'ingredient') {
-      setIngredients(ingredients.filter(i => i.id !== deleteStockConfirm.id));
+      if (!await setIngredients(ingredients.filter(i => i.id !== deleteStockConfirm.id))) return;
     } else {
-      setPreparedStock(preparedStock.filter(p => p.id !== deleteStockConfirm.id));
+      if (!await setPreparedStock(preparedStock.filter(p => p.id !== deleteStockConfirm.id))) return;
     }
     addToast(t('stockItemDeleted').replace('{name}', deleteStockConfirm.name), 'info');
     setDeleteStockConfirm(null);

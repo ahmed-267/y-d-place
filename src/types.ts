@@ -13,6 +13,7 @@ export interface PreparedStockLink {
 }
 
 export interface Product {
+  revision?: number;
   id: number;
   nameEN: string;
   translations: Record<string, string>;
@@ -67,6 +68,7 @@ export interface Sale {
   refundedAt?: number;
   /** Manager/owner who approved a discount above staff limit. */
   discountApprovedByUsername?: string;
+  discountApprovalToken?: string;
   customerName?: string;
   customerPhone?: string;
   customerId?: string;
@@ -76,6 +78,7 @@ export type OrderType = 'WalkIn' | 'PreOrder' | 'DineIn';
 export type OrderStatus = 'Preparing' | 'Ready' | 'Completed' | 'Cancelled';
 
 export interface Order {
+  revision?: number;
   id: string;
   type: OrderType;
   status: OrderStatus;
@@ -104,6 +107,7 @@ export interface Order {
   tableLabel?: string;
   covers?: number;
   discountApprovedByUsername?: string;
+  discountApprovalToken?: string;
   customerId?: string;
   /** pos = cashier; online = branded pre-order page */
   source?: 'pos' | 'online';
@@ -121,6 +125,7 @@ export interface CashSession {
 }
 
 export interface PreparedStock {
+  revision?: number;
   id: number;
   name: string;
   portions: number;
@@ -130,6 +135,7 @@ export interface PreparedStock {
 }
 
 export interface Ingredient {
+  revision?: number;
   id: number;
   name: string;
   unit: string;
@@ -171,8 +177,6 @@ export interface EnabledModules {
   tips: boolean;
   /** Guest online pre-order link */
   onlineOrders: boolean;
-  /** Park / recall tickets on the till */
-  parkTickets: boolean;
 }
 
 export const DEFAULT_ENABLED_MODULES: EnabledModules = {
@@ -185,14 +189,13 @@ export const DEFAULT_ENABLED_MODULES: EnabledModules = {
   customers: false,
   tips: false,
   onlineOrders: false,
-  parkTickets: false,
 };
 
 export const normalizeEnabledModules = (
   value?: Partial<EnabledModules> | null
 ): EnabledModules => ({
-  ...DEFAULT_ENABLED_MODULES,
-  ...(value || {}),
+  ...Object.fromEntries(Object.entries(DEFAULT_ENABLED_MODULES).map(([key, fallback]) =>
+    [key, typeof value?.[key] === 'boolean' ? value[key] : fallback])) as EnabledModules,
 });
 
 export type DiscountPolicy = {
@@ -355,29 +358,6 @@ export type Customer = {
   orderCount: number;
 };
 
-export type ParkedTicket = {
-  id: string;
-  parkedAt: number;
-  cart: Array<SaleItem & { emoji?: string; transKey?: string; id?: number }>;
-  orderType: OrderType;
-  customerName: string;
-  customerPhone: string;
-  scheduledDate: string;
-  scheduledTime: string;
-  discountPercent: string;
-  discountAmount: string;
-  tipAmount: string;
-  paymentMethod: 'Cash' | 'Card' | 'Split';
-  cashReceived: string;
-  splitCash: string;
-  splitCard: string;
-  tableId?: string;
-  tableLabel?: string;
-  covers?: string;
-  resumeOrderId?: string;
-  customerId?: string;
-};
-
 export type PendingTableSession = {
   tableId: string;
   tableLabel: string;
@@ -425,6 +405,8 @@ export interface TaxSettings {
 }
 
 export interface User {
+  authId?: string;
+  revision?: number;
   id: number;
   username: string;
   fullName: string;
@@ -445,6 +427,7 @@ export interface ShiftLog {
 }
 
 export interface WorkShift {
+  revision?: number;
   id: string;
   userId: number;
   username: string;
@@ -463,6 +446,7 @@ export interface WorkShift {
 }
 
 export interface RotaShift {
+  revision?: number;
   id: string;
   userId: number;
   username: string;

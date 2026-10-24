@@ -118,51 +118,6 @@ const workspaces = [
   },
 ];
 
-const showcases = [
-  {
-    eyebrow: 'Sales history',
-    title: 'Every order, searchable',
-    description: 'Filter by day, week, or range. Expand any ticket to see items, extras, payment method, and who served it.',
-    points: ['Card and cash split', 'Cashier attribution', 'CSV export'],
-    shot: '/screenshots/sales.jpg',
-    label: 'Sales · history',
-    tone: 'plain' as const,
-  },
-  {
-    eyebrow: 'Menu',
-    title: 'Your catalogue, linked to stock',
-    description: 'Each dish links to the ingredients it consumes, so selling it updates inventory without a second thought.',
-    points: ['Scan a printed menu with AI', 'Categories and prices', 'Activate or pause items'],
-    shot: '/screenshots/menu.jpg',
-    label: 'Menu · products',
-    tone: 'panel' as const,
-  },
-  {
-    eyebrow: 'Expenses',
-    title: 'Receipts filed as you go',
-    description: 'Photograph a supplier receipt and PreVisio reads the amount, date, and category into your books.',
-    points: ['Recurring costs tracked', 'Category breakdown', 'Attached receipt images'],
-    shot: '/screenshots/finance.jpg',
-    label: 'Finance · expenses',
-    tone: 'bleed' as const,
-  },
-  {
-    eyebrow: 'Timesheets',
-    title: 'Hours that add themselves up',
-    description: 'Shifts logged during service become the timesheet, so payroll is a read rather than a rebuild.',
-    points: ['Per-person totals', 'Filter by date range', 'Rota planning built in'],
-    shot: '/screenshots/staff-timesheets.jpg',
-    label: 'Staff · timesheets',
-    tone: 'stack' as const,
-  },
-];
-
-const steps = [
-  { step: '01', title: 'Scan your menu', description: 'One photo creates your products, prices, and categories.', icon: BrainCircuit },
-  { step: '02', title: 'Open the till', description: 'Your team sells from day one — no training week needed.', icon: ReceiptText },
-  { step: '03', title: 'Watch the numbers', description: 'Stock, staff hours, and profit update as you trade.', icon: WalletCards },
-];
-
 const features = [
   { title: 'AI menu scan', description: 'Turn a printed menu into a live catalogue in minutes.', icon: BrainCircuit, wide: true },
   { title: 'Receipt to expense', description: 'Photograph a supplier receipt and file it automatically.', icon: ScanLine, wide: false },
@@ -293,15 +248,13 @@ export const WelcomeScreen = ({ onLogin, onRegister, onTryDemo }: WelcomeScreenP
       </div>
 
       <header className={`sticky top-0 z-50 backdrop-blur-md ${isDark ? 'border-b border-white/10 bg-[#0b0d12]/75' : 'border-b border-black/10 bg-[#f7f3ed]/80'}`}>
-        <div className="mx-auto flex h-20 w-full max-w-7xl items-center justify-between px-6">
+        <div className="mx-auto flex min-h-20 w-full max-w-7xl flex-wrap items-center justify-between gap-4 px-4 py-4 sm:px-6">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-bakery-caramel text-[#2a241f] shadow-[0_0_25px_rgba(212,163,115,0.35)]">
-              <Layout size={20} />
-            </div>
+            <img src="/favicon.svg" alt="" className="h-10 w-10 rounded-xl shadow-[0_0_25px_rgba(212,163,115,0.35)]" />
             <span className="mt-1 font-serif text-2xl font-black leading-none tracking-tight">PreVisio</span>
           </div>
 
-          <nav className={`absolute left-1/2 hidden -translate-x-1/2 items-center gap-7 text-sm font-bold md:flex ${isDark ? 'text-white/70' : 'text-black/60'}`}>
+          <nav className={`absolute left-1/2 hidden -translate-x-1/2 items-center gap-5 text-sm font-bold xl:flex ${isDark ? 'text-white/70' : 'text-black/60'}`}>
             {[
               { href: '#product', label: 'Product' },
               { href: '#tour', label: 'Tour' },
@@ -315,8 +268,8 @@ export const WelcomeScreen = ({ onLogin, onRegister, onTryDemo }: WelcomeScreenP
             ))}
           </nav>
 
-          <div className="flex items-center gap-3">
-            <button type="button" onClick={onLogin} className={`hidden font-bold transition-colors sm:block ${isDark ? 'text-white/75 hover:text-white' : 'text-black/65 hover:text-black'}`}>
+          <div className="flex w-full items-center justify-between gap-3 sm:w-auto">
+            <button type="button" onClick={onLogin} className={`font-bold transition-colors ${isDark ? 'text-white/75 hover:text-white' : 'text-black/65 hover:text-black'}`}>
               Login
             </button>
             <button
@@ -342,7 +295,7 @@ export const WelcomeScreen = ({ onLogin, onRegister, onTryDemo }: WelcomeScreenP
 
       <main>
         {/* 1. HERO — centered brand + layered screenshots */}
-        <section className="relative px-6 pt-20 pb-16">
+        <section className="relative px-4 sm:px-6 pt-12 sm:pt-20 pb-12 sm:pb-16">
           <div className="mx-auto w-full max-w-6xl text-center">
             <motion.div
               initial={reduced ? undefined : { opacity: 0, y: 26 }}
@@ -354,10 +307,10 @@ export const WelcomeScreen = ({ onLogin, onRegister, onTryDemo }: WelcomeScreenP
                 <Sparkles size={14} />
                 Built for food businesses
               </div>
-              <h1 className={`mx-auto max-w-3xl font-serif text-5xl font-black leading-[0.95] tracking-tight md:text-7xl ${heading}`}>
+              <h1 className={`mx-auto max-w-3xl font-serif text-4xl sm:text-5xl font-black leading-[1.08] tracking-tight md:text-7xl ${heading}`}>
                 Run smarter. Grow faster.
               </h1>
-              <p className={`mx-auto max-w-xl text-xl leading-relaxed ${body}`}>
+              <p className={`mx-auto max-w-xl text-base sm:text-xl leading-relaxed ${body}`}>
                 Orders, stock, staff, and finance in one calm workspace — for cafés, bakeries, and quick service.
               </p>
               <div className="flex flex-col justify-center gap-4 sm:flex-row">
@@ -467,7 +420,7 @@ export const WelcomeScreen = ({ onLogin, onRegister, onTryDemo }: WelcomeScreenP
               initial={reduced ? undefined : { opacity: 0, y: 30 }}
               animate={reduced ? undefined : { opacity: 1, y: 0 }}
               transition={{ duration: 0.8, delay: 0.5, ease: [0.22, 1, 0.36, 1] }}
-              className="absolute -bottom-20 -right-8 hidden w-[36%] lg:block xl:-right-20"
+              className="absolute -bottom-20 right-0 hidden w-[36%] lg:block"
             >
               <Shot isDark={isDark} src="/screenshots/orders.jpg" alt="Kitchen board" label="Kitchen board" />
             </motion.div>
@@ -494,7 +447,7 @@ export const WelcomeScreen = ({ onLogin, onRegister, onTryDemo }: WelcomeScreenP
         </section>
 
         {/* 3. PRODUCT — vertical left rail + sticky screenshot */}
-        <section id="product" className="px-6 py-24">
+        <section id="product" className="px-6 py-16">
           <div className="mx-auto w-full max-w-7xl">
             <Reveal className="mb-12 max-w-2xl">
               <h2 className={`font-serif text-4xl font-black md:text-5xl ${heading}`}>Everything the floor needs</h2>
@@ -542,159 +495,67 @@ export const WelcomeScreen = ({ onLogin, onRegister, onTryDemo }: WelcomeScreenP
           </div>
         </section>
 
-        {/* 4. TOUR — each block a different composition */}
-        <section id="tour" className="px-6 py-24">
-          <div className="mx-auto w-full max-w-7xl space-y-28">
-            <Reveal className="max-w-2xl">
-              <h2 className={`font-serif text-4xl font-black md:text-5xl ${heading}`}>A closer look</h2>
-              <p className={`mt-4 text-lg ${body}`}>Real screens from a working bakery — each section laid out differently on purpose.</p>
+        {/* Focused product details, rather than another sequence of full dashboards. */}
+        <section id="tour" className="px-6 py-16">
+          <div className="mx-auto max-w-7xl">
+            <Reveal className="mb-10 flex flex-wrap items-end justify-between gap-5">
+              <div><p className="mb-3 text-xs font-black uppercase tracking-[0.2em] text-bakery-caramel">Between the rushes</p>
+                <h2 className={`font-serif text-4xl font-black md:text-5xl ${heading}`}>A closer look</h2></div>
+              <p className={`max-w-sm ${body}`}>The little things that make closing time feel a little lighter.</p>
             </Reveal>
-
-            {showcases.map((item, i) => {
-              if (item.tone === 'plain') {
-                return (
-                  <Reveal key={item.title}>
-                    <div className="grid items-center gap-10 lg:grid-cols-[0.85fr_1.15fr]">
-                      <div>
-                        <p className="text-xs font-black uppercase tracking-[0.2em] text-bakery-caramel">{item.eyebrow}</p>
-                        <h3 className={`mt-3 font-serif text-3xl font-bold ${heading}`}>{item.title}</h3>
-                        <p className={`mt-4 text-lg leading-relaxed ${body}`}>{item.description}</p>
-                        <ul className="mt-6 space-y-3">
-                          {item.points.map((point) => (
-                            <li key={point} className="flex items-center gap-3 font-semibold">
-                              <Check size={16} className="text-bakery-caramel" />
-                              {point}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                      <Shot isDark={isDark} src={item.shot} alt={item.title} label={item.label} />
-                    </div>
-                  </Reveal>
-                );
-              }
-
-              if (item.tone === 'panel') {
-                return (
-                  <Reveal key={item.title}>
-                    <div className={`${glassCard} overflow-hidden p-0`}>
-                      <div className="grid lg:grid-cols-2">
-                        <Shot isDark={isDark} src={item.shot} alt={item.title} framed={false} />
-                        <div className="flex flex-col justify-center p-8 md:p-12">
-                          <p className="text-xs font-black uppercase tracking-[0.2em] text-bakery-caramel">{item.eyebrow}</p>
-                          <h3 className={`mt-3 font-serif text-3xl font-bold ${heading}`}>{item.title}</h3>
-                          <p className={`mt-4 leading-relaxed ${body}`}>{item.description}</p>
-                          <div className="mt-6 flex flex-wrap gap-2">
-                            {item.points.map((point) => (
-                              <span key={point} className={`rounded-full px-3.5 py-1.5 text-xs font-bold ${isDark ? 'bg-white/10' : 'bg-black/[0.06]'}`}>
-                                {point}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </Reveal>
-                );
-              }
-
-              if (item.tone === 'bleed') {
-                return (
-                  <Reveal key={item.title}>
-                    <div className={`relative overflow-hidden rounded-[2rem] ${isDark ? 'bg-[#151820]' : 'bg-[#efe8dc]'}`}>
-                      <div className="absolute inset-0 bg-[radial-gradient(circle_at_80%_20%,rgba(212,163,115,0.25),transparent_50%)]" />
-                      <div className="relative grid items-end gap-8 p-6 md:p-10 lg:grid-cols-[1fr_1.2fr]">
-                        <div className="pb-4">
-                          <p className="text-xs font-black uppercase tracking-[0.2em] text-bakery-caramel">{item.eyebrow}</p>
-                          <h3 className={`mt-3 font-serif text-4xl font-bold ${heading}`}>{item.title}</h3>
-                          <p className={`mt-4 max-w-md leading-relaxed ${body}`}>{item.description}</p>
-                          <ul className="mt-6 space-y-2">
-                            {item.points.map((point) => (
-                              <li key={point} className={`text-sm font-bold ${muted}`}>— {point}</li>
-                            ))}
-                          </ul>
-                        </div>
-                        <Shot isDark={isDark} src={item.shot} alt={item.title} label={item.label} className="rotate-[-1.5deg] scale-[1.02]" />
-                      </div>
-                    </div>
-                  </Reveal>
-                );
-              }
-
-              return (
-                <Reveal key={item.title}>
-                  <div className={`grid gap-6 lg:grid-cols-[1.1fr_0.9fr] ${i % 2 ? '' : ''}`}>
-                    <Shot isDark={isDark} src={item.shot} alt={item.title} label={item.label} />
-                    <div className={`${glassCard} flex flex-col justify-between p-8`}>
-                      <div>
-                        <p className="text-xs font-black uppercase tracking-[0.2em] text-bakery-caramel">{item.eyebrow}</p>
-                        <h3 className={`mt-3 font-serif text-3xl font-bold ${heading}`}>{item.title}</h3>
-                        <p className={`mt-4 leading-relaxed ${body}`}>{item.description}</p>
-                      </div>
-                      <ol className="mt-8 space-y-4">
-                        {item.points.map((point, idx) => (
-                          <li key={point} className="flex items-start gap-4">
-                            <span className="font-serif text-2xl font-black text-bakery-caramel/70">0{idx + 1}</span>
-                            <span className="pt-1 font-semibold">{point}</span>
-                          </li>
-                        ))}
-                      </ol>
-                    </div>
+            <div className="grid gap-5 lg:grid-cols-12">
+              <Reveal className={`overflow-hidden rounded-[2rem] border p-6 md:p-9 lg:col-span-7 ${isDark ? 'border-white/10 bg-[#151c22]' : 'border-black/10 bg-[#e7ece8]'}`}>
+                <div className="flex items-center justify-between gap-4"><ReceiptText size={25} className="text-bakery-caramel" /><span className={`text-xs uppercase tracking-widest ${muted}`}>Sales history</span></div>
+                <h3 className={`mt-7 font-serif text-3xl font-bold ${heading}`}>Find the ticket.<br />Not another spreadsheet.</h3>
+                <p className={`mt-4 max-w-md ${body}`}>Find a sale by date, check who served it, and open the original order. Export when you need to.</p>
+                <div className="mt-8 max-h-[320px] overflow-hidden rounded-xl border border-black/10 shadow-xl">
+                  <img src="/screenshots/sales-detail.png" alt="Sales history with dates, payment methods and individual tickets" loading="lazy" className="block w-full" />
+                </div>
+              </Reveal>
+              <Reveal className={`relative overflow-hidden rounded-[2rem] p-6 md:p-9 lg:col-span-5 ${isDark ? 'bg-[#30251d]' : 'bg-[#efe1cf]'}`}>
+                <p className="text-xs font-black uppercase tracking-[0.2em] text-bakery-caramel">Expenses</p>
+                <h3 className={`mt-4 font-serif text-3xl font-bold ${heading}`}>Less paperwork.<br />More breathing room.</h3>
+                <p className={`mt-4 ${body}`}>Scan a receipt, review the details, and save it with your expense.</p>
+                <div className="mx-auto mt-9 max-w-[280px] rotate-[-3deg] bg-[#fffcf5] p-6 text-[#382d24] shadow-[0_15px_35px_#0002]" aria-label="Example receipt illustration">
+                  <p className="text-center text-[10px] uppercase tracking-[0.25em]">Example receipt</p>
+                  <p className="mt-3 text-center font-serif text-xl font-bold">The daily delivery</p>
+                  <div className="my-5 space-y-3 border-y border-dashed border-[#382d24]/25 py-5 text-sm">
+                    <p className="flex justify-between"><span>Fresh produce</span><span>€32.00</span></p>
+                    <p className="flex justify-between"><span>Bakery supplies</span><span>€18.50</span></p>
+                    <p className="flex justify-between font-bold"><span>Total</span><span>€50.50</span></p>
                   </div>
-                </Reveal>
-              );
-            })}
-          </div>
-        </section>
-
-        {/* 5. STEPS — horizontal timeline, not cards */}
-        <section className={`px-6 py-24 ${isDark ? 'bg-white/[0.02]' : 'bg-black/[0.02]'}`}>
-          <div className="mx-auto w-full max-w-7xl">
-            <Reveal className="mb-16 text-center">
-              <h2 className={`font-serif text-4xl font-black md:text-5xl ${heading}`}>Live in three steps</h2>
-              <p className={`mt-4 text-lg ${body}`}>No consultants, no migration project.</p>
-            </Reveal>
-            <div className="relative grid gap-10 md:grid-cols-3">
-              <div className={`absolute left-[16%] right-[16%] top-8 hidden h-px md:block ${isDark ? 'bg-white/15' : 'bg-black/15'}`} />
-              {steps.map((item, i) => {
-                const Icon = item.icon;
-                return (
-                  <Reveal key={item.step} delay={i * 0.1} className="relative text-center">
-                    <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full border-2 border-bakery-caramel bg-[#0b0d12] text-bakery-caramel shadow-[0_0_30px_rgba(212,163,115,0.25)]">
-                      <Icon size={22} />
-                    </div>
-                    <p className="text-xs font-black uppercase tracking-[0.25em] text-bakery-caramel">{item.step}</p>
-                    <h3 className={`mt-3 font-serif text-2xl font-bold ${heading}`}>{item.title}</h3>
-                    <p className={`mt-3 leading-relaxed ${body}`}>{item.description}</p>
-                  </Reveal>
-                );
-              })}
+                  <p className="flex items-center justify-center gap-2 text-xs font-bold text-[#37725b]"><ScanLine size={16} /> Ready for your review</p>
+                </div>
+              </Reveal>
+              <Reveal className={`rounded-[2rem] border px-6 py-7 md:px-9 lg:col-span-12 ${isDark ? 'border-white/12' : 'border-black/10'}`}>
+                <div className="grid items-center gap-7 md:grid-cols-[1fr_1.2fr]">
+                  <div><p className="text-xs font-black uppercase tracking-[0.2em] text-bakery-caramel">Timesheets</p>
+                    <h3 className={`mt-3 font-serif text-2xl font-bold ${heading}`}>A clear picture of the working day.</h3>
+                    <p className={`mt-2 text-sm ${body}`}>Clock-ins, breaks, and hours together. Less counting at the end of the week.</p></div>
+                  <div className="min-w-0" aria-label="Example shift from 9am to 5pm with a lunch break">
+                    <div className={`mb-3 flex justify-between text-xs font-bold ${muted}`}><span>09:00 · Start</span><span>Break</span><span>17:00 · Finish</span></div>
+                    <div className="flex h-12 gap-1 overflow-hidden rounded-xl"><div className="flex-[4] bg-[#8db8a3]" /><div className="flex-1 bg-[#d9b782]" /><div className="flex-[3] bg-[#8db8a3]" /></div>
+                    <p className={`mt-3 text-right text-xs ${muted}`}>An example working day</p>
+                  </div>
+                </div>
+              </Reveal>
             </div>
           </div>
         </section>
 
         {/* 6. FEATURES — asymmetric bento */}
-        <section id="features" className="px-6 py-24">
+        <section id="features" className="px-6 py-16">
           <div className="mx-auto w-full max-w-7xl">
             <Reveal className="mb-12 max-w-xl">
               <h2 className={`font-serif text-4xl font-black md:text-5xl ${heading}`}>The details that save hours</h2>
             </Reveal>
-            <div className="grid gap-4 md:grid-cols-6">
-              {features.map((feature, i) => {
+            <div className="grid gap-x-12 md:grid-cols-2">
+              {features.map(feature => {
                 const Icon = feature.icon;
-                return (
-                  <Reveal key={feature.title} delay={(i % 3) * 0.06} className={feature.wide ? 'md:col-span-3' : 'md:col-span-2'}>
-                    <div className={`${glassCard} h-full p-7 transition-all duration-300 hover:-translate-y-1 ${feature.wide ? 'md:flex md:items-center md:gap-6' : ''}`}>
-                      <span className="mb-5 inline-flex shrink-0 rounded-2xl bg-bakery-caramel/20 p-3 text-[#c6925f] md:mb-0">
-                        <Icon size={22} />
-                      </span>
-                      <div className={feature.wide ? '' : 'mt-5'}>
-                        <h3 className={`font-serif text-xl font-bold ${heading}`}>{feature.title}</h3>
-                        <p className={`mt-2 leading-relaxed ${body}`}>{feature.description}</p>
-                      </div>
-                    </div>
-                  </Reveal>
-                );
+                return <Reveal key={feature.title} className={`flex items-start gap-4 border-t py-5 ${isDark ? 'border-white/10' : 'border-black/10'}`}>
+                  <Icon size={20} className="mt-1 shrink-0 text-bakery-caramel" />
+                  <div><h3 className={`font-bold ${heading}`}>{feature.title}</h3><p className={`mt-1 text-sm ${body}`}>{feature.description}</p></div>
+                </Reveal>;
               })}
             </div>
             <Reveal delay={0.1}>
@@ -712,7 +573,7 @@ export const WelcomeScreen = ({ onLogin, onRegister, onTryDemo }: WelcomeScreenP
         </section>
 
         {/* 7. PRICING — stacked on mobile, magazine on desktop */}
-        <section id="pricing" className="px-6 py-24">
+        <section id="pricing" className="px-6 py-16">
           <div className="mx-auto w-full max-w-7xl">
             <Reveal className="mb-12 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
               <div>
@@ -768,17 +629,17 @@ export const WelcomeScreen = ({ onLogin, onRegister, onTryDemo }: WelcomeScreenP
         </section>
 
         {/* 8. STORIES — oversized quote typography */}
-        <section className="px-6 py-24">
+        <section className="px-6 py-16">
           <div className="mx-auto w-full max-w-5xl">
             <Reveal className="mb-14 text-center">
               <h2 className={`font-serif text-4xl font-black md:text-5xl ${heading}`}>Loved on busy mornings</h2>
             </Reveal>
-            <div className="space-y-16">
+            <div className="grid gap-8 md:grid-cols-3">
               {testimonials.map((item, i) => (
                 <Reveal key={item.author} delay={i * 0.08}>
                   <blockquote className={`${i % 2 === 1 ? 'md:ml-auto md:text-right' : ''} max-w-3xl`}>
                     <Quote size={28} className={`mb-5 text-bakery-caramel ${i % 2 === 1 ? 'md:ml-auto' : ''}`} />
-                    <p className={`font-serif text-2xl font-bold leading-snug md:text-3xl ${heading}`}>“{item.quote}”</p>
+                    <p className={`font-serif text-xl font-bold leading-snug ${heading}`}>“{item.quote}”</p>
                     <footer className={`mt-5 text-sm font-bold ${muted}`}>
                       {item.author} · {item.role}
                     </footer>

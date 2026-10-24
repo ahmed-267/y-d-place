@@ -1,4 +1,5 @@
 
+import { createPortal } from 'react-dom';
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Loader2, Camera, Check, AlertCircle } from 'lucide-react';
@@ -7,6 +8,7 @@ import { useApp } from '../AppContext';
 interface ScanProgressModalProps {
   isOpen: boolean;
   status: 'uploading' | 'analyzing' | 'extracting' | 'finishing' | 'error' | 'success' | 'timeout';
+  errorMessage?: string;
   imageThumbnail?: string | null;
   onClose?: () => void;
   onCancel?: () => void;
@@ -17,6 +19,7 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
   isOpen, 
   status, 
   imageThumbnail,
+  errorMessage,
   onClose,
   onCancel,
   onRetry
@@ -83,10 +86,10 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
     return <Loader2 className="text-bakery-brown animate-spin" size={32} />;
   };
 
-  return (
+  return createPortal(
     <AnimatePresence>
       {isOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[10001] flex items-center justify-center p-4">
           <motion.div 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -119,7 +122,7 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
                 <p className="text-sm text-bakery-brown/50">
                   {status === 'timeout' 
                     ? t('scanTimeoutHint')
-                    : t('scanProcessingHint')}
+                    : status === 'error' ? (errorMessage || t('scanMenuFailed')) : t('scanProcessingHint')}
                 </p>
               </div>
 
@@ -178,6 +181,7 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
           </motion.div>
         </div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body
   );
 };

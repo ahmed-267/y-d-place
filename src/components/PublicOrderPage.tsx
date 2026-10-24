@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Product, SaleItem } from '../types';
 import { isAddonCategory } from '../utils/menuCategories';
 import { Modal } from './Modal';
@@ -156,6 +156,8 @@ export const PublicOrderPage: React.FC<Props> = ({ businessId, onDone }) => {
   const formatPrice = (n: number) => `${sym}${n.toFixed(2)}`;
   const orderingEnabled = snap?.onlineOrdersEnabled !== false;
 
+  const requestRef = useRef<{ fingerprint: string; id: string } | null>(null);
+  const busyRef = useRef(false);
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -172,16 +174,21 @@ export const PublicOrderPage: React.FC<Props> = ({ businessId, onDone }) => {
       return;
     }
 
+    if (busyRef.current) return;
+    busyRef.current = true;
     setSubmitting(true);
+    const fingerprint = JSON.stringify({ businessId, name, phone, date, time, cart });
+    if (requestRef.current?.fingerprint !== fingerprint) requestRef.current = { fingerprint, id: crypto.randomUUID() };
     try {
       const res = await fetch('/api/public-order', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           businessId,
+          requestId: requestRef.current.id,
           customerName: name.trim(),
           customerPhone: phone.trim(),
-          scheduledFor: `${date}T${time}`,
+          scheduledFor: new Date(`${date}T${time}`).toISOString(),
           items: cart.map(c => ({
             productId: c.productId,
             qty: c.qty,
@@ -195,11 +202,13 @@ export const PublicOrderPage: React.FC<Props> = ({ businessId, onDone }) => {
         setError(body.error || 'Could not place order');
         return;
       }
+      requestRef.current = null;
       setDone(true);
       setCart([]);
     } catch {
       setError('Could not place order. Try again shortly.');
     } finally {
+      busyRef.current = false;
       setSubmitting(false);
     }
   };

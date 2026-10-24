@@ -1,3 +1,5 @@
+import { recoverySnapshot } from './browserBackup';
+
 import {
   Ingredient,
   Order,
@@ -15,7 +17,6 @@ import {
   FloorPlan,
   WasteLog,
   Customer,
-  ParkedTicket,
 } from '../types';
 
 const OPS_KEY = 'previsio_ops_v1';
@@ -40,16 +41,19 @@ export type PersistedOps = {
   floorPlan?: FloorPlan;
   wasteLogs?: WasteLog[];
   customers?: Customer[];
-  parkedTickets?: ParkedTicket[];
   updatedAt: number;
 };
 
 export const loadPersistedOps = (businessId: string): PersistedOps | null => {
   try {
-    const raw = localStorage.getItem(OPS_KEY);
+    const raw = localStorage.getItem(`${OPS_KEY}:${businessId}`) || localStorage.getItem(OPS_KEY);
     if (!raw) return null;
     const data = JSON.parse(raw) as PersistedOps;
     if (data.businessId !== businessId) return null;
+    // Remove retired local ticket drafts; never turn them into sales or orders.
+    delete (data as unknown as Record<string, unknown>).parkedTickets;
+    localStorage.removeItem(`previsio_parked_${businessId}`);
+    sessionStorage.removeItem(`previsio_parked_${businessId}`);
     if (data.users) {
       data.users = data.users.map(u => {
         const { password: _p, ...rest } = u as User & { password?: string };
@@ -68,14 +72,19 @@ export const savePersistedOps = (payload: PersistedOps) => {
       const { password: _p, ...rest } = u as User & { password?: string };
       return rest;
     });
-    localStorage.setItem(OPS_KEY, JSON.stringify({ ...payload, users, updatedAt: Date.now() }));
+    const previous = loadPersistedOps(payload.businessId);
+    localStorage.setItem(`${OPS_KEY}:${payload.businessId}`, JSON.stringify({ ...payload, users, updatedAt: Date.now() }));
+    if (JSON.stringify(previous && recoverySnapshot(previous)) !== JSON.stringify(recoverySnapshot(payload))) {
+      window.dispatchEvent(new CustomEvent('previsio-local-data-changed', { detail: { businessId: payload.businessId } }));
+    }
   } catch {
-    /* ignore quota */
+    window.dispatchEvent(new CustomEvent('previsio-local-save-failed', { detail: { businessId: payload.businessId } }));
   }
 };
 
 export const clearPersistedOps = () => {
   localStorage.removeItem(OPS_KEY);
+  Object.keys(localStorage).filter(key => key.startsWith(`${OPS_KEY}:`)).forEach(key => localStorage.removeItem(key));
 };
 
 export const onlineInboxKey = (businessId: string) => `${ONLINE_INBOX_PREFIX}${businessId}`;

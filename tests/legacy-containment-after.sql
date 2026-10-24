@@ -1,0 +1,11 @@
+select test_assert((select count(*)=1 from sale_item_extras),'containment preserves existing records');
+select test_assert((select relrowsecurity and relforcerowsecurity from pg_class where oid='public.sale_item_extras'::regclass),'legacy extras RLS enabled');
+set role anon;
+select test_assert(test_denied('select * from public.sale_item_extras'),'anonymous read blocked');
+select test_assert(test_denied($q$insert into public.sale_item_extras(sale_item_id,name_en,price) values(1,'X',1)$q$),'anonymous insert blocked');
+select test_assert(test_denied('truncate public.sale_item_extras'),'anonymous truncate blocked');
+reset role;
+set role authenticated;
+select test_assert(test_denied('select * from public.sale_item_extras'),'authenticated unscoped extras blocked');
+select test_assert(test_denied('truncate public.products'),'authenticated table truncation blocked');
+reset role;

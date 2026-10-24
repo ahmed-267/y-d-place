@@ -1,0 +1,35 @@
+import assert from 'node:assert/strict';
+import { chromium } from 'playwright';
+const base = process.env.PREVISIO_TEST_URL || 'http://127.0.0.1:3002';
+const browser = await chromium.launch({headless:true});
+try {
+ const page = await browser.newPage({viewport:{width:1440,height:1000}});
+ const menu = await browser.newPage({viewport:{width:1200,height:1500}});
+ const names=['Espresso','Cappuccino','Latte','Americano','Mocha','Hot Chocolate','Black Tea','Green Tea','Orange Juice','Apple Juice','Croissant','Pain au Chocolat','Blueberry Muffin','Chocolate Muffin','Cheese Toastie','Ham Sandwich','Tomato Soup','Caesar Salad','Carrot Cake','Chocolate Brownie'];
+ await menu.setContent(`<body style="font:28px Arial;background:white;color:black;padding:40px"><h1>Cafe Test Menu</h1><div style="display:grid;grid-template-columns:1fr 1fr;gap:50px">${[0,10].map(start=>`<section><h2>${start?'Food':'Drinks'}</h2>${names.slice(start,start+10).map((name,i)=>`<p>${name} — ${(start+i+2).toFixed(2)}</p>`).join('')}</section>`).join('')}</div></body>`);
+ const image=await menu.screenshot();await menu.close();
+ await page.goto(base);
+ await page.getByRole('button',{name:/try demo/i}).first().click();
+ await page.getByRole('button',{name:/Owner portal/}).click();
+ await page.getByRole('button',{name:'Menu',exact:true}).first().click();
+ const beforeIds=await page.evaluate(()=>(JSON.parse(localStorage.getItem('previsio_ops_v1:ydplace')||'{}').products||[]).map(p=>p.id));
+ const before=beforeIds.length;
+ let requests=0;page.on('request',r=>{if(r.url().endsWith('/api/ai'))requests++;});
+ await page.locator('input[type=file]').first().setInputFiles({name:'test-menu.png',mimeType:'image/png',buffer:image});
+ await page.getByRole('button',{name:'Scan Menu',exact:true}).last().click();
+ const add=page.getByRole('button',{name:/Add 20 (menu )?items/i});
+ await add.waitFor({timeout:60000});
+ assert.ok(requests>0,'scan must make a real API request');
+ await add.click();
+ await page.waitForTimeout(1500);
+ const products=await page.evaluate(()=>JSON.parse(localStorage.getItem('previsio_ops_v1:ydplace')||'{}').products||[]);
+ assert.equal(products.length,before+20,'all twenty items added');
+ const added=products.filter(p=>!beforeIds.includes(p.id));
+ assert.ok(added.every(p=>Number.isSafeInteger(p.id)&&p.id>0),'new IDs must fit database bigint');
+ assert.equal(new Set(added.map(p=>p.id)).size,20,'new IDs are distinct');
+ for(const [i,name] of names.entries()) assert.ok(added.some(p=>p.nameEN.toLowerCase()===name.toLowerCase()&&p.price===i+2),`saved ${name} with correct price`);
+ await page.reload();
+ const count=await page.evaluate(()=>JSON.parse(localStorage.getItem('previsio_ops_v1:ydplace')||'{}').products?.length);
+ assert.equal(count,before+20,'menu persists after reload');
+ console.log('PASS: real 20-item image scan, all names/prices, add entire menu, reload persistence.');
+} finally {await browser.close();}

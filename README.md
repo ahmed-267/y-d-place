@@ -75,3 +75,14 @@ The production site is on Netlify:
 [https://radiant-mochi-5519d5.netlify.app](https://radiant-mochi-5519d5.netlify.app)
 
 Builds run `npm run build` and publish `dist/`. API routes (`/api/ai`, staff invites, public menu and orders, Stripe checkout, portal, and webhooks) are Netlify Functions under `netlify/functions/`. Set the same environment variables in the Netlify project, then redeploy so `VITE_*` values are baked into the client bundle.
+
+## Security update and validation
+
+The current source requires the complete migration sequence, including the October 18 security and atomic-operation migrations. Review [deployment and recovery instructions](docs/SECURITY-ROLLOUT.md) before upgrading an existing database. The fresh-install baseline does not replace schema review for an existing project.
+
+- `npm test`: isolated server validation and integration mocks
+- `npm run test:db`: PostgreSQL security, transaction and concurrency checks in the disposable test container
+- `npm run test:browser`: local demo browser smoke checks with external requests blocked
+- [Manual staging checklist](docs/MANUAL-TESTS.md)
+
+For the café pilot using real records and a separate card terminal, follow [CAFE-LAUNCH.md](docs/CAFE-LAUNCH.md). The existing test database and built-in demo remain separate. `npm run build:database` generates `supabase/install-fresh.sql`, which refuses an existing database; never use it to upgrade the old project. Automatic browser recovery is described in [AUTOMATIC-RECOVERY.md](docs/AUTOMATIC-RECOVERY.md).

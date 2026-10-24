@@ -92,6 +92,7 @@ export const businessToRow = (settings: BusinessSettings) => ({
 });
 
 export const mapUserRow = (row: Record<string, unknown>): User => ({
+  authId: String(row.id), revision: Number(row.revision ?? 0),
   id: typeof row.id === 'number' ? row.id : Number(row.numeric_id ?? Date.now()),
   username: String(row.username ?? ''),
   fullName: String(row.full_name ?? row.fullName ?? ''),
@@ -101,6 +102,7 @@ export const mapUserRow = (row: Record<string, unknown>): User => ({
 });
 
 export const mapProductRow = (row: Record<string, unknown>): Product => ({
+  revision: Number(row.revision ?? 0),
   id: Number(row.id),
   nameEN: String(row.name_en ?? row.nameEN ?? ''),
   translations: (row.translations as Record<string, string>) || {},
@@ -173,6 +175,7 @@ export const saleToRow = (sale: Sale, businessId: string) => ({
   cashier_username: sale.cashierUsername,
   cashier_fullname: sale.cashierFullName,
   discount_percent: sale.discountPercent || 0,
+  approval_token: sale.discountApprovalToken || null,
   discount_amount: sale.discountAmount || 0,
   tip_amount: sale.tipAmount || 0,
   tendered_cash: sale.tenderedCash ?? null,
@@ -225,6 +228,7 @@ export const expenseToRow = (expense: Omit<Expense, 'id'> | Expense, businessId:
 });
 
 export const mapWorkShiftRow = (row: Record<string, unknown>): WorkShift => ({
+  revision: Number(row.revision ?? 0),
   id: String(row.id),
   userId: Number(row.user_id ?? row.userId ?? 0),
   username: String(row.username ?? ''),
@@ -277,6 +281,23 @@ export const productToRow = (product: Product, businessId: string) => ({
   pos_color: product.posColor || null,
 });
 
+export const mapOrderRow = (row: Record<string, any>): Order => ({
+  discountApprovalToken: row.approval_token || undefined,
+  id: String(row.id), revision: Number(row.revision ?? 0), type: row.type || 'WalkIn', status: row.status || 'Preparing',
+  createdAt: Date.parse(row.created_at) || Date.now(), lastUpdatedAt: Date.parse(row.updated_at) || Date.now(),
+  scheduledFor: row.scheduled_for || undefined, customerName: row.customer_name || undefined,
+  customerPhone: row.customer_phone || undefined, items: row.items || [], subtotal: Number(row.subtotal || 0),
+  paymentMethod: row.payment_method || 'Cash', createdByUsername: row.created_by_username || '',
+  createdByFullName: row.created_by_fullname || '', completedAt: row.completed_at ? Date.parse(row.completed_at) : undefined,
+  saleId: row.sale_id || undefined, discountAmount: Number(row.discount_amount || 0), tipAmount: Number(row.tip_amount || 0),
+  discountPercent: Number(row.discount_percent || 0), cashAmount: row.cash_amount == null ? undefined : Number(row.cash_amount),
+  cardAmount: row.card_amount == null ? undefined : Number(row.card_amount), tenderedCash: row.tendered_cash == null ? undefined : Number(row.tendered_cash),
+  changeGiven: row.change_given == null ? undefined : Number(row.change_given),
+  voidReason: row.void_reason || undefined, kitchenPrintedAt: row.kitchen_printed_at ? Date.parse(row.kitchen_printed_at) : undefined,
+  customerId: row.customer_id || undefined, source: row.source || 'pos', tableId: row.table_id || undefined,
+  tableLabel: row.table_label || undefined, covers: row.covers ?? undefined,
+});
+
 export const orderToRow = (order: Order, businessId: string) => ({
   id: order.id,
   business_id: businessId,
@@ -295,6 +316,10 @@ export const orderToRow = (order: Order, businessId: string) => ({
   completed_at: order.completedAt ? new Date(order.completedAt).toISOString() : null,
   sale_id: order.saleId || null,
   discount_amount: order.discountAmount || 0,
+  discount_percent: order.discountPercent || 0,
+  approval_token: order.discountApprovalToken || null,
+  cash_amount: order.cashAmount ?? null, card_amount: order.cardAmount ?? null,
+  tendered_cash: order.tenderedCash ?? null, change_given: order.changeGiven ?? null,
   tip_amount: order.tipAmount || 0,
   void_reason: order.voidReason || null,
   kitchen_printed_at: order.kitchenPrintedAt ? new Date(order.kitchenPrintedAt).toISOString() : null,
@@ -332,6 +357,5 @@ export const createDemoBusiness = (): BusinessSettings => ({
     customers: false,
     tips: false,
     onlineOrders: false,
-    parkTickets: false,
   },
 });

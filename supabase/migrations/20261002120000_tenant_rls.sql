@@ -45,7 +45,7 @@ alter table if exists public.app_users drop column if exists password;
 -- App expects this JSONB map on businesses (onlineOrders, tables, etc.)
 alter table if exists public.businesses
   add column if not exists enabled_modules jsonb
-  default '{"orders":true,"sales":true,"stock":true,"staff":true,"finance":true,"tables":false,"customers":false,"tips":false,"onlineOrders":false,"parkTickets":false}'::jsonb;
+  default '{"orders":true,"sales":true,"stock":true,"staff":true,"finance":true,"tables":false,"customers":false,"tips":false,"onlineOrders":false}'::jsonb;
 
 -- Enable RLS on tenant tables (ignore if already enabled)
 do $$

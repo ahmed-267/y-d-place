@@ -1,8 +1,9 @@
+import { PasswordInput } from './PasswordInput';
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useApp } from '../AppContext';
-import { ShoppingCart, CreditCard, Banknote, Plus, Search, Zap, UtensilsCrossed, Printer, Wallet, Pause, ListOrdered } from 'lucide-react';
-import { Order, OrderType, Product, SaleItem, normalizeEnabledModules, normalizeFloorPlan, ParkedTicket } from '../types';
+import { ShoppingCart, CreditCard, Banknote, Plus, Search, Zap, UtensilsCrossed, Printer, Wallet } from 'lucide-react';
+import { Order, OrderType, Product, SaleItem, normalizeEnabledModules, normalizeFloorPlan } from '../types';
 import { findCustomerByPhone, upsertCustomerFromOrder } from '../utils/customers';
 import { evaluateDiscount, verifyManagerPassword } from '../utils/discountPolicy';
 import { Modal } from './Modal';
@@ -73,14 +74,13 @@ export const CashierTab = () => {
     closeTill,
     openCashSession,
     recordSale,
+    saveOrder,
     orders,
     floorPlan,
     setFloorPlan,
     pendingTableSession,
     setPendingTableSession,
     users,
-    parkedTickets,
-    setParkedTickets,
     customers,
     setCustomers,
     isDemoMode,
@@ -111,7 +111,6 @@ export const CashierTab = () => {
   const [showTillClose, setShowTillClose] = useState(false);
   const [floatInput, setFloatInput] = useState('50');
   const [countedInput, setCountedInput] = useState('');
-  const [showParked, setShowParked] = useState(false);
   const [tableId, setTableId] = useState('');
   const [tableLabel, setTableLabel] = useState('');
   const [covers, setCovers] = useState('2');
@@ -132,7 +131,6 @@ export const CashierTab = () => {
   const tablesEnabled = normalizeEnabledModules(businessSettings?.enabledModules).tables;
   const customersEnabled = normalizeEnabledModules(businessSettings?.enabledModules).customers;
   const tipsEnabled = normalizeEnabledModules(businessSettings?.enabledModules).tips;
-  const parkTicketsEnabled = normalizeEnabledModules(businessSettings?.enabledModules).parkTickets;
   const floor = normalizeFloorPlan(floorPlan);
 
   useEffect(() => {
@@ -276,71 +274,6 @@ export const CashierTab = () => {
     setCovers('2');
     setResumeOrderId(undefined);
     setDiscountApprovedBy(undefined);
-  };
-
-  const parkCurrentTicket = () => {
-    if (cart.length === 0) {
-      addToast(t('addItemsFirst'), 'error');
-      return;
-    }
-    const ticket: ParkedTicket = {
-      id: `PARK-${Date.now()}`,
-      parkedAt: Date.now(),
-      cart,
-      orderType,
-      customerName,
-      customerPhone,
-      scheduledDate,
-      scheduledTime,
-      discountPercent,
-      discountAmount,
-      tipAmount,
-      paymentMethod,
-      cashReceived,
-      splitCash,
-      splitCard,
-      tableId: tableId || undefined,
-      tableLabel: tableLabel || undefined,
-      covers,
-      resumeOrderId,
-      customerId: findCustomerByPhone(customers, customerPhone)?.id,
-    };
-    setParkedTickets([ticket, ...parkedTickets].slice(0, 12));
-    clearTicketFields();
-    addToast(t('ticketParked'), 'success');
-  };
-
-  const recallParked = (ticket: ParkedTicket) => {
-    setCart(
-      ticket.cart.map((item, idx) => ({
-        ...item,
-        id: item.id || Date.now() + idx,
-        emoji: item.emoji || products.find(p => p.id === item.productId)?.emoji || '🍽️',
-        transKey: item.transKey || products.find(p => p.id === item.productId)?.transKey || '',
-      }))
-    );
-    setOrderType(ticket.orderType);
-    setCustomerName(ticket.customerName);
-    setCustomerPhone(ticket.customerPhone);
-    setScheduledDate(ticket.scheduledDate);
-    setScheduledTime(ticket.scheduledTime);
-    setDiscountPercent(ticket.discountPercent);
-    setDiscountAmount(ticket.discountAmount);
-    setDiscountSource(
-      ticket.discountPercent ? 'percent' : ticket.discountAmount ? 'amount' : null
-    );
-    setTipAmount(ticket.tipAmount);
-    setPaymentMethod(ticket.paymentMethod);
-    setCashReceived(ticket.cashReceived);
-    setSplitCash(ticket.splitCash);
-    setSplitCard(ticket.splitCard);
-    setTableId(ticket.tableId || '');
-    setTableLabel(ticket.tableLabel || '');
-    if (ticket.covers) setCovers(ticket.covers);
-    setResumeOrderId(ticket.resumeOrderId);
-    setParkedTickets(parkedTickets.filter(p => p.id !== ticket.id));
-    setShowParked(false);
-    addToast(t('ticketRecalled'), 'success');
   };
 
   const recipeNeeds = useMemo(
@@ -496,7 +429,7 @@ export const CashierTab = () => {
     if (isExtra || availableExtras.length === 0) {
       // Add directly to cart if it's an extra itself or if no extras are available
       const existingItemIndex = cart.findIndex(item => item.productId === p.id && (!item.extras || item.extras.length === 0));
-      
+
       if (existingItemIndex > -1) {
         const newCart = [...cart];
         const item = newCart[existingItemIndex];
@@ -529,17 +462,17 @@ export const CashierTab = () => {
 
   const addToCart = () => {
     if (!extraModalItem) return;
-    
+
     const itemTotal = extraModalItem.price + selectedExtras.reduce((acc, e) => acc + e.price, 0);
     const extrasPayload = selectedExtras.map(e => ({ productId: e.id, nameEN: e.nameEN, price: e.price }));
     const note = extraModalItem ? lineNoteDraft[-1] : undefined;
-    
+
     // Check for existing item with same product and same extras
     const existingItemIndex = cart.findIndex(item => {
       if (item.productId !== extraModalItem.id) return false;
       if (!item.extras && extrasPayload.length === 0) return true;
       if (!item.extras || item.extras.length !== extrasPayload.length) return false;
-      
+
       // Compare extras (assuming order doesn't matter, but for simplicity we can sort or just check inclusion)
       const itemExtraIds = item.extras.map(e => e.productId).sort();
       const payloadExtraIds = extrasPayload.map(e => e.productId).sort();
@@ -579,7 +512,7 @@ export const CashierTab = () => {
   const updateQty = (id: number, delta: number) => {
     const item = cart.find(i => i.id === id);
     if (!item) return;
-    
+
     const newCart = cart.map(i => {
       if (i.id === id) {
         const newQty = Math.max(0, i.qty + delta);
@@ -605,8 +538,11 @@ export const CashierTab = () => {
     setCart(newCart);
   };
 
-  const confirmOrder = (mode: 'kitchen' | 'complete' = 'kitchen', approvedByOverride?: string) => {
-    if (!user) return;
+  const approvalTokenRef = useRef<string | undefined>(undefined);
+  const confirmingRef = useRef(false);
+  const pendingSaleRef = useRef<string | null>(null);
+  const confirmOrder = async (mode: 'kitchen' | 'complete' = 'kitchen', approvedByOverride?: string) => {
+    if (!user || confirmingRef.current) return;
     if (paymentMethod === 'Split' && !splitMatches) {
       addToast(t('splitMustMatch'), 'error');
       return;
@@ -657,7 +593,8 @@ export const CashierTab = () => {
     }
 
     const scheduledFor = orderType === 'PreOrder' ? `${scheduledDate}T${scheduledTime}` : undefined;
-    const orderId = resumeOrderId || `ORDER-${Date.now()}`;
+    const orderId = resumeOrderId || pendingSaleRef.current || `ORDER-${crypto.randomUUID()}`;
+    pendingSaleRef.current = orderId;
     const tableMeta = orderType === 'DineIn' ? {
       tableId: tableId || undefined,
       tableLabel: tableLabel.trim() || floorPlan.tables.find(tb => tb.id === tableId)?.label,
@@ -682,6 +619,7 @@ export const CashierTab = () => {
         cashier: user,
         paymentMethod,
         timestamp: Date.now(),
+        existingSaleId: `SALE-${orderId}`,
         discountPercent: parseFloat(discountPercent) || 0,
         discountAmount: discountValue,
         tipAmount: tipValue,
@@ -697,33 +635,14 @@ export const CashierTab = () => {
         addToast(t('insufficientStock').replace('{items}', result.outOfStockItems?.join(', ') || t('items')), 'error');
         return;
       }
-      setPreparedStock(result.updatedPreparedStock || preparedStock);
-      setIngredients(result.updatedIngredients || ingredients);
-      if (customersEnabled && (customerPhone.trim() || customerName.trim())) {
-        setCustomers(prev =>
-          upsertCustomerFromOrder(prev, {
-            name: customerName,
-            phone: customerPhone,
-            at: Date.now(),
-          }).customers
-        );
-      }
+
       const saleWithApproval = {
         ...result.sale!,
         discountApprovedByUsername: approvedBy,
+        discountApprovalToken: approvalTokenRef.current,
       };
-      void recordSale(saleWithApproval);
-      setShiftLogs(result.updatedShiftLogs || shiftLogs);
-      if (orderType === 'DineIn' && tableId) {
-        setFloorPlan(prev => ({
-          ...prev,
-          tables: prev.tables.map(tb =>
-            tb.id === tableId ? { ...tb, dirty: true, seatedAt: undefined } : tb
-          ),
-        }));
-      }
-      setOrders(prev => {
-        const row = {
+
+      const completedOrder: Order = {
           id: orderId,
           type: orderType,
           status: 'Completed' as const,
@@ -747,11 +666,37 @@ export const CashierTab = () => {
           cardAmount,
           ...tableMeta,
           discountApprovedByUsername: approvedBy,
+        discountApprovalToken: approvalTokenRef.current,
           createdByUsername: user.username,
           createdByFullName: user.fullName,
         };
-        return [row, ...prev.filter(o => o.id !== orderId)];
-      });
+      if (confirmingRef.current) return;
+      confirmingRef.current = true;
+      try {
+        if (!await recordSale(saleWithApproval, completedOrder)) return;
+        if (isDemoMode) {
+          setPreparedStock(result.updatedPreparedStock || preparedStock);
+          setIngredients(result.updatedIngredients || ingredients);
+        }
+      } finally { confirmingRef.current = false; }
+      if (customersEnabled && (customerPhone.trim() || customerName.trim())) {
+        setCustomers(prev =>
+          upsertCustomerFromOrder(prev, {
+            name: customerName,
+            phone: customerPhone,
+            at: Date.now(),
+          }).customers
+        );
+      }
+      setShiftLogs(result.updatedShiftLogs || shiftLogs);
+      if (orderType === 'DineIn' && tableId) {
+        setFloorPlan(prev => ({
+          ...prev,
+          tables: prev.tables.map(tb =>
+            tb.id === tableId ? { ...tb, dirty: true, seatedAt: undefined } : tb
+          ),
+        }));
+      }
       addToast(t('paidAndCompleted'), 'success');
     } else {
       const newOrder: Order = {
@@ -773,19 +718,22 @@ export const CashierTab = () => {
         cardAmount,
         ...tableMeta,
         discountApprovedByUsername: approvedBy,
+        discountApprovalToken: approvalTokenRef.current,
         createdByUsername: user.username,
         createdByFullName: user.fullName,
         kitchenPrintedAt: Date.now(),
       };
-      setOrders(prev => {
-        const without = prev.filter(o => o.id !== orderId);
-        return [newOrder, ...without];
-      });
+      if (confirmingRef.current) return;
+      confirmingRef.current = true;
+      try { if (!await saveOrder(newOrder)) return; }
+      finally { confirmingRef.current = false; }
       setFlashSent(true);
       setTimeout(() => setFlashSent(false), 1800);
       addToast(t('sentToKitchen'), 'success');
     }
 
+    pendingSaleRef.current = null;
+    approvalTokenRef.current = undefined;
     clearTicketFields();
   };
 
@@ -813,7 +761,7 @@ export const CashierTab = () => {
         </div>
       ) : (
       <>
-      <div className="order-2 lg:order-1 flex-1 flex flex-col gap-3 overflow-hidden min-h-[360px] lg:min-h-0">
+      <div className="order-1 flex-1 flex flex-col gap-3 overflow-hidden min-h-[360px] lg:min-h-0">
         <div className="flex flex-col sm:flex-row gap-3 shrink-0">
           <div ref={pillContainerRef} className="flex-1 flex gap-1.5 overflow-x-auto pb-1 scrollbar-hide px-0.5">
             {['All', ...activeCategories].map(cat => {
@@ -926,7 +874,7 @@ export const CashierTab = () => {
         </div>
       </div>
 
-      <div className="order-1 lg:order-2 w-full lg:w-[420px] xl:w-[480px] flex flex-col gap-3 shrink-0">
+      <div className="order-2 w-full lg:w-[420px] xl:w-[480px] flex flex-col gap-3 shrink-0">
         <div className="bg-white border border-bakery-beige rounded-xl p-3 sm:p-4">
           <div className="space-y-3 mb-3">
             <div className="flex items-center justify-between gap-2">
@@ -1072,31 +1020,6 @@ export const CashierTab = () => {
               <span className="bg-bakery-brown text-white px-2.5 py-0.5 rounded text-xs font-bold">{cart.length}</span>
             </div>
             <div className="flex items-center gap-1 shrink-0">
-              {parkTicketsEnabled && (
-                <>
-                  <button
-                    type="button"
-                    disabled={cart.length === 0}
-                    onClick={parkCurrentTicket}
-                    className="h-8 px-2 rounded-lg border border-bakery-beige text-[10px] font-bold inline-flex items-center gap-1 disabled:opacity-40"
-                    title={t('parkTicket')}
-                  >
-                    <Pause size={12} />
-                    <span className="hidden sm:inline">{t('parkTicket')}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowParked(true)}
-                    className="h-8 px-2 rounded-lg border border-bakery-beige text-[10px] font-bold inline-flex items-center gap-1"
-                    title={t('recallParked')}
-                  >
-                    <ListOrdered size={12} />
-                    {parkedTickets.length > 0 && (
-                      <span className="bg-bakery-caramel text-white rounded px-1.5">{parkedTickets.length}</span>
-                    )}
-                  </button>
-                </>
-              )}
             </div>
           </div>
           <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 scrollbar-hide">
@@ -1320,38 +1243,6 @@ export const CashierTab = () => {
       </>
       )}
 
-      {showParked && (
-        <Modal title={t('recallParked')} onClose={() => setShowParked(false)}>
-          <div className="space-y-3 max-h-[60vh] overflow-y-auto">
-            {parkedTickets.length === 0 ? (
-              <p className="text-sm text-bakery-brown/50 py-6 text-center">{t('noParkedTickets')}</p>
-            ) : (
-              parkedTickets.map(ticket => {
-                const total = ticket.cart.reduce((a, i) => a + i.lineTotal, 0);
-                return (
-                  <button
-                    key={ticket.id}
-                    type="button"
-                    onClick={() => recallParked(ticket)}
-                    className="w-full text-left p-3 rounded-xl border border-bakery-beige hover:border-bakery-caramel"
-                  >
-                    <div className="flex justify-between gap-2">
-                      <p className="font-bold text-sm">
-                        {ticket.customerName.trim() || ticket.orderType} · {ticket.cart.length} {t('items')}
-                      </p>
-                      <p className="font-black text-sm">{formatPrice(total)}</p>
-                    </div>
-                    <p className="text-[10px] text-bakery-brown/45 mt-1">
-                      {new Date(ticket.parkedAt).toLocaleTimeString()} · {ticket.cart.map(c => c.nameEN).slice(0, 3).join(', ')}
-                    </p>
-                  </button>
-                );
-              })
-            )}
-          </div>
-        </Modal>
-      )}
-
       {extraModalItem && (
         <Modal title={t('addExtras')} onClose={() => setExtraModalItem(null)}>
           <div className="space-y-6">
@@ -1362,7 +1253,7 @@ export const CashierTab = () => {
                 <p className="text-bakery-brown font-black">{formatPrice(extraModalItem.price)}</p>
               </div>
             </div>
-            
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {extrasForProduct(extraModalItem).map(e => (
                 <label key={e.id} className={`flex items-center justify-between p-4 rounded-2xl border-2 cursor-pointer ${
@@ -1422,7 +1313,7 @@ export const CashierTab = () => {
         </Modal>
       )}
 
-      
+
       {showManagerApproval && (
         <Modal title={t('managerApproval')} onClose={() => { setShowManagerApproval(false); setPendingConfirmMode(null); }}>
           <div className="space-y-4">
@@ -1433,17 +1324,19 @@ export const CashierTab = () => {
             </div>
             <div>
               <label className="block text-xs font-bold mb-1">{t('password')}</label>
-              <input type="password" className="w-full p-3 border border-bakery-beige rounded-xl" value={managerPass} onChange={e => setManagerPass(e.target.value)} />
+              <PasswordInput className="w-full p-3 border border-bakery-beige rounded-xl" value={managerPass} onChange={e => setManagerPass(e.target.value)} />
             </div>
             <button
               type="button"
               className="btn-primary w-full py-3 rounded-xl font-bold"
               onClick={async () => {
-                const mgr = await verifyManagerPassword(managerUser, managerPass, users, { isDemoMode });
+                pendingSaleRef.current ||= resumeOrderId || `ORDER-${crypto.randomUUID()}`;
+                const mgr = await verifyManagerPassword(managerUser, managerPass, users, { isDemoMode, businessId: businessSettings?.id, orderId: pendingSaleRef.current, maximum: discountValue });
                 if (!mgr) {
                   addToast(t('invalidCredentials'), 'error');
                   return;
                 }
+                approvalTokenRef.current = mgr.approvalToken;
                 setDiscountApprovedBy(mgr.username);
                 setShowManagerApproval(false);
                 const mode = pendingConfirmMode;

@@ -14,14 +14,18 @@ export const getAnonEnv = () => {
 };
 
 export const getServiceEnv = () => {
-  const base = getAnonEnv();
+  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
   const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!base || !service) return null;
-  return { ...base, service };
+  if (!url || !service) {
+    console.error('Supabase server configuration missing:', [!url && 'SUPABASE_URL (or VITE_SUPABASE_URL)', !service && 'SUPABASE_SERVICE_ROLE_KEY'].filter(Boolean).join(', '));
+    return null;
+  }
+  return { url, service };
 };
 
 export const parseBody = (event) => {
   if (!event.body) return {};
+  if (Buffer.byteLength(event.body) > 6_000_000) throw Object.assign(new Error('Request too large'), { status: 413 });
   const raw = event.isBase64Encoded
     ? Buffer.from(event.body, 'base64').toString('utf8')
     : event.body;

@@ -1,9 +1,10 @@
+import { PasswordInput } from './PasswordInput';
 import React, { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { useApp } from '../AppContext';
 import { supabase } from './supabaseClient';
 import { AuthShell, authFieldClassName, authPrimaryButtonClassName } from './AuthShell';
-import { AuthDestination, resolvePostAuthDestination } from '../utils/authRouting';
+import { AuthDestination } from '../utils/authRouting';
 import { isNetworkAuthError } from '../utils/localAccounts';
 import { PasswordStrengthMeter } from './PasswordStrengthMeter';
 import { isPasswordStrongEnough } from '../utils/passwordStrength';
@@ -43,11 +44,6 @@ export const LoginPage = ({ onBack, onGoRegister, onAuthenticated }: LoginPagePr
     }
   }, []);
 
-  const finishAuth = async (userId: string | null | undefined) => {
-    const destination = userId ? await resolvePostAuthDestination(userId) : 'onboarding';
-    onAuthenticated(destination);
-  };
-
   const handleForgotPassword = async () => {
     setError(null);
     if (!email.trim()) {
@@ -73,7 +69,7 @@ export const LoginPage = ({ onBack, onGoRegister, onAuthenticated }: LoginPagePr
     const target = unconfirmedEmail || email.trim();
     if (!target) return;
     try {
-      const { error: resendError } = await supabase.auth.resend({ type: 'signup', email: target });
+      const { error: resendError } = await supabase.auth.resend({ type: 'signup', email: target, options: { emailRedirectTo: `${window.location.origin}/login` } });
       if (resendError) {
         addToast(isNetworkAuthError(resendError) ? t('authOffline') : resendError.message, 'error');
         return;
@@ -125,13 +121,6 @@ export const LoginPage = ({ onBack, onGoRegister, onAuthenticated }: LoginPagePr
     setIsSubmitting(true);
 
     try {
-      if (mode === 'staff') {
-        await login({ identifier: email.trim(), password, mode: 'staff' });
-        addToast(t('welcomeBack') || 'Welcome back.', 'success');
-        onAuthenticated('dashboard');
-        return;
-      }
-
       const trimmedEmail = email.trim();
       if (rememberMe) {
         localStorage.setItem(REMEMBER_EMAIL_KEY, trimmedEmail);
@@ -139,30 +128,12 @@ export const LoginPage = ({ onBack, onGoRegister, onAuthenticated }: LoginPagePr
         localStorage.removeItem(REMEMBER_EMAIL_KEY);
       }
 
-      const { data, error: authError } = await supabase.auth.signInWithPassword({
-        email: trimmedEmail,
-        password,
-      });
-
-      if (!authError && data.user) {
-        addToast(t('welcomeBack') || 'Welcome back.', 'success');
-        await finishAuth(data.user.id);
-        return;
-      }
-
-      const message = authError?.message || 'Invalid email or password.';
-      if (isUnconfirmed(message)) {
-        setUnconfirmedEmail(trimmedEmail);
-        setError(t('confirmEmailToSignIn'));
-        addToast(t('confirmEmailToSignIn'), 'info');
-        return;
-      }
-      const display = isNetworkAuthError(authError) ? t('authOffline') : message;
-      setError(display);
-      addToast(display, 'error');
+      await login({ identifier: trimmedEmail, password, mode });
+      // AppContext loads the profile and App routes only once that succeeds.
     } catch (err) {
       const raw = err instanceof Error ? err.message : 'Sign in failed.';
-      const message = isNetworkAuthError(err) ? t('authOffline') : raw;
+      if (isUnconfirmed(raw)) setUnconfirmedEmail(email.trim());
+      const message = isUnconfirmed(raw) ? t('confirmEmailToSignIn') : isNetworkAuthError(err) ? t('authOffline') : raw;
       setError(message);
       addToast(message, 'error');
     } finally {
@@ -191,9 +162,9 @@ export const LoginPage = ({ onBack, onGoRegister, onAuthenticated }: LoginPagePr
             <label htmlFor="new-password" className="mb-1.5 block text-sm font-bold text-bakery-brown">
               {t('password')}
             </label>
-            <input
+            <PasswordInput
               id="new-password"
-              type="password"
+
               autoComplete="new-password"
               required
               minLength={8}
@@ -208,9 +179,9 @@ export const LoginPage = ({ onBack, onGoRegister, onAuthenticated }: LoginPagePr
             <label htmlFor="confirm-new-password" className="mb-1.5 block text-sm font-bold text-bakery-brown">
               {t('confirmPassword')}
             </label>
-            <input
+            <PasswordInput
               id="confirm-new-password"
-              type="password"
+
               autoComplete="new-password"
               required
               minLength={8}
@@ -300,9 +271,9 @@ export const LoginPage = ({ onBack, onGoRegister, onAuthenticated }: LoginPagePr
           <label htmlFor="login-password" className="mb-1.5 block text-sm font-bold text-bakery-brown">
             {t('password') || 'Password'}
           </label>
-          <input
+          <PasswordInput
             id="login-password"
-            type="password"
+
             autoComplete="current-password"
             required
             value={password}

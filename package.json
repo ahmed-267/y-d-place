@@ -9,7 +9,14 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "verify:rls": "node scripts/verify-rls.mjs"
+    "verify:rls": "node scripts/verify-rls.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "test:db": "sh scripts/test-database.sh",
+    "test:browser": "node scripts/browser-smoke.mjs",
+    "build:database": "node scripts/build-fresh-database.mjs",
+    "build:upgrade": "node scripts/build-legacy-upgrade.mjs",
+    "test:upgrade": "sh scripts/test-legacy-upgrade.sh",
+    "test:auth": "node scripts/test-auth-browser.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.44.2",
@@ -31,8 +38,9 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "autoprefixer": "^10.4.21",
+    "playwright": "1.62.1",
+    "sharp": "^0.35.5",
     "tailwindcss": "^4.1.14",
-    "tsx": "^4.21.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
   }

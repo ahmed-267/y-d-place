@@ -10,7 +10,22 @@ if (!supabaseUrl || !supabaseAnonKey) {
 }
 
 // Anon key is public by design; never put service-role keys here.
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+// Bound network requests so unavailable auth/database services release form spinners.
+const boundedFetch: typeof fetch = async (input, init) => {
+  const controller = new AbortController();
+  const upstream = init?.signal;
+  const abort = () => controller.abort();
+  if (upstream?.aborted) controller.abort();
+  upstream?.addEventListener('abort', abort, { once: true });
+  const timer = setTimeout(abort, 20000);
+  try { return await fetch(input, { ...init, signal: controller.signal }); }
+  finally { clearTimeout(timer); upstream?.removeEventListener('abort', abort); }
+};
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  global: { fetch: boundedFetch },
+})
 
 /** Separate client for one-off auth checks (e.g. manager PIN) without clobbering the active session. */
-export const createEphemeralSupabase = () => createClient(supabaseUrl, supabaseAnonKey)
+export const createEphemeralSupabase = () => createClient(supabaseUrl, supabaseAnonKey, {
+  auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+})

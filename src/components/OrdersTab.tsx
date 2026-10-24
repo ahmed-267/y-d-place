@@ -124,10 +124,10 @@ export const OrdersTab = () => {
     }, {} as Record<OrderStatus, Order[]>);
   }, [filteredOrders, todayKey]);
 
-  const completeOrder = (order: Order) => {
+  const completeOrder = async (order: Order) => {
     if (!user) return;
     if (order.saleId) {
-      setOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: 'Completed', completedAt: o.completedAt || Date.now(), lastUpdatedAt: Date.now() } : o));
+      if (!await setOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: 'Completed', completedAt: o.completedAt || Date.now(), lastUpdatedAt: Date.now() } : o))) return;
       return;
     }
 
@@ -140,7 +140,7 @@ export const OrdersTab = () => {
       cashier: user,
       paymentMethod: order.paymentMethod,
       timestamp: Date.now(),
-      existingSaleId: order.saleId,
+      existingSaleId: order.saleId || `SALE-${order.id}-${order.lastUpdatedAt}`,
       discountPercent: order.discountPercent,
       discountAmount: order.discountAmount,
       tipAmount: order.tipAmount,
@@ -155,28 +155,17 @@ export const OrdersTab = () => {
       return;
     }
 
-    setPreparedStock(result.updatedPreparedStock || preparedStock);
-    setIngredients(result.updatedIngredients || ingredients);
-    setSales(prev => {
-      if (prev.some(s => s.id === result.sale!.id)) return prev;
-      return [...prev, result.sale!];
-    });
-    void recordSale(result.sale!);
+    const completedOrder: Order = { ...order, status: 'Completed', completedAt: Date.now(), saleId: result.sale!.id, lastUpdatedAt: Date.now() };
+    if (!await recordSale({ ...result.sale!, discountApprovalToken: order.discountApprovalToken }, completedOrder)) return;
+    if (businessSettings?.id === 'ydplace') {
+      if (!await setPreparedStock(result.updatedPreparedStock || preparedStock)) return;
+      if (!await setIngredients(result.updatedIngredients || ingredients)) return;
+    }
     setShiftLogs(result.updatedShiftLogs || shiftLogs);
-    setOrders(prev => prev.map(o => {
-      if (o.id !== order.id) return o;
-      return {
-        ...o,
-        status: 'Completed' as const,
-        completedAt: Date.now(),
-        saleId: result.sale?.id,
-        lastUpdatedAt: Date.now()
-      };
-    }));
     addToast(t('orderCompleted'));
   };
 
-  const moveOrderStatus = (order: Order, direction: 'back' | 'forward') => {
+  const moveOrderStatus = async (order: Order, direction: 'back' | 'forward') => {
     if (!user) return;
     const currentIndex = ORDER_STATUSES.indexOf(order.status);
     const nextIndex = direction === 'forward' ? currentIndex + 1 : currentIndex - 1;
@@ -188,27 +177,20 @@ export const OrdersTab = () => {
       return;
     }
 
-    // Moving back from Completed after sale: restore stock once
-    if (order.status === 'Completed' && direction === 'back' && order.saleId) {
-      const restored = restoreStock(order.items, products, ingredients, preparedStock);
-      setIngredients(restored.ingredients);
-      setPreparedStock(restored.preparedStock);
-      markSaleStatus(order.saleId, 'voided', t('orderReopened'));
-      setOrders(prev => prev.map(o => {
-        if (o.id !== order.id) return o;
-        return { ...o, status: nextStatus, saleId: undefined, completedAt: undefined, lastUpdatedAt: Date.now() };
-      }));
+    // Reopening also updates the order inside the refund transaction.
+    if (order.saleId && (order.status === 'Completed' || order.status === 'Cancelled')) {
+      if (!await markSaleStatus(order.saleId, 'voided', t('orderReopened'), nextStatus as 'Preparing' | 'Ready')) return;
       addToast(t('orderReopened'), 'info');
       return;
     }
 
-    setOrders(prev => prev.map(o => {
+    if (!await setOrders(prev => prev.map(o => {
       if (o.id !== order.id) return o;
       return { ...o, status: nextStatus, lastUpdatedAt: Date.now() };
-    }));
+    }))) return;
   };
 
-  const printKitchen = (order: Order) => {
+  const printKitchen = async (order: Order) => {
     downloadKitchenTicket(order, {
       currencySymbol: businessSettings?.currencySymbol,
       business: businessSettings,
@@ -222,20 +204,19 @@ export const OrdersTab = () => {
         return product ? tp(product) : fallback;
       },
     });
-    setOrders(prev => prev.map(o => o.id === order.id ? { ...o, kitchenPrintedAt: Date.now() } : o));
+    if (!await setOrders(prev => prev.map(o => o.id === order.id ? { ...o, kitchenPrintedAt: Date.now() } : o))) return;
   };
 
-  const voidOrder = (order: Order) => {
+  const voidOrder = async (order: Order) => {
     const reason = window.prompt(t('voidReasonPlaceholder'));
     if (reason === null) return;
     const voidReason = reason.trim() || t('voidOrder');
     if (order.status === 'Completed' && order.saleId) {
-      const restored = restoreStock(order.items, products, ingredients, preparedStock);
-      setIngredients(restored.ingredients);
-      setPreparedStock(restored.preparedStock);
-      markSaleStatus(order.saleId, 'voided', voidReason);
+      if (!await markSaleStatus(order.saleId, 'voided', voidReason)) return;
+      addToast(t('orderCancelled'), 'info');
+      return;
     }
-    setOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: 'Cancelled' as const, voidReason, lastUpdatedAt: Date.now() } : o));
+    if (!await setOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: 'Cancelled' as const, voidReason, lastUpdatedAt: Date.now() } : o))) return;
     addToast(t('orderCancelled'), 'info');
   };
 

@@ -42,7 +42,8 @@ if (!url || !anon) {
   process.exit(1);
 }
 
-const tables = ['businesses', 'sales', 'app_users', 'products', 'orders', 'expenses'];
+const tables = ['businesses', 'sales', 'app_users', 'products', 'orders', 'expenses', 'ingredients', 'prepared_stock', 'sale_items', 'work_shifts', 'rota_shifts', 'browser_backups', 'leave_requests'];
+const optionalLegacyTables = ['product_ingredients', 'sale_item_extras'];
 
 const check = async (table) => {
   try {
@@ -75,38 +76,26 @@ const check = async (table) => {
 (async () => {
   let failed = false;
   let unreachable = false;
-  for (const t of tables) {
+  for (const t of [...tables, ...optionalLegacyTables]) {
     const r = await check(t);
     if (r.error) {
       unreachable = true;
       console.error(`SKIP ${t}: network error — ${r.error}`);
       continue;
     }
-    const ok =
-      r.status === 401 ||
-      r.status === 403 ||
-      (r.status === 200 && r.count === 0) ||
-      (t === 'products' && r.status === 200) ||
-      (t === 'businesses' && r.status === 200 && r.count <= 50);
-
-    if (t === 'sales' || t === 'app_users' || t === 'expenses') {
-      if (r.status === 200 && r.count > 0) {
-        failed = true;
-        console.error(`FAIL ${t}: anon can read ${r.count} row(s) (status ${r.status})`);
-        continue;
-      }
-    }
-    console.log(`${ok || r.count === 0 ? 'OK  ' : 'WARN'} ${t}: status=${r.status} count=${r.count}`);
+    const ok = (optionalLegacyTables.includes(t) && r.status === 404) || r.status === 401 || r.status === 403 || (r.status === 200 && r.count === 0);
+    if (!ok) failed = true;
+    console.log(`${ok ? 'OK  ' : 'FAIL'} ${t}: status=${r.status} count=${r.count}`);
   }
   if (unreachable) {
     console.error(
-      '\nCould not reach Supabase. Apply supabase/migrations/20261002120000_tenant_rls.sql in the SQL editor, then re-run this script from a network that can resolve the project host.'
+      '\nCould not reach Supabase. Check network access and project status, then rerun. Do not apply individual legacy migrations to resolve a network error.'
     );
     process.exit(3);
   }
   if (failed) {
-    console.error('\nApply supabase/migrations/20261002120000_tenant_rls.sql immediately.');
+    console.error('\nApply the complete reviewed migration sequence; public menus must use the dedicated endpoint.');
     process.exit(2);
   }
-  console.log('\nAnon probe finished. Review WARN lines for unexpected public data.');
+  console.log('\nAnon probe passed. Authenticated isolation is covered separately by npm run test:db.');
 })();

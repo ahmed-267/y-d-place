@@ -1,26 +1,28 @@
-import { json, createAnonClient } from './_shared.mjs';
+import { activeSubscription } from './_security.mjs';
+import { json, createServiceClient } from './_shared.mjs';
 
 export const handler = async (event) => {
   if (event.httpMethod !== 'GET') return json(405, { error: 'Method not allowed' });
 
-  const client = createAnonClient();
-  if (!client) return json(503, { error: 'Supabase env not configured' });
+  const client = createServiceClient();
+  if (!client) return json(503, { error: 'Online ordering is temporarily unavailable. Please contact the business.', code: 'ORDERING_SERVER_NOT_CONFIGURED' });
 
   const params = event.queryStringParameters || {};
   const businessId = params.businessId || '';
   if (!businessId) return json(400, { error: 'businessId required' });
 
   try {
-    const { data: business } = await client
+    const { data: business, error: businessError } = await client
       .from('businesses')
-      .select('id, name, currency_symbol, currency_code, enabled_modules')
+      .select('id, name, currency_symbol, currency_code, enabled_modules, plan, trial_ends_at')
       .eq('id', businessId)
       .maybeSingle();
 
+    if (businessError) return json(503, { error: 'Menu temporarily unavailable' });
     if (!business) return json(404, { error: 'Not found' });
 
     const modules = business.enabled_modules || {};
-    if (modules.onlineOrders !== true) {
+    if (modules.onlineOrders !== true || !activeSubscription(business)) {
       return json(200, {
         businessId,
         businessName: business.name,
@@ -30,12 +32,13 @@ export const handler = async (event) => {
       });
     }
 
-    const { data: products } = await client
+    const { data: products, error: productsError } = await client
       .from('products')
       .select('id, name_en, category, price, emoji, active, is_favourite, pos_color, extra_ids')
       .eq('business_id', businessId)
       .eq('active', true);
 
+    if (productsError) return json(503, { error: 'Menu temporarily unavailable' });
     return json(200, {
       businessId,
       businessName: business.name,

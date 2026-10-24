@@ -43,9 +43,9 @@
   }
 
   .btn-primary:hover {
-    filter: brightness(1.1);
+    filter: brightness(1.03);
     transform: translateY(-1px);
-    box-shadow: 0 6px 16px color-mix(in srgb, var(--color-bakery-brown) 30%, transparent);
+    box-shadow: 0 3px 8px color-mix(in srgb, var(--color-bakery-brown) 15%, transparent);
   }
 
   .btn-primary:active {
@@ -95,4 +95,44 @@
 
 .animate-fade-in {
   animation: fadeIn 0.8s ease-out forwards;
+}
+/* Account appearance follows the selected business palette, including portalled dialogs. */
+html[data-account-appearance="dark"] {
+  .bg-white { background-color: var(--app-card-bg); }
+  :is([class^="bg-white/"], [class*=" bg-white/"]) { background-color: color-mix(in srgb, var(--app-card-bg) 85%, transparent); }
+  .hover\:bg-white:hover { background-color: var(--app-card-bg); }
+  .bg-bakery-brown.text-white,
+  .bg-bakery-brown .text-white { color: var(--app-btn-fg); }
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]), select, textarea {
+    color: var(--app-canvas-fg);
+    background-color: var(--app-card-bg);
+    border-color: var(--color-bakery-beige);
+  }
+  input::placeholder, textarea::placeholder { color: color-mix(in srgb, var(--app-canvas-fg) 50%, transparent); }
+  .bg-gray-50, .bg-gray-100, .bg-slate-50, .bg-slate-100 { background-color: var(--app-card-bg); }
+  .text-gray-900, .text-gray-800, .text-slate-900, .text-slate-800 { color: var(--app-canvas-fg); }
+  .text-gray-500, .text-gray-600, .text-slate-500, .text-slate-600 { color: color-mix(in srgb, var(--app-canvas-fg) 70%, transparent); }
+  .bg-rose-50, .bg-red-50 { background-color: #40242e; }
+  .bg-emerald-50, .bg-green-50 { background-color: #173c32; }
+  .bg-amber-50, .bg-yellow-50 { background-color: #3c321e; }
+  .bg-blue-50, .bg-indigo-50 { background-color: #202f49; }
+  .text-rose-600, .text-rose-700, .text-red-600, .text-red-700 { color: #fda4af; }
+  .text-emerald-600, .text-emerald-700, .text-green-600, .text-green-700 { color: #6ee7b7; }
+  .text-amber-600, .text-amber-700 { color: #fcd34d; }
+  .text-blue-600, .text-blue-700, .text-indigo-600, .text-indigo-700 { color: #a5b4fc; }
+  .btn-secondary:hover { background-color: var(--color-bakery-beige); }
+  .fixed.bg-bakery-brown\/40, .absolute.bg-bakery-brown\/40 { background-color: rgb(0 0 0 / 65%); }
+  .text-bakery-brown\/40, .text-bakery-brown\/50 { color: color-mix(in srgb, var(--color-bakery-brown) 65%, transparent); }
+}
+
+/* Status surfaces and their text must change together, including translucent calendar cells. */
+html[data-account-appearance="dark"] {
+  :is([class^="bg-amber-50/"], [class*=" bg-amber-50/"], .bg-amber-100, .bg-yellow-100) { background-color: #3c321e; }
+  :is([class^="bg-emerald-50/"], [class*=" bg-emerald-50/"], .bg-emerald-100, .bg-green-100) { background-color: #173c32; }
+  :is([class^="bg-rose-50/"], [class*=" bg-rose-50/"], .bg-rose-100, .bg-red-100) { background-color: #40242e; }
+  .bg-blue-100, .bg-indigo-100 { background-color: #202f49; }
+  .text-amber-800, .text-amber-900, .text-yellow-800, .text-yellow-900 { color: #fde68a; }
+  .text-emerald-800, .text-emerald-900, .text-green-800, .text-green-900 { color: #a7f3d0; }
+  .text-blue-800, .text-blue-900, .text-indigo-800, .text-indigo-900 { color: #bfdbfe; }
+  .text-rose-800, .text-rose-900, .text-red-800, .text-red-900 { color: #fecdd3; }
 }

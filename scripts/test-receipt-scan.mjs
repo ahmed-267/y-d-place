@@ -1,0 +1,37 @@
+import assert from 'node:assert/strict';
+import {chromium} from 'playwright';
+const browser=await chromium.launch({headless:true});
+try {
+ const page=await browser.newPage({viewport:{width:1440,height:1000}});
+ page.setDefaultTimeout(15000);
+ const receipt=await browser.newPage({viewport:{width:700,height:750}});
+ await receipt.setContent('<body style="font:32px Arial;padding:40px;background:white;color:black"><h1>Test Supplies Shop</h1><p>2026-10-23</p><p>Paper cups: 12.50</p><p>Napkins: 5.00</p><h2>TOTAL: 17.50 EUR</h2><p>Paid by card</p></body>');
+ const buffer=await receipt.screenshot();await receipt.close();
+ let uploads=0;page.on('request',r=>{if(r.url().includes('/storage/v1/'))uploads++;});
+ await page.goto('http://127.0.0.1:3002');
+ await page.getByRole('button',{name:/try demo/i}).first().click();
+ await page.getByRole('button',{name:/Owner portal/}).click();
+ await page.getByRole('button',{name:'Finance',exact:true}).first().click();
+ await page.getByRole('button',{name:'Add Expense',exact:true}).first().click();
+ await page.locator('input[type=file]').setInputFiles({name:'receipt.png',mimeType:'image/png',buffer});
+ await page.getByRole('button',{name:/^Scan receipt$/i}).click();
+ await page.getByText('Progress',{exact:true}).waitFor();
+ const overlay=page.locator('.z-\\[10001\\]');
+ assert.equal(await overlay.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.width/2,r.height/2));}),true,'progress is above other dialogs');
+ await page.getByRole('button',{name:/^Scan receipt$/i}).waitFor({timeout:60000});
+ assert.equal(await page.getByRole('button',{name:/^Scan receipt$/i}).isEnabled(),true);
+ assert.equal(await page.getByRole('button',{name:/^Scan receipt$/i}).locator('.animate-spin').count(),0,'spinner stops');
+ const form=page.locator('input[type=number]').last();
+ assert.equal(Number(await form.inputValue()),17.5);
+ await page.getByRole('button',{name:'Add Expense',exact:true}).last().click();
+ await page.waitForTimeout(1000);
+ const read=()=>page.evaluate(()=>JSON.parse(localStorage.getItem('previsio_ops_v1:ydplace')||'{}').expenses||[]);
+ let expenses=await read();let saved=expenses.find(e=>e.name.includes('Test Supplies'));
+ assert.ok(saved,'expense saved');assert.equal(saved.amount,17.5);assert.ok(saved.receiptImage.startsWith('data:image/jpeg;base64,'));assert.equal(uploads,0);
+ await page.reload();
+ if(await page.getByRole('button',{name:/Owner portal/}).isVisible()) await page.getByRole('button',{name:/Owner portal/}).click();
+ await page.getByRole('button',{name:'Finance',exact:true}).first().click();
+ await page.getByText(saved.name,{exact:true}).first().waitFor();
+ expenses=await read();assert.ok(expenses.some(e=>e.name===saved.name&&e.receiptImage===saved.receiptImage),'receipt retained after reload');
+ console.log('PASS: visible progress, live receipt scan, stopped spinner, expense and image saved, reload persistence, no bucket dependency.');
+} finally {await browser.close();}

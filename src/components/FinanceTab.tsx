@@ -8,9 +8,8 @@ import { ConfirmDialog } from './ConfirmDialog';
 import { DataTablePagination, useTablePagination } from './DataTablePagination';
 import { SortableTh, useColumnSort, sortByColumn } from '../utils/tableSort';
 import { ScanProgressModal } from './ScanProgressModal';
-import { compressImage, extractReceiptExpense } from '../utils/aiHelper';
+import { AIRequestError, compressImage, extractReceiptExpense } from '../utils/aiHelper';
 import { getRegionalTaxProfile, regionalTaxLines } from '../utils/taxRegions';
-import { supabase } from './supabaseClient';
 
 import { hasOwnerAccess } from '../utils/roles';
 
@@ -55,12 +54,15 @@ export const FinanceTab = () => {
 
 
   // Receipt Scanner State
+  const [isSavingExpense, setIsSavingExpense] = useState(false);
+  const [scanError, setScanError] = useState('');
   const [isScanning, setIsScanning] = useState(false);
   const [scanStatus, setScanStatus] = useState<'uploading' | 'analyzing' | 'extracting' | 'finishing' | 'error' | 'success' | 'timeout'>('uploading');
   const [scanThumbnail, setScanThumbnail] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [scannedImage, setScannedImage] = useState<string | null>(null);
   const [fullSizeImage, setFullSizeImage] = useState<string | null>(null);
+  const scanInFlightRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -607,56 +609,42 @@ export const FinanceTab = () => {
     };
   }, [sales, expenseSummaries, totalSalesRevenue, localTaxSettings.municipalTaxRate]);
 
-  const dataURLtoFile = (dataurl: string, filename: string) => {
-    const arr = dataurl.split(',');
-    const mimeMatch = arr[0].match(/:(.*?);/);
-    if (!mimeMatch) return null;
-    const mime = mimeMatch[1];
-    const bstr = atob(arr[1]);
-    let n = bstr.length;
-    const u8arr = new Uint8Array(n);
-    while (n--) {
-      u8arr[n] = bstr.charCodeAt(n);
-    }
-    return new File([u8arr], filename, { type: mime });
-  }
-
   const handleAddExpense = async () => {
-    let receiptImageUrl = editingExpense?.receiptImage || undefined;
-
-    if (scannedImage) {
-      const file = dataURLtoFile(scannedImage, `receipt_${Date.now()}.jpg`);
-      if (file) {
-        const { data, error } = await supabase.storage.from('receipts').upload(`public/${file.name}`, file);
-        if (error) {
-          addToast(`Receipt upload failed: ${error.message}`, 'error');
-        } else {
-          receiptImageUrl = supabase.storage.from('receipts').getPublicUrl(data.path).data.publicUrl;
-        }
+    if (isSavingExpense) return;
+    setIsSavingExpense(true);
+    try {
+      // Keep the compressed image in the expense's protected receipt_image field.
+      const receiptImageUrl = scannedImage || expenseForm.receiptImage || undefined;
+      if (receiptImageUrl?.startsWith('data:') && receiptImageUrl.length > 1_048_576) {
+        addToast('Receipt image is too large. Please use a smaller image.', 'error');
+        return;
       }
-    }
+      const expensePayload = {
+        ...expenseForm as Expense,
+        receiptImage: receiptImageUrl,
+      };
 
-    const expensePayload = {
-      ...expenseForm as Expense,
-      receiptImage: receiptImageUrl,
-    };
-
-    if (editingExpense) {
-      await updateExpense({ ...expensePayload, id: editingExpense.id });
-    } else {
-      await addExpense(expensePayload);
+      if (editingExpense) {
+        if (!await updateExpense({ ...expensePayload, id: editingExpense.id })) return;
+      } else {
+        if (!await addExpense(expensePayload)) return;
+      }
+      setIsExpenseModalOpen(false);
+      setEditingExpense(null);
+      setScannedImage(null);
+      setExpenseForm({
+        name: '',
+        category: 'Other',
+        amount: 0,
+        date: new Date().toISOString().split('T')[0],
+        isRecurring: false,
+        frequency: 'Monthly'
+      });
+    } catch (error) {
+      addToast(error instanceof Error ? error.message : 'Expense could not be saved. Please try again.', 'error');
+    } finally {
+      setIsSavingExpense(false);
     }
-    setIsExpenseModalOpen(false);
-    setEditingExpense(null);
-    setScannedImage(null);
-    setExpenseForm({
-      name: '',
-      category: 'Other',
-      amount: 0,
-      date: new Date().toISOString().split('T')[0],
-      isRecurring: false,
-      frequency: 'Monthly'
-    });
   };
 
   const handleScanReceipt = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -672,30 +660,34 @@ export const FinanceTab = () => {
   };
 
   const startScan = async () => {
-    if (!selectedFile) return;
-
+    if (!selectedFile || scanInFlightRef.current) return;
+    scanInFlightRef.current = true;
     setIsScanning(true);
     setScanStatus('uploading');
     setScanThumbnail(selectedFile);
-    
+    setScanError('');
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let stageTimer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const compressed = await compressImage(selectedFile);
+      const compressed = await compressImage(selectedFile, 1600, 0.8);
       setScanStatus('analyzing');
+      stageTimer = setTimeout(() => setScanStatus('extracting'), 1500);
 
       const controller = new AbortController();
       abortControllerRef.current = controller;
 
-      const timeoutId = setTimeout(() => {
+      timeoutId = setTimeout(() => {
         controller.abort();
         setScanStatus('timeout');
-      }, 30000);
+      }, 45000);
 
       const result = await extractReceiptExpense(compressed, controller.signal);
       clearTimeout(timeoutId);
 
       if (!result) {
         setScanStatus('error');
-        addToast(t('missingApiKey') || t('scanReceiptFailed'), 'error');
+        setScanError(t('scanReceiptFailed'));
+        addToast(t('scanReceiptFailed'), 'error');
         return;
       }
 
@@ -703,21 +695,26 @@ export const FinanceTab = () => {
       setExpenseForm(prev => ({
         ...prev,
         name: result.name || prev.name,
-        amount: result.amount || prev.amount,
+        amount: result.amount,
         date: result.date || prev.date,
         category: (EXPENSE_CATEGORIES.includes(result.category as any) ? result.category : 'Other') as ExpenseCategory
       }));
-      setScannedImage(compressed);
+      setScannedImage(compressed.length <= 1_048_576 ? compressed : await compressImage(selectedFile, 1024, 0.65));
       setScanStatus('success');
       setSelectedFile(null);
+      setIsScanning(false);
       addToast(t('receiptScanned'));
     } catch (error) {
-      if (scanStatus !== 'timeout') {
+      if ((error as Error).name !== 'AbortError') {
         setScanStatus('error');
-        console.error("Scanning failed:", error);
-        addToast(t('scanReceiptFailed'), "error");
+        const message = error instanceof AIRequestError ? error.message : t('scanReceiptFailed');
+        setScanError(message);
+        addToast(message, 'error');
       }
     } finally {
+      scanInFlightRef.current = false;
+      if (timeoutId) clearTimeout(timeoutId);
+      if (stageTimer) clearTimeout(stageTimer);
       abortControllerRef.current = null;
     }
   };
@@ -877,11 +874,12 @@ export const FinanceTab = () => {
           </div>
           <ScanProgressModal 
             isOpen={isScanning} 
-            status={scanStatus} 
+            status={scanStatus}
+            errorMessage={scanError}
             imageThumbnail={scanThumbnail}
             onClose={() => resetScanState()}
             onCancel={cancelScan}
-            onRetry={() => { resetScanState(); startScan(); }}
+            onRetry={startScan}
           />
 
           {selectedFile && !isScanning && (
@@ -1201,7 +1199,7 @@ export const FinanceTab = () => {
       )}
 
       {/* Expense Modal */}
-      {isExpenseModalOpen && (
+      {isExpenseModalOpen && !selectedFile && !isScanning && (
         <Modal 
           onClose={() => { setIsExpenseModalOpen(false); setEditingExpense(null); setScannedImage(null); }}
           title={editingExpense ? t('editExpense') : t('addExpense')}
@@ -1303,9 +1301,10 @@ export const FinanceTab = () => {
             </div>
             <button 
               onClick={handleAddExpense}
+              disabled={isSavingExpense}
               className="w-full py-4 bg-bakery-brown text-white rounded-2xl font-bold hover:bg-bakery-brown/90 transition-all shadow-lg"
             >
-              {editingExpense ? t('save') : t('addExpense')}
+              {isSavingExpense ? t('processing') : editingExpense ? t('save') : t('addExpense')}
             </button>
           </div>
         </Modal>

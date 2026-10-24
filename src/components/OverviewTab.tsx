@@ -1,3 +1,4 @@
+import { appearancePalette, resolveBrandPalette } from '../utils/brandTheme';
 import React, { useMemo, useEffect, useRef, useState } from 'react';
 import { useApp } from '../AppContext';
 import { Euro, TrendingUp, ShoppingBag, CreditCard, Banknote, ArrowRight, Rocket, AlertCircle, Download, Clock } from 'lucide-react';
@@ -34,7 +35,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
 }) => {
   const {
     sales, products, businessSettings, formatPrice, user, loadDemoData, users, workShifts, shiftLogs, cashSessions,
-    t, tc, tp, lang, ingredients, preparedStock = [], setActiveTab, addToast, orders,
+    accountAppearance, t, tc, tp, lang, ingredients, preparedStock = [], setActiveTab, addToast, orders,
   } = useApp();
 
   const lowStockItems = useMemo(() => {
@@ -110,8 +111,6 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   const busiestChartInstance = useRef<Chart | null>(null);
 
   const [period, setPeriod] = useState<Period>('weekly');
-  const [staffPeriod, setStaffPeriod] = useState<Period | 'custom'>('weekly');
-  const [staffDateRange, setStaffDateRange] = useState({ from: '', to: '' });
   const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
@@ -213,48 +212,9 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
     return { start: buckets[0].start, end: buckets[buckets.length - 1].end };
   }, [buckets]);
 
-  const staffRange = useMemo(() => {
-    if (staffPeriod === 'custom' && staffDateRange.from && staffDateRange.to) {
-      const start = new Date(staffDateRange.from).getTime();
-      const end = new Date(staffDateRange.to).setHours(23, 59, 59, 999);
-      return { start, end };
-    }
-    const now = new Date();
-    const end = now.getTime();
-    const start = new Date(now);
-    if (staffPeriod === 'daily') start.setDate(now.getDate() - 1);
-    if (staffPeriod === 'weekly') start.setDate(now.getDate() - 7);
-    if (staffPeriod === 'monthly') start.setMonth(now.getMonth() - 1);
-    if (staffPeriod === 'quarterly') start.setMonth(now.getMonth() - 3);
-    start.setHours(0, 0, 0, 0);
-    return { start: start.getTime(), end };
-  }, [staffPeriod, staffDateRange]);
-
-  useEffect(() => {
-    if (staffPeriod === 'custom') return;
-    const now = new Date();
-    const start = new Date(now);
-    if (staffPeriod === 'daily') start.setDate(now.getDate() - 1);
-    if (staffPeriod === 'weekly') start.setDate(now.getDate() - 7);
-    if (staffPeriod === 'monthly') start.setMonth(now.getMonth() - 1);
-    if (staffPeriod === 'quarterly') start.setMonth(now.getMonth() - 3);
-    setStaffDateRange({ from: toDateInput(start), to: toDateInput(now) });
-  }, [staffPeriod]);
-
   const salesInPeriod = useMemo(() => {
     return sales.filter(s => isCountableSale(s) && s.timestamp >= periodRange.start && s.timestamp < periodRange.end);
   }, [sales, periodRange]);
-
-  const staffSalesInPeriod = useMemo(() => {
-    return sales.filter(s => isCountableSale(s) && s.timestamp >= staffRange.start && s.timestamp <= staffRange.end);
-  }, [sales, staffRange]);
-
-  const shiftsInPeriod = useMemo(() => {
-    return workShifts.filter(shift => {
-      const shiftTime = new Date(`${shift.date}T00:00`).getTime();
-      return shiftTime >= staffRange.start && shiftTime <= staffRange.end;
-    });
-  }, [workShifts, staffRange]);
 
   const revenueByBucket = useMemo(() => {
     return buckets.map(bucket => {
@@ -453,50 +413,15 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
     return { hours, max, topHours };
   }, [salesInPeriod, sales]);
 
-  const staffDirectory = useMemo(() => {
-    const map = new Map<string, string>();
-    users.forEach(u => map.set(u.username, u.fullName));
-    sales.forEach(s => {
-      if (!map.has(s.cashierUsername)) {
-        map.set(s.cashierUsername, s.cashierFullName);
-      }
-    });
-    return Array.from(map.entries()).map(([username, fullName]) => ({ username, fullName }));
-  }, [users, sales]);
-
-  const staffPerformance = useMemo(() => {
-    return staffDirectory.map(staff => {
-      const staffSales = staffSalesInPeriod.filter(s => s.cashierUsername === staff.username);
-      const revenue = staffSales.reduce((acc, s) => acc + salePayable(s), 0);
-      const orders = staffSales.length;
-      const staffShiftList = shiftsInPeriod.filter(s => s.username === staff.username);
-      const shiftsWorked = staffShiftList.length;
-      const totalHours = staffShiftList.reduce((acc, s) => acc + s.totalHours, 0);
-      const revenuePerHour = totalHours > 0 ? revenue / totalHours : 0;
-      const avgOrdersPerShift = shiftsWorked > 0 ? orders / shiftsWorked : 0;
-      const avgRevenuePerShift = shiftsWorked > 0 ? revenue / shiftsWorked : 0;
-      return {
-        username: staff.username,
-        fullName: staff.fullName || staff.username,
-        orders,
-        revenue,
-        totalHours,
-        shiftsWorked,
-        revenuePerHour,
-        avgOrdersPerShift,
-        avgRevenuePerShift
-      };
-    }).sort((a, b) => b.revenuePerHour - a.revenuePerHour);
-  }, [staffDirectory, staffSalesInPeriod, shiftsInPeriod]);
-
-  const topEfficiency = staffPerformance.length ? staffPerformance[0].revenuePerHour : 0;
-
   useEffect(() => {
     if (revenueChartInstance.current) revenueChartInstance.current.destroy();
     if (categoryChartInstance.current) categoryChartInstance.current.destroy();
     if (busiestChartInstance.current) busiestChartInstance.current.destroy();
 
     if (revenueChartRef.current && categoryChartRef.current && busiestChartRef.current) {
+      const palette = appearancePalette(resolveBrandPalette(businessSettings?.brandTheme), accountAppearance);
+      Chart.defaults.color = accountAppearance === 'dark' ? '#bbc5d0' : '#666666';
+      Chart.defaults.borderColor = accountAppearance === 'dark' ? '#ffffff18' : '#00000018';
       const currencySymbol = businessSettings?.currencySymbol || '€';
 
       revenueChartInstance.current = new Chart(revenueChartRef.current, {
@@ -506,7 +431,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
           datasets: [{
             label: `${t('revenue')} (${currencySymbol})`,
             data: revenueByBucket,
-            backgroundColor: '#d4a373',
+            backgroundColor: palette.accent,
             borderRadius: 8
           }]
         },
@@ -573,8 +498,8 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
           datasets: [{
             label: t('orders'),
             data: busiestHours.hours,
-            backgroundColor: 'rgba(212, 163, 115, 0.75)',
-            borderColor: '#d4a373',
+            backgroundColor: palette.accent,
+            borderColor: palette.accent,
             borderWidth: 1,
             borderRadius: 4,
           }]
@@ -611,7 +536,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
       if (categoryChartInstance.current) categoryChartInstance.current.destroy();
       if (busiestChartInstance.current) busiestChartInstance.current.destroy();
     };
-  }, [buckets, revenueByBucket, categoryStats, businessSettings, t, busiestHours]);
+  }, [buckets, revenueByBucket, categoryStats, businessSettings, t, busiestHours, accountAppearance]);
 
   if (setupRequired && products.length === 0) {
     return (
@@ -906,56 +831,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
         </div>
       </section>
 
-      {hasOwnerAccess(user?.role) && (
-        <section className="space-y-3">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <h3 className="text-base font-bold font-serif text-bakery-brown">{t('staffPerformance')}</h3>
-            <div className="flex items-center gap-1 bg-bakery-beige/40 p-1 rounded-xl">
-              {periodOptions.map(option => (
-                <button
-                  key={option.id}
-                  type="button"
-                  onClick={() => setStaffPeriod(option.id)}
-                  className={`h-8 px-2.5 rounded-lg text-[10px] font-bold uppercase tracking-widest ${
-                    staffPeriod === option.id ? 'bg-bakery-brown text-white' : 'text-bakery-brown/60'
-                  }`}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          </div>
 
-          <div className="card-bakery p-3 sm:p-4 space-y-2">
-            {staffPerformance.slice(0, 5).map((staff, idx) => {
-              const rankLabel = idx === 0 ? t('rankFirst') : idx === 1 ? t('rankSecond') : idx === 2 ? t('rankThird') : `${idx + 1}`;
-              const percent = topEfficiency ? Math.min(100, (staff.revenuePerHour / topEfficiency) * 100) : 0;
-              return (
-                <div key={staff.username} className="px-3 py-2.5 bg-bakery-cream rounded-xl">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="w-7 h-7 rounded-full bg-bakery-brown text-white text-[10px] font-black flex items-center justify-center shrink-0">{rankLabel}</span>
-                      <p className="font-bold text-sm truncate">{staff.fullName}</p>
-                    </div>
-                    <div className="flex flex-wrap gap-3 text-[11px] font-bold text-bakery-brown">
-                      <span>{staff.orders} {t('orders')}</span>
-                      <span>{formatPrice(staff.revenue)}</span>
-                      <span>{formatPrice(staff.revenuePerHour)}/h</span>
-                      <span>{staff.totalHours.toFixed(1)}h</span>
-                    </div>
-                  </div>
-                  <div className="w-full bg-bakery-beige rounded-full h-1.5 mt-2">
-                    <div className="bg-bakery-caramel h-full rounded-full" style={{ width: `${percent}%` }} />
-                  </div>
-                </div>
-              );
-            })}
-            {staffPerformance.length === 0 && (
-              <p className="text-center text-bakery-brown/40 italic text-sm py-4">{t('noStaffData')}</p>
-            )}
-          </div>
-        </section>
-      )}
     </div>
   );
 };

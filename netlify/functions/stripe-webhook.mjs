@@ -1,9 +1,8 @@
 import {
   getStripe,
   createServiceSupabase,
-  applySubscriptionToBusiness,
+  reconcileSubscription,
   resolveBusinessIdFromSubscription,
-  planFromStripeStatus,
 } from './_billing.mjs';
 import { json } from './_shared.mjs';
 
@@ -43,55 +42,42 @@ export const handler = async (event) => {
               ? session.subscription
               : session.subscription.id;
           const subscription = await stripe.subscriptions.retrieve(subId);
-          await applySubscriptionToBusiness(admin, businessId, subscription);
+          await reconcileSubscription(admin, stripe, businessId, subscription.id);
         }
         break;
       }
       case 'customer.subscription.created':
       case 'customer.subscription.updated':
       case 'customer.subscription.deleted': {
-        const subscription = stripeEvent.data.object;
+        const eventSubscription = stripeEvent.data.object;
+        const subscription = await stripe.subscriptions.retrieve(eventSubscription.id);
         const businessId = await resolveBusinessIdFromSubscription(admin, subscription);
         if (businessId) {
-          await applySubscriptionToBusiness(admin, businessId, subscription);
+          await reconcileSubscription(admin, stripe, businessId, subscription.id);
         }
         break;
       }
       case 'invoice.payment_failed': {
         const invoice = stripeEvent.data.object;
-        const subId =
-          typeof invoice.subscription === 'string'
-            ? invoice.subscription
-            : invoice.subscription?.id;
+        const subscriptionRef = invoice.parent?.subscription_details?.subscription || invoice.subscription;
+        const subId = typeof subscriptionRef === 'string' ? subscriptionRef : subscriptionRef?.id;
         if (subId) {
           const subscription = await stripe.subscriptions.retrieve(subId);
           const businessId = await resolveBusinessIdFromSubscription(admin, subscription);
           if (businessId) {
-            await applySubscriptionToBusiness(admin, businessId, {
-              ...subscription,
-              status: subscription.status === 'active' ? 'past_due' : subscription.status,
-            });
-            await admin
-              .from('businesses')
-              .update({
-                plan: planFromStripeStatus(subscription.status) === 'pro' ? 'past_due' : planFromStripeStatus(subscription.status),
-                subscription_status: subscription.status,
-              })
-              .eq('id', businessId);
+            await reconcileSubscription(admin, stripe, businessId, subscription.id);
           }
         }
         break;
       }
       case 'invoice.paid': {
         const invoice = stripeEvent.data.object;
-        const subId =
-          typeof invoice.subscription === 'string'
-            ? invoice.subscription
-            : invoice.subscription?.id;
+        const subscriptionRef = invoice.parent?.subscription_details?.subscription || invoice.subscription;
+        const subId = typeof subscriptionRef === 'string' ? subscriptionRef : subscriptionRef?.id;
         if (subId) {
           const subscription = await stripe.subscriptions.retrieve(subId);
           const businessId = await resolveBusinessIdFromSubscription(admin, subscription);
-          if (businessId) await applySubscriptionToBusiness(admin, businessId, subscription);
+          if (businessId) await reconcileSubscription(admin, stripe, businessId, subscription.id);
         }
         break;
       }
